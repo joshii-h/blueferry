@@ -62,6 +62,7 @@ def test_every_documented_error_has_the_stable_namespace() -> None:
 
     assert errors == {
         "AuthorizationRequired",
+        "CallHistorySyncFailed",
         "ConfirmationRequired",
         "ContactSyncFailed",
         "InvalidArgs",
