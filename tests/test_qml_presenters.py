@@ -1797,3 +1797,62 @@ Item {
     log = result.stdout + result.stderr
     assert result.returncode == 0 and "BLUEFERRY_GROUP_REPLY_OK" in log, log
     assert "WARN scene:" not in log and "ReferenceError" not in log and "TypeError" not in log, log
+
+
+class _CallsBridge(QObject):
+    """Inert recorder for RecentCallsPage; it performs no I/O."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.loads = 0
+        self.syncs = 0
+
+    @Property("QVariantList", constant=True)
+    def callHistory(self):
+        return [
+            {"direction": "missed", "caller": "<b>Eve</b>", "name": "<b>Eve</b>",
+             "address": "+15551230002", "time": "Today", "missed": True},
+            {"direction": "outgoing", "caller": "+15551230001", "name": "",
+             "address": "+15551230001", "time": "Today", "missed": False},
+        ]
+
+    @Property(str, constant=True)
+    def callHistoryError(self) -> str:
+        return ""
+
+    @Property(bool, constant=True)
+    def busy(self) -> bool:
+        return False
+
+    @Slot()
+    def loadCallHistory(self) -> None:
+        self.loads += 1
+
+    @Slot()
+    def syncCallHistory(self) -> None:
+        self.syncs += 1
+
+
+def test_recent_calls_page_loads_once_and_filters_missed_calls(qml_engine):
+    from PySide6.QtQml import QQmlExpression
+
+    bridge = _CallsBridge()
+    component = _component(qml_engine, "src/blueferry/qt/qml/RecentCallsPage.qml")
+    page = component.createWithInitialProperties({"bridge": bridge})
+    assert page is not None, [error.toString() for error in component.errors()]
+
+    def evaluate(script):
+        expression = QQmlExpression(qml_engine.contextForObject(page), page, script)
+        value, failed = expression.evaluate()
+        assert not failed, expression.error().toString()
+        return value
+
+    assert bridge.loads == 1, "opening the page fetches the list once"
+    assert evaluate("visibleCalls().length") == 2
+    page.setProperty("missedOnly", True)
+    assert evaluate("visibleCalls().map(call => call.direction).join()") == "missed"
+    assert bridge.syncs == 0
+    # Remote names and numbers are rendered as plain text, never as markup.
+    source = (ROOT / "src/blueferry/qt/qml/RecentCallsPage.qml").read_text()
+    assert source.count("Controls.Label {") == source.count("textFormat: Text.PlainText")
+    page.deleteLater()
