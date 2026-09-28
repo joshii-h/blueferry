@@ -60,6 +60,8 @@ from blueferry.solicitation_supervisor import SolicitationSupervisor
 from blueferry.starred_threads import StarredThreadsStore
 from blueferry.storage_preparation import PreparedStorage, prepare_storage
 from blueferry.storage_security import StorageSecurity
+from blueferry.tether import NetworkLinkWatch, TetherController
+from blueferry.tether_backends import choose_backend
 from blueferry.wireplumber_policy import WirePlumberPhoneAudioPolicy
 
 log = logging.getLogger(__name__)
@@ -144,6 +146,27 @@ class Daemon:
             on_le_dial=self.solicitation.set_dialing,
             inbound_le_primed=self.solicitation.active,
         )
+        # Tethering is an explicit user action layered on the Classic link the
+        # bearer supervisor keeps; it never connects or drops that link itself.
+        self.tether = TetherController(
+            choose_backend(
+                lambda: get_system_bus(), device_path, config.IPHONE_MAC,
+                config.TETHER_BACKEND,
+            ),
+            link_watch=NetworkLinkWatch(
+                lambda: get_system_bus(),
+                device_path,
+                lambda connected, interface: self.tether.observe_link(connected, interface),
+            ),
+            classic_ready=lambda: classic_reachable(self.bearers, self.sessions),
+            autoconnect_ready=lambda: (
+                self.profiles.ready and not self.recovery.active
+            ),
+            on_changed=self._emit_tether_changed,
+            autoconnect=config.TETHER_AUTOCONNECT,
+            schedule=GLib.timeout_add_seconds,
+            cancel=GLib.source_remove,
+        )
         self.contact_sync = ContactSync(
             sessions=self.sessions,
             storage=self.storage,
@@ -215,7 +238,8 @@ class Daemon:
                 and self.bearers.bredr_connected and self.bearers.le_state is not None
                 and self.solicitation.active()
             ),
-            busy=self.bearers.busy,
+            # A power cycle would silently cut the user's tethered internet.
+            busy=self.bearers.busy or self.tether.active,
         )
 
     def _pause_for_recovery(self) -> None:
@@ -245,6 +269,11 @@ class Daemon:
 
     def _emit_status(self) -> None:
         emit = getattr(self._dbus_service, "emit_status", None)
+        if emit is not None:
+            emit()
+
+    def _emit_tether_changed(self) -> None:
+        emit = getattr(self._dbus_service, "emit_tether_changed", None)
         if emit is not None:
             emit()
 
@@ -313,6 +342,7 @@ class Daemon:
                 prepare_storage=prepare_storage,
                 on_storage_prepared=self._apply_storage_preparation,
                 on_storage_changed=self._on_storage_changed,
+                tether=self.tether,
             ),
         )
         self.events.set_dbus_service(self._dbus_service)
@@ -418,6 +448,7 @@ class Daemon:
         # outbound LE bootstrap until ProfileSupervisor completes its first
         # MAP/PBAP attempt. Phone-initiated LE remains usable for ANCS.
         self.bearers.start()
+        self.tether.start()
 
         # ANCS — per-app notifications via BLE GATT. Independent of MAP/PBAP.
         # The bearer supervisor connects LE alongside BR/EDR; the client waits
@@ -514,6 +545,7 @@ class Daemon:
         # Hold first because resetting bearer observations immediately probes
         # the replacement daemon. The old OBEX transport is already gone, so
         # discard its local sessions without asking obexd to remove them.
+        self.tether.reset_after_bluez_restart()
         self.bearers.hold_le()
         self.profiles.reconnect(
             "bluetoothd restarted",
@@ -615,6 +647,9 @@ class Daemon:
         self._post_available_sessions_setup()
 
         self._sync_solicitation()
+        # Only when BLUEFERRY_TETHER_AUTOCONNECT is set, and never ahead of
+        # MAP/PBAP: the phone's first host-initiated transactions stay theirs.
+        self.tether.maybe_autoconnect()
 
         log.info(
             "=== BlueFerry ready (contacts=%d, sinks=%s) ===",
@@ -740,6 +775,7 @@ class Daemon:
             except Exception:
                 log.debug("could not remove BlueZ owner watch", exc_info=True)
         self.recovery.stop()
+        self.tether.stop()
         self.read_receipts.close()
         self.adapter_class.stop()
         self.bearers.stop()

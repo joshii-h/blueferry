@@ -43,6 +43,9 @@ _RULES: dict[str, tuple[RateRule, ...]] = {
     "conversation-delete": (RateRule(60, 60), RateRule(500, 3_600)),
     "destructive": (RateRule(6, 600),),
     "unlock": (RateRule(6, 600),),
+    # Each tether command pages the phone and may create a NetworkManager
+    # profile; toggling is interactive, so allow bursts but not a stream.
+    "tether": (RateRule(10, 60), RateRule(60, 3_600)),
 }
 
 

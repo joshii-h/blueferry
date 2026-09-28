@@ -156,6 +156,14 @@ class ConfirmedGroups(Protocol):
     def clear(self) -> None: ...
 
 
+class TetherControl(Protocol):
+    def snapshot(self) -> dict[str, object]: ...
+
+    def connect(self, *, automatic: bool = False) -> dict[str, object]: ...
+
+    def disconnect(self) -> dict[str, object]: ...
+
+
 @dataclass(frozen=True, slots=True)
 class BackendDependencies:
     """Explicit optional capabilities supplied by the daemon composition root."""
@@ -176,6 +184,7 @@ class BackendDependencies:
     prepare_storage: Callable[[StorageSecurity], Any] | None = None
     on_storage_prepared: Callable[[Any], None] | None = None
     on_storage_changed: Callable[[], None] | None = None
+    tether: TetherControl | None = None
 
 
 class BackendOperations:
@@ -1048,6 +1057,20 @@ class BackendOperations:
                 failed(error)
 
         sync(succeeded, failed)
+
+    def _tether(self) -> TetherControl:
+        if self.dependencies.tether is None:
+            raise NotReadyError("Bluetooth tethering is unavailable in this backend")
+        return self.dependencies.tether
+
+    def tether_state(self) -> dict[str, object]:
+        return self._tether().snapshot()
+
+    def tether_connect(self) -> dict[str, object]:
+        return self._tether().connect()
+
+    def tether_disconnect(self) -> dict[str, object]:
+        return self._tether().disconnect()
 
     def is_healthy(self) -> bool:
         return self.sessions.map is not None

@@ -111,6 +111,11 @@ def _daemon(make_daemon, calls):
     )()
     # logind and adapter power watches need the real system bus.
     value._watch_sleep_resume = lambda: calls.append("sleep-watch")
+    # Opt-in tethering has its own tests; keep its Network1 watch inert here.
+    value.tether = SimpleNamespace(
+        active=False, start=lambda: None, stop=lambda: None,
+        reset_after_bluez_restart=lambda: None, maybe_autoconnect=lambda: None,
+    )
     return value
 
 

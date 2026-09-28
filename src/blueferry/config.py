@@ -22,6 +22,8 @@ LOCAL_ENV_KEYS = frozenset({
     "BLUEFERRY_HISTORY_RETENTION_DAYS",
     "BLUEFERRY_HISTORY_MAX_EVENTS",
     "BLUEFERRY_HISTORY_MAX_PAYLOAD_BYTES",
+    "BLUEFERRY_TETHER_AUTOCONNECT",
+    "BLUEFERRY_TETHER_BACKEND",
 })
 CONFIG_DIR: Path = Path(
     os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")
@@ -224,6 +226,24 @@ HISTORY_MAX_PAYLOAD_BYTES: int = _env_int(
     16 * 1024 * 1024,
     2 * 1024 * 1024 * 1024,
 )
+
+TETHER_AUTOCONNECT: bool = _env_bool("BLUEFERRY_TETHER_AUTOCONNECT", False)
+"""Start Bluetooth tethering automatically once MAP/PBAP are up.
+
+Off by default: tethering is otherwise only started by an explicit client
+action. An explicit disconnect pauses automatic attempts until the next
+explicit connect.
+"""
+
+
+def _tether_backend() -> str:
+    value = os.environ.get("BLUEFERRY_TETHER_BACKEND", "auto").strip().casefold()
+    return value if value in {"auto", "networkmanager", "bluez"} else "auto"
+
+
+TETHER_BACKEND: str = _tether_backend()
+"""``auto`` prefers NetworkManager when it is running; ``bluez`` only brings
+the PAN link up and leaves DHCP to the user."""
 
 # ---- runtime paths ------------------------------------------------------
 
