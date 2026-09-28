@@ -327,6 +327,50 @@ installed. After a successful bond the daemon keeps reconciling the same
 file. Set `BLUEFERRY_KEEP_PHONE_AUDIO_ON_PHONE=false` to remove BlueFerry's
 fragment only.
 
+## Internet sharing (experimental)
+
+BlueFerry can also use the iPhone's Personal Hotspot over Bluetooth (PAN).
+It never does this on its own: turn it on with **Share iPhone Internet** in
+the KDE client's iPhone Settings or with `blueferry tether on`, and off the
+same way. This has only been exercised against simulated BlueZ and
+NetworkManager services, not yet with a real iPhone.
+
+1. On the iPhone, open **Settings → Personal Hotspot** and turn on **Allow
+   Others to Join**. iOS refuses the Bluetooth connection otherwise, and
+   BlueFerry tells you so.
+2. Make sure BlueFerry's normal connection to the iPhone is up. Tethering
+   uses that existing Bluetooth link and never connects or disconnects the
+   phone itself, so messages, contacts and notifications keep working.
+3. Run `blueferry tether on` or flip the switch.
+
+With NetworkManager running, BlueFerry asks it to activate a Bluetooth
+network profile named "BlueFerry iPhone hotspot". The profile is created once,
+is visible only to your user, and has autoconnect turned off, so
+NetworkManager does not tether by itself either. NetworkManager handles the
+address and DNS. If NetworkManager reports a permission error, the daemon is
+probably not part of an active desktop session as far as polkit is
+concerned.
+
+Without NetworkManager, BlueFerry brings up only the Bluetooth link and prints
+the interface name (usually `bnep0`). Run your own DHCP client on it, for
+example `sudo dhcpcd bnep0`; BlueFerry never runs privileged commands. That
+link belongs to the daemon's D-Bus connection, so it ends when the daemon
+stops.
+
+The kernel needs Bluetooth BNEP support (`CONFIG_BT_BNEP`), and BlueZ needs
+its network plugin. Optional settings in `~/.config/blueferry/local.env`:
+
+```bash
+# Tether automatically once messages are connected (off by default).
+# `blueferry tether off` pauses this until the next explicit `on`.
+BLUEFERRY_TETHER_AUTOCONNECT=false
+# auto (default) prefers NetworkManager; bluez forces the link-only mode.
+BLUEFERRY_TETHER_BACKEND=auto
+```
+
+While tethering is active, BlueFerry skips its last-resort Bluetooth adapter
+power cycle so it does not cut your connection.
+
 ## Command line
 
 The graphical clients cover normal use, but the CLI is useful for diagnostics
@@ -340,6 +384,7 @@ blueferry sms-send Alice 'running late'
 blueferry contacts-sync
 blueferry history-clear
 blueferry doctor
+blueferry tether            # status; also: tether on, tether off
 ```
 
 Ambiguous contact names are presented for you to choose from rather than

@@ -84,6 +84,8 @@ All paths are relative to `src/blueferry/` unless noted.
 | `bluez_setup.py` | Adapter preparation: Class-of-Device and the ANCS solicitation advertisement. |
 | `bluetooth_capabilities.py` | Controller capability probing and packaged BlueZ activation. |
 | `bluetooth_devices.py` | Typed BlueZ device projection for setup and clients. |
+| `tether.py` | Opt-in Bluetooth PAN tethering state machine, Network1 link watch, and BlueZ error tokens. |
+| `tether_backends.py` | Tethering strategies: a per-user NetworkManager PAN profile, or plain `Network1.Connect("nap")`. |
 
 ### Sinks
 
@@ -130,6 +132,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `client_activation.py` | Picks and activates one desktop client (recency files, notification-open forwarding). |
 | `glib_client_activation.py` | GLib adapter for client activation (GTK and the Quickshell bridge). |
 | `time_display.py` | Human-readable local timestamps for all clients. |
+| `tether_status.py` | Client-side tether state model and error guidance shared by the CLI and Qt. |
 | `i18n.py` | gettext helpers for Python presentation layers. |
 
 ### Clients and entry points
@@ -139,6 +142,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `cli.py`, `__main__.py` | Typer CLI (`run`, `doctor`, sync, setup, and hidden `pairing-*` JSON helpers). |
 | `cli_messages.py` | CLI message listing, recipient selection, and send. |
 | `cli_common.py` | Small CLI presentation helpers. |
+| `cli_tether.py` | `blueferry tether [status\|on\|off]`. |
 | `tui.py` | Textual terminal client. |
 | `tui_launcher.py` | Launches the TUI with the package-private Textual bundle when present. |
 | `ui/app.py` | GTK4/libadwaita application entry point. |
@@ -158,6 +162,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `qt/qml/PhoneSettingsPage.qml` | Qt setup and preferences page. |
 | `qt/qml/PhoneSettingsDialogs.qml` | Window-owned settings/pairing dialogs that outlive the page. |
 | `qt/qml/OnboardingSummary.qml` | Renders the onboarding stage message. |
+| `qt/qml/TetherSection.qml` | Opt-in tethering switch, loaded only when the daemon offers `Tether1`. |
 | `qt/qml/GroupConfirmationDialog.qml` | Group recipient confirmation before sending. |
 | `qt/qml/NewMessageDialog.qml` | New message composition. |
 | `qt/qml/ExpandingMessageComposer.qml` | Growing message editor. |
@@ -204,6 +209,13 @@ contract.
 
 - `Messages1` carries commands and unicast snapshots; `Events1` carries
   content-free live coordination. Identifiers live in `protocol.py`.
+- `Tether1` is a separate, optional interface for Bluetooth PAN tethering:
+  `Connect`, `Disconnect`, and `GetState` return a small JSON state (state,
+  interface name, backend, error token; never IP configuration), and its
+  own content-free `TetherChanged` signal invalidates it. It is outside the
+  messaging generation, so clients treat a missing interface as "not
+  offered" rather than as an incompatible daemon. Commands have their own
+  `tether` rate bucket; `GetState` shares the status bucket.
 - `data/io.weirdware.BlueFerry.xml` is canonical, installed under
   `dbus-1/interfaces`, and checked against the service's dbus-python
   decorators.
@@ -378,6 +390,19 @@ A change to these rules has to be made in both places.
   at least an hour apart. Limits and pending restoration survive restarts.
   It skips adapters in use by other devices, discovery, or transfers. User
   details are in `README.md`.
+- **Tethering** (`tether`) is an explicit user action layered on the Classic
+  link the bearer supervisor owns. `Connect` is refused until that link is
+  up, and the code never calls `Device1`/`Bearer` `Connect`/`Disconnect` or
+  `ConnectProfile`, only `Network1` or NetworkManager, so it cannot fight the
+  supervisor over the ACL link or reorder MAP-first startup. With
+  NetworkManager the daemon activates a per-user, non-autoconnecting
+  `bluetooth`/`panu` profile and NetworkManager runs DHCP; without it the
+  daemon brings up the `bnep` link only and never spawns a DHCP client. A
+  `Network1` property watch reports link loss and adopts links started
+  elsewhere. An active tether marks the adapter busy for recovery, and a
+  BlueZ owner change resets it. Automatic tethering exists only behind
+  `BLUEFERRY_TETHER_AUTOCONNECT`, waits for MAP/PBAP, backs off after
+  refusals, and pauses after an explicit disconnect.
 - **Read receipts** go through `read_receipts`, which delays MAP write-back so
   ANCS can still fetch group metadata. Local reads take effect immediately.
 
