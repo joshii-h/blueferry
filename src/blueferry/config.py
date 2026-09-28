@@ -22,6 +22,9 @@ LOCAL_ENV_KEYS = frozenset({
     "BLUEFERRY_HISTORY_RETENTION_DAYS",
     "BLUEFERRY_HISTORY_MAX_EVENTS",
     "BLUEFERRY_HISTORY_MAX_PAYLOAD_BYTES",
+    "BLUEFERRY_CALL_HISTORY_ENABLED",
+    "BLUEFERRY_CALL_HISTORY_INTERVAL_SEC",
+    "BLUEFERRY_MISSED_CALL_NOTIFICATIONS",
 })
 CONFIG_DIR: Path = Path(
     os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")
@@ -225,6 +228,22 @@ HISTORY_MAX_PAYLOAD_BYTES: int = _env_int(
     2 * 1024 * 1024 * 1024,
 )
 
+CALL_HISTORY_ENABLED: bool = _env_bool("BLUEFERRY_CALL_HISTORY_ENABLED", False)
+"""Opt-in: pull the iPhone's recent calls over PBAP and retain them locally.
+
+Off by default because it retains who called whom and when. It uses the
+existing PBAP session (the iPhone's **Sync Contacts** permission) and the same
+local storage policy and retention window as message history.
+"""
+CALL_HISTORY_INTERVAL_SEC: int = _env_int(
+    "BLUEFERRY_CALL_HISTORY_INTERVAL_SEC", 300, 60, 24 * 60 * 60
+)
+"""Seconds between automatic call-history pulls. PBAP has no change events."""
+MISSED_CALL_NOTIFICATIONS: bool = _env_bool(
+    "BLUEFERRY_MISSED_CALL_NOTIFICATIONS", True
+)
+"""Desktop popups for newly seen missed calls; only with call history enabled."""
+
 # ---- runtime paths ------------------------------------------------------
 
 _state_home = Path(
@@ -234,6 +253,7 @@ _state_home = Path(
 STATE_DIR: Path = _state_home
 EVENTS_DB: Path = _state_home / "events.sqlite"
 CONTACTS_DB: Path = _state_home / "contacts.sqlite"
+CALLS_DB: Path = _state_home / "calls.sqlite"
 
 SETTINGS_JSON: Path = CONFIG_DIR / "settings.json"
 
@@ -258,7 +278,7 @@ def ensure_dirs() -> None:
     if STATE_DIR.stat().st_mode & 0o777 != STATE_DIR_MODE:
         raise PermissionError(f"could not secure private state directory: {STATE_DIR}")
 
-    for path in (EVENTS_DB, CONTACTS_DB):
+    for path in (EVENTS_DB, CONTACTS_DB, CALLS_DB):
         if not path.exists() and not path.is_symlink():
             continue
         if path.is_symlink():
