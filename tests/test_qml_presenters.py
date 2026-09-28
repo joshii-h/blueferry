@@ -13,7 +13,7 @@ os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import Q_ARG, Property, QMetaObject, QObject, QPointF, Qt, QUrl, Slot
+from PySide6.QtCore import Q_ARG, Property, QEvent, QMetaObject, QObject, QPointF, Qt, QUrl, Slot
 from PySide6.QtGui import QColor, QDesktopServices, QGuiApplication
 from PySide6.QtQml import QQmlComponent, QQmlEngine
 from PySide6.QtQuick import QQuickWindow
@@ -821,6 +821,48 @@ def test_optional_calls_dialog_lists_calls_and_dials_through_the_bridge(
     }
     assert QMetaObject.invokeMethod(dialog, "close")
     QGuiApplication.processEvents()
+
+
+def test_optional_phone_status_indicator_appears_only_with_known_values(settings_window):
+    window, bridge = settings_window
+    # Default status (calls off, or oFono without values): nothing is loaded.
+    assert window.findChild(QObject, "phoneStatusIndicator") is None
+    bridge.setProperty("status", {
+        "calls_enabled": True,
+        "phone_battery_level": None,
+        "phone_signal_strength": None,
+    })
+    QGuiApplication.processEvents()
+    assert window.findChild(QObject, "phoneStatusIndicator") is None
+
+    bridge.setProperty("status", {
+        "calls_enabled": True,
+        "phone_battery_level": 40,
+        "phone_signal_strength": 80,
+        "phone_network_name": "Sunrise",
+        "phone_network_status": "roaming",
+    })
+    QGuiApplication.processEvents()
+    indicator = _settings_object(window, "phoneStatusIndicator")
+    assert _settings_object(window, "phoneBatteryLabel").property("text") == "40 %"
+    assert indicator.property("batteryIconName") == "battery-040"
+    assert indicator.property("signalIconName") == "network-mobile-80"
+    assert indicator.property("summary") == (
+        "iPhone battery about 40 % · Signal 80 % · Sunrise (roaming)"
+    )
+
+    # Signal only: the battery parts hide, the indicator stays.
+    bridge.setProperty("status", {"calls_enabled": True, "phone_signal_strength": 20})
+    QGuiApplication.processEvents()
+    assert _settings_object(window, "phoneBatteryLabel").property("visible") is False
+    assert indicator.property("batteryIconName") == ""
+    assert indicator.property("summary") == "Signal 20 %"
+
+    bridge.setProperty("status", {})
+    QGuiApplication.processEvents()
+    # The Loader releases its item with deleteLater().
+    QGuiApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert window.findChild(QObject, "phoneStatusIndicator") is None
 
 
 def test_phone_settings_first_run_and_reopening_keep_the_page_alive(qml_engine, settings_window):
