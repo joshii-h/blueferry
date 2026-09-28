@@ -12,6 +12,7 @@ import typer
 from blueferry import bluez_setup, config
 from blueferry.cli_common import setup_logging as _setup_logging
 from blueferry.cli_messages import sms_list, sms_send
+from blueferry.cli_otp import otp_check, otp_status
 
 app = typer.Typer(
     add_completion=False,
@@ -98,6 +99,19 @@ def doctor(verbose: bool = typer.Option(False, "-v", "--verbose")):
     except OSError as e:
         log.error("State dir not writable: %s", e)
         ok = False
+
+    # Optional one-time code auto-copy needs a clipboard helper.
+    if config.OTP_AUTOCOPY:
+        from blueferry.cli_otp import status_lines
+
+        lines, otp_warning = status_lines(
+            enabled=True,
+            clear_after_s=config.OTP_CLEAR_SECONDS,
+            environ=os.environ,
+        )
+        for line in lines[2:-1]:
+            (log.warning if otp_warning else log.info)("%s", line)
+        warnings = warnings or otp_warning
 
     if not ok:
         typer.echo(typer.style("One or more checks FAILED.", fg=typer.colors.RED))
@@ -492,6 +506,8 @@ def history_clear(
 
 app.command("sms-list")(sms_list)
 app.command("sms-send")(sms_send)
+app.command("otp-status")(otp_status)
+app.command("otp-check")(otp_check)
 
 
 @app.command()
