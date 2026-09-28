@@ -86,15 +86,16 @@ All paths are relative to `src/blueferry/` unless noted.
 | `bluetooth_devices.py` | Typed BlueZ device projection for setup and clients. |
 | `calls/model.py` | Optional HFP calls: pure oFono property parsing, modem selection, dial/DTMF/call-id validation. |
 | `calls/ofono.py` | Asynchronous oFono system-bus transport (hand-built calls with NO_AUTO_START, no synchronous owner lookup). |
-| `calls/controller.py` | Optional HFP calls: oFono modem discovery, Powered→Online bring-up, call tracking and control, backoff. |
+| `calls/controller.py` | Optional HFP calls: oFono modem discovery, Powered→Online bring-up, call tracking and control, backoff; watches the phone's battery/signal interfaces while online. |
+| `calls/phone_status.py` | Optional phone status: pure parsing of oFono's Handsfree/NetworkRegistration properties and the once-per-cycle low-battery decision. |
 
 ### Sinks
 
 | Module | Responsibility |
 | --- | --- |
-| `sinks/__init__.py` | Sink protocol: `handle(event)` plus optional `handle_ancs` and `handle_call` (optional HFP calls, desktop UI only). |
+| `sinks/__init__.py` | Sink protocol: `handle(event)` plus optional `handle_ancs`, `handle_call`, and `handle_phone_battery_low` (optional HFP calls, desktop UI only). |
 | `sinks/sqlite.py` | Persists events to the private history store. |
-| `sinks/libnotify.py` | Desktop notifications via `org.freedesktop.Notifications`, including open and dismiss actions and optional incoming-call Answer/Decline. |
+| `sinks/libnotify.py` | Desktop notifications via `org.freedesktop.Notifications`, including open and dismiss actions, optional incoming-call Answer/Decline, and the optional phone low-battery warning. |
 
 ### Storage and privacy
 
@@ -142,7 +143,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `cli.py`, `__main__.py` | Typer CLI (`run`, `doctor`, sync, setup, and hidden `pairing-*` JSON helpers). |
 | `cli_messages.py` | CLI message listing, recipient selection, and send. |
 | `cli_common.py` | Small CLI presentation helpers. |
-| `cli_calls.py` | Optional `blueferry calls` commands over `Calls1`. |
+| `cli_calls.py` | Optional `blueferry calls` commands over `Calls1` and `blueferry phone-status` (battery, signal, network from `GetStatus`). |
 | `tui.py` | Textual terminal client. |
 | `tui_launcher.py` | Launches the TUI with the package-private Textual bundle when present. |
 | `tui_calls.py` | Optional Textual calls panel. |
@@ -166,6 +167,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `qt/qml/GroupConfirmationDialog.qml` | Group recipient confirmation before sending. |
 | `qt/qml/NewMessageDialog.qml` | New message composition. |
 | `qt/qml/CallsDialog.qml` | Optional phone-calls dialog (list, dial, answer, hang up). |
+| `qt/qml/PhoneStatusIndicator.qml` | Optional iPhone battery/signal indicator (loaded only when values are known). |
 | `qt/qml/ExpandingMessageComposer.qml` | Growing message editor. |
 | `qt/qml/MessageBubble.qml` | Message bubble. |
 | `quickshell_bridge.py` | Persistent stdin/stdout JSON bridge from Quickshell to the session D-Bus API. |
@@ -417,6 +419,13 @@ A change to these rules has to be made in both places.
   state; control replies still reach their D-Bus caller.
 - Call events go to local desktop sinks only (`handle_call`); they are not
   persisted and nothing about them is broadcast except `CallsChanged`.
+- Phone status: while the modem is online, the controller watches
+  `Handsfree` and `NetworkRegistration` (only when listed in the modem's
+  `Interfaces`) and reads them with an asynchronous `GetProperties`. Values
+  are additive `GetStatus` keys (`null` when unknown); a change emits the
+  existing argument-free `StatusChanged`. The opt-in low-battery warning goes
+  to sinks through `handle_phone_battery_low` and fires once per discharge
+  cycle.
 
 ## Storage and privacy
 

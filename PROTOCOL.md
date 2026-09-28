@@ -466,6 +466,16 @@ taken from tincan's oFono controller; it has not yet been re-verified by
 BlueFerry against the device list above. The profile registration race itself
 is unchanged.
 
+With that modem online, oFono 2.18 also exposes the phone's standard HFP
+`+CIND` indicators (`doc/handsfree-api.txt`, `doc/network-api.txt`,
+`drivers/hfpmodem/`): `Handsfree.BatteryChargeLevel` is the raw `battchg`
+value 0-5, `NetworkRegistration.Strength` is the `signal` indicator 0-5
+multiplied by 20, `Status` follows the `service`/`roam` indicators, and
+`Name` comes from `AT+COPS?`. oFono drops the strength silently (no
+`PropertyChanged`) when registration is lost. iOS additionally reports a 0-9
+battery level through `AT+IPHONEACCEV`, which oFono does not decode, so the
+opt-in phone-status display is limited to 20 % steps.
+
 ## Pairing diagnostics
 
 Each pairing attempt records the resolved delivery mode, authentication

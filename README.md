@@ -437,6 +437,44 @@ What happens then:
   `CallsChanged` signal carries no content. Calls are not written to message
   history.
 
+### Phone battery, signal, and network
+
+While the calls integration has the iPhone's modem online, BlueFerry also
+shows the phone's battery level, signal strength, and network (operator)
+name, as oFono reports them from the standard HFP indicators. Nothing else
+needs configuring:
+
+```bash
+blueferry phone-status          # Battery: about 60 % / Signal: 80 % / Network: …
+blueferry phone-status --json
+```
+
+The Qt client shows a small battery and signal indicator next to
+"Conversations" (hover for the network name), and the terminal client adds
+them to its header. When calls are disabled, oFono is missing, or the modem
+is offline, the values are simply unknown and nothing is shown.
+
+Granularity is coarse: iPhones report their battery to hands-free devices in
+six steps (0-5), so BlueFerry shows 0, 20, 40, 60, 80, or 100 %, and the
+signal likewise moves in 20 % steps. iOS also sends a finer 0-9 battery level
+through Apple's `AT+IPHONEACCEV` extension, but stock oFono does not decode
+it and BlueFerry does not patch oFono. There is no charging indicator.
+
+An optional desktop warning fires once when the battery reaches the
+threshold and again only after the phone has charged at least one step
+(20 %) above it:
+
+```bash
+BLUEFERRY_PHONE_BATTERY_NOTIFY=true         # default off
+BLUEFERRY_PHONE_BATTERY_LOW_PERCENT=20      # 0-80, default 20
+```
+
+The values are part of the private `GetStatus` reply (keys
+`phone_battery_level`, `phone_signal_strength`, `phone_network_name`,
+`phone_network_status`; `null` when unknown). Changes are announced with the
+existing argument-free `StatusChanged` signal; no value is ever broadcast,
+and the logs never contain the levels or the operator name.
+
 Troubleshooting: if `blueferry calls` stays at **searching** although the
 iPhone is connected, the likely cause is the startup-order race between oFono
 and WirePlumber for the HFP profile. Restart oFono after WirePlumber
