@@ -29,7 +29,7 @@ from blueferry.conversation_state import (
 from blueferry.i18n import _
 from blueferry.models import BackendStatus
 from blueferry.onboarding import OnboardingState, effective_compatibility
-from blueferry.protocol import BUS_NAME, EVENTS_IFACE, OBJECT_PATH
+from blueferry.protocol import BUS_NAME, EVENTS_IFACE, OBJECT_PATH, TETHER_IFACE
 from blueferry.qt.tasks import Task
 from blueferry.quirks_report import issue_report, issue_url
 from blueferry.setup_client import (
@@ -37,6 +37,7 @@ from blueferry.setup_client import (
     ConfigurationState,
     SetupClient,
 )
+from blueferry.tether_status import TetherStatus
 
 
 class BridgeController(QObject):
@@ -57,6 +58,7 @@ class BridgeController(QObject):
     groupConfirmationRequested = Signal(str, str, str)
     threadSendSucceeded = Signal(str, str)
     messageSendSucceeded = Signal(str, str)
+    tetherChanged = Signal()
 
     def __init__(
         self,
@@ -100,6 +102,11 @@ class BridgeController(QObject):
         self._refresh_timer.setSingleShot(True)
         self._refresh_timer.setInterval(100)
         self._refresh_timer.timeout.connect(self.refresh)
+        self._tether: dict = {"available": False}
+        self._tether_timer = QTimer(self)
+        self._tether_timer.setSingleShot(True)
+        self._tether_timer.setInterval(100)
+        self._tether_timer.timeout.connect(self.refreshTether)
         self._bus = QDBusConnection.sessionBus() if subscribe else None
         if subscribe:
             self._subscribe()
@@ -117,6 +124,10 @@ class BridgeController(QObject):
     @Property("QVariantMap", notify=statusChanged)
     def status(self):
         return self._status
+
+    @Property("QVariantMap", notify=tetherChanged)
+    def tether(self):
+        return self._tether
 
     @Property("QVariantList", notify=devicesChanged)
     def devices(self):
@@ -293,6 +304,14 @@ class BridgeController(QObject):
             self,
             SLOT("_openMessageRequested(QString)"),
         )
+        self._bus.connect(
+            BUS_NAME,
+            OBJECT_PATH,
+            TETHER_IFACE,
+            "TetherChanged",
+            self,
+            SLOT("_tetherInvalidated()"),
+        )
 
     @Slot("QVariantMap")
     def _historyChanged(self, _revision) -> None:
@@ -301,6 +320,13 @@ class BridgeController(QObject):
     @Slot()
     def _statusInvalidated(self) -> None:
         self._refresh_timer.start()
+        # A replaced daemon or a changed Classic link can change what
+        # tethering reports, and older daemons never send TetherChanged.
+        self._tether_timer.start()
+
+    @Slot()
+    def _tetherInvalidated(self) -> None:
+        self._tether_timer.start()
 
     @Slot(str)
     def _openMessageRequested(self, handle: str) -> None:
@@ -328,6 +354,7 @@ class BridgeController(QObject):
             self._set_error("")
             if self._configuration.configured:
                 self.refresh()
+                self._tether_timer.start()
             self.loadSetupState()
             self.loadDevices(False)
             self._update_onboarding_stage()
@@ -604,6 +631,60 @@ class BridgeController(QObject):
             lambda: self._backend.set_contacts_only_notifications(enabled),
             completed,
         )
+
+    # ---- opt-in tethering --------------------------------------------------
+
+    def _apply_tether(self, value: object, *, pending: bool = False) -> None:
+        if not isinstance(value, TetherStatus):
+            return
+        self._tether = {
+            "available": True,
+            "pending": pending,
+            "state": value.state,
+            "interface": value.interface,
+            "backend": value.backend,
+            "external": value.external,
+            "error": value.error,
+            "needs_dhcp": value.needs_dhcp,
+            "autoconnect": value.autoconnect,
+            "active": value.active,
+            "summary": value.summary(),
+        }
+        self.tetherChanged.emit()
+
+    def _tether_unavailable(self, _message: str) -> None:
+        # An older daemon without Tether1, or no daemon: hide the control.
+        self._tether = {"available": False}
+        self.tetherChanged.emit()
+
+    @Slot()
+    def refreshTether(self) -> None:
+        self._run(
+            lambda: self._backend.tether_state(),
+            self._apply_tether,
+            self._tether_unavailable,
+            busy=False,
+        )
+
+    @Slot(bool)
+    def setTetherEnabled(self, enabled: bool) -> None:
+        """Explicit user action; the daemon never tethers without one."""
+        if self._tether.get("pending") is True:
+            return
+        self._tether = {**self._tether, "pending": True}
+        self.tetherChanged.emit()
+        def request() -> object:
+            if enabled:
+                return self._backend.tether_connect()
+            return self._backend.tether_disconnect()
+
+        def failed(message: str) -> None:
+            self._tether = {**self._tether, "pending": False}
+            self.tetherChanged.emit()
+            self._operation_failed(message)
+            self._tether_timer.start()
+
+        self._run(request, self._apply_tether, failed, busy=False)
 
     @Slot(str)
     def setStoragePolicy(self, policy: str) -> None:
