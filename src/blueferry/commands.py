@@ -44,3 +44,46 @@ def run_command(
             returncode=result.returncode,
         )
     return result
+
+
+def spawn_command(
+    argv: Sequence[str],
+    *,
+    stdin_text: str,
+    env: Mapping[str, str] | None = None,
+) -> subprocess.Popen[bytes]:
+    """Start a long-lived helper and hand it private input on stdin only.
+
+    The caller owns the returned process. Its output is discarded, so a
+    helper that keeps running (a clipboard owner, for example) never blocks
+    the caller on a pipe. Private data belongs on stdin: argv is visible to
+    every local user through ``/proc``.
+    """
+    command = tuple(str(value) for value in argv)
+    if not command or not command[0].startswith("/"):
+        raise ValueError("spawned commands need an absolute executable path")
+    try:
+        # Values are passed directly as argv, never interpreted as shell text.
+        process = subprocess.Popen(  # nosec B603
+            list(command),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=dict(env) if env is not None else None,
+            close_fds=True,
+        )
+    except OSError as error:
+        raise CommandError(command, f"{command[0]} could not be started") from error
+    stdin = process.stdin
+    if stdin is None:  # pragma: no cover - guaranteed by stdin=PIPE
+        process.kill()
+        process.wait()
+        raise CommandError(command, f"{command[0]} has no input pipe")
+    try:
+        stdin.write(stdin_text.encode("utf-8"))
+        stdin.close()
+    except OSError as error:
+        process.kill()
+        process.wait()
+        raise CommandError(command, f"{command[0]} exited before reading its input") from error
+    return process
