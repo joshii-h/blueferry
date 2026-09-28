@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
+from blueferry.calls.phone_status import UNKNOWN_PHONE_STATUS
 from blueferry.contacts import clear_contact_cache
 from blueferry.errors import (
     CallsDisabledError,
@@ -188,6 +189,7 @@ _CALLS_DISABLED_STATUS: dict[str, object] = {
     "calls_enabled": False,
     "calls_state": "disabled",
     "calls_available": False,
+    **UNKNOWN_PHONE_STATUS,
 }
 
 
