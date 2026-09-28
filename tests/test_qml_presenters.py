@@ -550,6 +550,38 @@ def test_qt_onboarding_summary_treats_realtek_as_expected_success(qml_engine) ->
     summary.deleteLater()
 
 
+def test_qt_onboarding_summary_uses_the_supplied_bluetooth_restart_command(
+    qml_engine,
+) -> None:
+    component = _component(
+        qml_engine, "src/blueferry/qt/qml/OnboardingSummary.qml"
+    )
+    status = {"verified_iphone_setup": []}
+    compatibility = {"notifications_supported": False}
+    default = component.createWithInitialProperties({
+        "stage": "ready-without-ancs",
+        "compatibility": compatibility,
+        "status": status,
+    })
+    openrc = component.createWithInitialProperties({
+        "stage": "ready-without-ancs",
+        "compatibility": compatibility,
+        "status": status,
+        "bluetoothRestartCommand": "sudo rc-service bluetooth restart",
+    })
+
+    assert default is not None and openrc is not None
+    qml_engine.globalObject().setProperty("defaultSummary", qml_engine.newQObject(default))
+    qml_engine.globalObject().setProperty("openrcSummary", qml_engine.newQObject(openrc))
+    default_hint = _evaluate(qml_engine, "defaultSummary.ancsUnavailableHint()")
+    openrc_hint = _evaluate(qml_engine, "openrcSummary.ancsUnavailableHint()")
+    assert "sudo systemctl restart bluetooth.service" in default_hint
+    assert "sudo rc-service bluetooth restart" in openrc_hint
+    assert "systemctl" not in openrc_hint
+    default.deleteLater()
+    openrc.deleteLater()
+
+
 def test_qt_onboarding_summary_renders_stage_from_properties(qml_engine) -> None:
     component = _component(
         qml_engine, "src/blueferry/qt/qml/OnboardingSummary.qml"
@@ -624,6 +656,7 @@ def settings_window(qml_engine):
             property string errorText: ""
             property string pairingIssueReport: ""
             property string version: "test"
+            property string bluetoothRestartCommand: "sudo rc-service bluetooth restart"
             signal pairingConfirmationRequested(string passkey)
             signal messageOpenRequested(string handle)
             signal messageSendSucceeded(string recipient, string body)
