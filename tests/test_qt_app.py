@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import os
 import signal
+import sys
+import types
 
 import pytest
 
@@ -31,6 +33,43 @@ def test_focus_token_is_available_before_show_and_does_not_leak(monkeypatch):
         ("show", "focus-token"), ("activate", "focus-token"),
         ("show", None), ("activate", None),
     ]
+
+
+def test_kde_quick_controls_style_is_set_without_the_binding(monkeypatch):
+    monkeypatch.setitem(sys.modules, "PySide6.QtQuickControls2", None)
+    monkeypatch.delenv("QT_QUICK_CONTROLS_STYLE", raising=False)
+    app_module._select_quick_controls_style()
+    assert os.environ["QT_QUICK_CONTROLS_STYLE"] == "org.kde.desktop"
+
+    monkeypatch.setenv("QT_QUICK_CONTROLS_STYLE", "")
+    app_module._select_quick_controls_style()
+    assert os.environ["QT_QUICK_CONTROLS_STYLE"] == "org.kde.desktop"
+
+
+def test_kde_quick_controls_style_uses_the_binding_when_available(monkeypatch):
+    styles = []
+    binding = types.ModuleType("PySide6.QtQuickControls2")
+    binding.QQuickStyle = types.SimpleNamespace(setStyle=styles.append)
+    monkeypatch.setitem(sys.modules, "PySide6.QtQuickControls2", binding)
+    monkeypatch.delenv("QT_QUICK_CONTROLS_STYLE", raising=False)
+
+    app_module._select_quick_controls_style()
+
+    assert styles == ["org.kde.desktop"]
+    assert "QT_QUICK_CONTROLS_STYLE" not in os.environ
+
+
+def test_user_quick_controls_style_is_preserved(monkeypatch):
+    styles = []
+    binding = types.ModuleType("PySide6.QtQuickControls2")
+    binding.QQuickStyle = types.SimpleNamespace(setStyle=styles.append)
+    monkeypatch.setitem(sys.modules, "PySide6.QtQuickControls2", binding)
+    monkeypatch.setenv("QT_QUICK_CONTROLS_STYLE", "Fusion")
+
+    app_module._select_quick_controls_style()
+
+    assert os.environ["QT_QUICK_CONTROLS_STYLE"] == "Fusion"
+    assert styles == []
 
 
 class _Signal:
