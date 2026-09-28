@@ -28,7 +28,7 @@ from blueferry.bluetooth_recovery import (
 from blueferry.build_info import build_id, installed_build_sha, running_build_sha
 from blueferry.bus import get_system_bus, main_loop
 from blueferry.calls.controller import CallController
-from blueferry.calls.phone_status import PhoneStatus
+from blueferry.calls.phone_status import LowBatteryMonitor, PhoneStatus
 from blueferry.confirmed_groups import ConfirmedGroupsStore
 from blueferry.connectivity import Connectivity
 from blueferry.contact_sync import ContactSync
@@ -162,6 +162,8 @@ class Daemon:
             phone_reachable=lambda: self.bearers.bredr_connected,
             on_phone_status=self._on_phone_status,
         )
+        # Opt-in sub-feature of calls: one low-battery warning per cycle.
+        self.low_battery = LowBatteryMonitor(config.PHONE_BATTERY_LOW_PERCENT)
         self.contact_sync = ContactSync(
             sessions=self.sessions,
             storage=self.storage,
@@ -290,8 +292,13 @@ class Daemon:
 
     def _on_phone_status(self, status: PhoneStatus) -> None:
         """The phone's battery/signal/operator changed: content-free signal."""
-        del status  # clients fetch the values with GetStatus
         self._emit_status()
+        if not config.PHONE_BATTERY_NOTIFY:
+            return
+        percent = status.battery_percent
+        if self.low_battery.observe(percent) and percent is not None:
+            log.info("iPhone battery is low; showing a desktop warning")
+            self.events.phone_battery_low(percent)
 
     def _on_bearer_status(self) -> None:
         self.calls.poke()
