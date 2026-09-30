@@ -823,7 +823,9 @@ def test_optional_calls_dialog_lists_calls_and_dials_through_the_bridge(
     QGuiApplication.processEvents()
 
 
-def test_optional_phone_status_indicator_appears_only_with_known_values(settings_window):
+def test_optional_phone_status_indicator_appears_only_with_known_values(
+    qml_engine, settings_window,
+):
     window, bridge = settings_window
     # Default status (calls off, or oFono without values): nothing is loaded.
     assert window.findChild(QObject, "phoneStatusIndicator") is None
@@ -850,6 +852,23 @@ def test_optional_phone_status_indicator_appears_only_with_known_values(settings
     assert indicator.property("summary") == (
         "iPhone battery about 40 % · Signal 80 % · Sunrise (roaming)"
     )
+
+    # The operator name is remote text: the tooltip must not render HTML.
+    bridge.setProperty("status", {
+        "calls_enabled": True,
+        "phone_battery_level": 40,
+        "phone_network_name": "<b>Sun</b>",
+        "phone_network_status": "registered",
+    })
+    QGuiApplication.processEvents()
+    tool_tip = indicator.findChild(QObject, "phoneStatusToolTip")
+    assert tool_tip is not None
+    label = tool_tip.property("contentItem")
+    assert label.objectName() == "phoneStatusToolTipLabel"
+    qml_engine.globalObject().setProperty("phoneToolTipLabel", qml_engine.newQObject(label))
+    # Qt::PlainText is 0 (AutoText, the style default, is 2).
+    assert _evaluate(qml_engine, "phoneToolTipLabel.textFormat") == int(Qt.TextFormat.PlainText.value)
+    assert label.property("text") == "iPhone battery about 40 % · <b>Sun</b>"
 
     # Signal only: the battery parts hide, the indicator stays.
     bridge.setProperty("status", {"calls_enabled": True, "phone_signal_strength": 20})

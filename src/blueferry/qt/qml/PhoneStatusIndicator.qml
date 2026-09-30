@@ -74,6 +74,20 @@ RowLayout {
     }
 
     HoverHandler { id: hover }
-    Controls.ToolTip.text: indicator.summary
-    Controls.ToolTip.visible: hover.hovered && indicator.summary !== ""
+
+    // The operator name comes from the phone. The attached ToolTip of the
+    // org.kde.desktop style renders AutoText, i.e. HTML such as "<b>…</b>";
+    // an explicit PlainText label shows it literally.
+    Controls.ToolTip {
+        id: toolTip
+        objectName: "phoneStatusToolTip"
+        text: indicator.summary
+        visible: hover.hovered && indicator.summary !== ""
+        contentItem: Controls.Label {
+            objectName: "phoneStatusToolTipLabel"
+            text: toolTip.text
+            textFormat: Text.PlainText
+            wrapMode: Text.NoWrap
+        }
+    }
 }
