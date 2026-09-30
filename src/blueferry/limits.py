@@ -89,3 +89,7 @@ MAX_CONTACT_PHOTO_FILES = 64
 # image-path handed to notification servers). A small file can declare an
 # enormous canvas; decoders without their own limit would allocate it.
 MAX_CONTACT_PHOTO_DIMENSION = 2048
+# Notification-click mappings launch local applications, so both the number
+# of rules and each configured target stay small and explicit.
+MAX_NOTIFICATION_OPEN_MAPPINGS = 64
+MAX_NOTIFICATION_OPEN_URL_CHARS = 2048

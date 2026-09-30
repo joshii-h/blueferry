@@ -15,6 +15,7 @@ from blueferry.client_wire import (
     decode_events,
     decode_json,
     decode_mapping,
+    decode_open_map,
     decode_thread,
     decode_threads,
 )
@@ -51,6 +52,12 @@ class BackendError(BlueFerryError):
     pass
 
 
+def _dbus_message(error: Exception) -> str:
+    if isinstance(error, dbus.exceptions.DBusException):
+        return error.get_dbus_message() or str(error)
+    return str(error)
+
+
 class CompatibilityCache:
     """Daemon unique bus names already verified as API-compatible.
 
@@ -67,12 +74,6 @@ class CompatibilityCache:
 
     def add(self, owner: str) -> None:
         self._owners.add(owner)
-
-
-def _dbus_message(error: Exception) -> str:
-    if isinstance(error, dbus.exceptions.DBusException):
-        return error.get_dbus_message() or str(error)
-    return str(error)
 
 
 def _unique_owner(interface: object) -> str | None:
@@ -323,6 +324,32 @@ class BackendClient:
                     dbus.Boolean(enabled), timeout=POLICY_CALL_TIMEOUT_SEC
                 )
             )
+        except dbus.exceptions.DBusException as error:
+            raise BackendError(error.get_dbus_message() or str(error)) from error
+
+    def notification_open_map(self) -> list[dict[str, str]]:
+        try:
+            return decode_open_map(self._iface(MESSAGES_IFACE).GetNotificationOpenMap(
+                timeout=POLICY_CALL_TIMEOUT_SEC
+            ))
+        except (dbus.exceptions.DBusException, ValueError) as error:
+            raise BackendError(_dbus_message(error)) from error
+
+    def set_notification_open_target(
+        self, bundle_id: str, target: str
+    ) -> list[dict[str, str]]:
+        try:
+            return decode_open_map(self._iface(MESSAGES_IFACE).SetNotificationOpenTarget(
+                bundle_id, target, timeout=POLICY_CALL_TIMEOUT_SEC
+            ))
+        except (dbus.exceptions.DBusException, ValueError) as error:
+            raise BackendError(_dbus_message(error)) from error
+
+    def remove_notification_open_target(self, bundle_id: str) -> bool:
+        try:
+            return bool(self._iface(MESSAGES_IFACE).RemoveNotificationOpenTarget(
+                bundle_id, timeout=POLICY_CALL_TIMEOUT_SEC
+            ))
         except dbus.exceptions.DBusException as error:
             raise BackendError(error.get_dbus_message() or str(error)) from error
 

@@ -16,6 +16,7 @@ from blueferry.bus import get_session_bus
 from blueferry.client_activation import request_message_activation
 from blueferry.events import sms_group_sent_event, sms_sent_event
 from blueferry.limits import MAX_ANCS_FINGERPRINTS
+from blueferry.notification_open import request_open_target
 from blueferry.sinks import Sink
 from blueferry.sinks.libnotify import LibnotifySink
 from blueferry.sinks.sqlite import SqliteSink
@@ -70,6 +71,7 @@ class EventDispatcher:
         historical_ancs=(),
         notification_policy=None,
         contacts_only_notifications=None,
+        notification_open_target=None,
         storage=None,
         on_incoming_message=None,
         on_call_action: Callable[[str, str], None] | None = None,
@@ -88,6 +90,7 @@ class EventDispatcher:
         self.dbus_service = None
         self.notification_policy = notification_policy
         self.contacts_only_notifications = contacts_only_notifications
+        self.notification_open_target = notification_open_target
         self.storage = storage
         self.on_incoming_message = on_incoming_message
         self.on_call_action = on_call_action
@@ -210,6 +213,9 @@ class EventDispatcher:
             options["on_call_action"] = self.on_call_action
         if self.perform_ancs_action is not None:
             options["on_ancs_action"] = self.perform_ancs_action
+        if self.notification_open_target is not None:
+            options["open_target"] = self.notification_open_target
+            options["on_open_target"] = self._open_target
         try:
             sink = self._notification_sink_factory(
                 defer_mark_read=self.defer_mark_read,
@@ -308,6 +314,9 @@ class EventDispatcher:
 
     def _open_message(self, handle: str, token: str) -> None:
         request_message_activation(handle, token)
+
+    def _open_target(self, target, token: str) -> None:
+        request_open_target(target, token)
 
     def message(self, event) -> None:
         if getattr(event, "kind", "") == "sms_received" and self.on_incoming_message is not None:
