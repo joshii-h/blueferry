@@ -198,9 +198,11 @@ class _Loop:
         self.timers.pop(source, None)
 
     def fire_timers(self) -> None:
-        for source, (_delay, callback) in list(self.timers.items()):
+        for source, (delay, callback) in list(self.timers.items()):
             self.timers.pop(source, None)
-            callback()
+            if callback():
+                # GLib semantics: returning True keeps the timer.
+                self.timers[source] = (delay, callback)
 
     def watch(self, pid, callback) -> int:
         self.watches[pid] = callback
@@ -430,3 +432,88 @@ def test_send_signal_uses_a_pidfd_for_an_inert_child() -> None:
         if process.poll() is None:
             process.kill()
             process.wait()
+
+
+class _PolledProcess:
+    def __init__(self, pid: int) -> None:
+        self.pid = pid
+        self.returncode = None
+        self.exit_with = None
+
+    def poll(self):
+        if self.exit_with is not None:
+            self.returncode = self.exit_with
+        return self.returncode
+
+
+def _unwatched_writer():
+    loop = _Loop()
+    processes = []
+
+    def spawn(argv, *, stdin_text, env):
+        process = _PolledProcess(2000 + len(processes))
+        processes.append(process)
+        return process
+
+    def broken_watch(_pid, _callback):
+        raise RuntimeError("child watch unavailable")
+
+    writer = ClipboardWriter(
+        environ={},
+        find=lambda _environ, **_kwargs: WAYLAND,
+        spawn=spawn,
+        probe_sensitive=lambda _executable: True,
+        submit_probe=loop.submit,
+        schedule_ms=loop.schedule,
+        cancel=loop.cancel,
+        watch_child=broken_watch,
+        signal_helper=loop.signal,
+        open_pidfd=lambda _pid: None,
+    )
+    return writer, processes, loop
+
+
+def test_without_a_child_watch_the_helper_is_polled() -> None:
+    writer, processes, loop = _unwatched_writer()
+    ticket = writer.copy(CODE)
+
+    [(delay, _callback)] = loop.timers.values()
+    assert delay == 500
+    loop.fire_timers()
+    assert writer.state(ticket) == "running"
+    assert len(loop.timers) == 1  # still polling
+
+    processes[0].exit_with = 1
+    loop.fire_timers()
+
+    assert writer.state(ticket) == "failed"
+    assert loop.timers == {}
+
+
+def test_polled_helper_is_forgotten_after_release() -> None:
+    writer, processes, loop = _unwatched_writer()
+    writer.copy(CODE)
+    writer.release()
+    assert writer._stopping
+
+    processes[0].exit_with = -signal.SIGTERM
+    loop.fire_timers()
+
+    assert writer._stopping == {}
+    # The SIGKILL escalation found nothing left to kill.
+    assert loop.signals == [(processes[0].pid, signal.SIGTERM)]
+
+
+def test_missing_fallback_helper_has_its_own_one_time_message(caplog) -> None:
+    caplog.set_level(logging.DEBUG)
+    writer, _spawned, _loop, _probes = _writer(find=lambda _environ, **_kwargs: None)
+
+    assert writer.copy(CODE, exclude=frozenset({"wl-copy"})) is None
+    assert writer.copy(CODE, exclude=frozenset({"wl-copy"})) is None
+    assert caplog.text.count("no X11 fallback helper for this session") == 1
+    assert "install wl-clipboard" not in caplog.text
+
+    # A genuinely missing helper is still reported.
+    assert writer.copy(CODE) is None
+    assert "install wl-clipboard" in caplog.text
+    assert CODE not in caplog.text
