@@ -4,8 +4,12 @@ from __future__ import annotations
 # This module is the one argv-only command boundary and never invokes a shell.
 import subprocess  # nosec B404
 from collections.abc import Mapping, Sequence
+from contextlib import suppress
 
 from blueferry.errors import CommandError
+
+# PIPE_BUF on Linux: one write of this size to a fresh pipe never blocks.
+MAX_SPAWN_STDIN_BYTES = 4096
 
 
 def run_command(
@@ -62,6 +66,11 @@ def spawn_command(
     command = tuple(str(value) for value in argv)
     if not command or not command[0].startswith("/"):
         raise ValueError("spawned commands need an absolute executable path")
+    data = stdin_text.encode("utf-8")
+    if len(data) > MAX_SPAWN_STDIN_BYTES:
+        # A single pipe write of at most PIPE_BUF bytes never blocks the
+        # caller, even when the helper has not started reading yet.
+        raise ValueError(f"stdin input is limited to {MAX_SPAWN_STDIN_BYTES} bytes")
     try:
         # Values are passed directly as argv, never interpreted as shell text.
         process = subprocess.Popen(  # nosec B603
@@ -75,15 +84,16 @@ def spawn_command(
     except OSError as error:
         raise CommandError(command, f"{command[0]} could not be started") from error
     stdin = process.stdin
-    if stdin is None:  # pragma: no cover - guaranteed by stdin=PIPE
-        process.kill()
-        process.wait()
-        raise CommandError(command, f"{command[0]} has no input pipe")
     try:
-        stdin.write(stdin_text.encode("utf-8"))
-        stdin.close()
+        if stdin is None:  # pragma: no cover - guaranteed by stdin=PIPE
+            raise OSError("no input pipe")
+        stdin.write(data)
     except OSError as error:
         process.kill()
         process.wait()
         raise CommandError(command, f"{command[0]} exited before reading its input") from error
+    finally:
+        if stdin is not None:
+            with suppress(OSError):
+                stdin.close()
     return process
