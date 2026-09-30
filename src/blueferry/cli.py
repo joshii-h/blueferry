@@ -14,6 +14,7 @@ from blueferry.cli_call_history import calls_history
 from blueferry.cli_calls import calls_app, phone_status
 from blueferry.cli_common import setup_logging as _setup_logging
 from blueferry.cli_contacts import contacts_photo
+from blueferry.cli_media import media
 from blueferry.cli_messages import sms_list, sms_send
 from blueferry.cli_notifications import notifications_app
 from blueferry.cli_otp import otp_check, otp_status
@@ -525,6 +526,7 @@ app.command("calls-history")(calls_history)
 app.command("otp-status")(otp_status)
 app.command("otp-check")(otp_check)
 app.add_typer(notifications_app, name="notifications")
+app.command("media")(media)
 
 
 @app.command()

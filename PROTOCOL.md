@@ -503,6 +503,47 @@ to fetch group metadata before iOS removes the notification. The delay does not
 block the OBEX worker or require ANCS to arrive; pending acknowledgements are
 discarded if their MAP session is replaced or the daemon stops.
 
+## Apple Media Service (unverified on hardware)
+
+Optional media control follows Apple's published AMS reference; **none of
+this has yet been observed with a real iPhone through BlueFerry**, so every
+statement below is a specification-based expectation, not a captured result.
+
+- AMS (`89D3502B-0F36-433A-8EF4-C502AD55F8DC`) is expected in the iPhone's
+  GATT database beside ANCS on the same LE bond. BlueFerry does not add AMS to
+  the solicitation advertisement and never dials LE for it; it only uses the
+  link the ANCS bearer supervision already maintains.
+- Remote Command (`9B3C81D8-…`) notifies the list of currently available
+  command IDs and accepts a one-byte command write. Commands outside that
+  list are not sent.
+- Entity Update (`2F7CABCE-…`) is registered with one write per entity
+  (Player, Queue, Track). Registrations are expected to be forgotten on
+  disconnect, so they are rewritten after every LE reconnect. Notifications
+  carry entity, attribute, a truncation flag, and a UTF-8 value. The
+  specification states that the Media Source answers a registration with the
+  current values; BlueFerry resubscribes (without resetting LE) if no update
+  arrives within 10 seconds of a registration.
+- A truncated value is completed by writing the entity/attribute selector to
+  Entity Attribute (`C6B2F38C-…`) and reading it back; the two steps stay
+  adjacent in the serialized GATT queue.
+- The ANCS BlueZ 5.87 constraint applies here too: no `StopNotify` on a
+  dropped or flapping link; surviving `Notifying=true` registrations are kept.
+- AMS offers relative volume steps and fixed skips only, so an MPRIS volume
+  write becomes one step, MPRIS `CanSeek` is false and `Seek`/`SetPosition`
+  have no effect, and MPRIS `Stop` pauses. The skips remain available through
+  `Media1`.
+- AMS ATT application errors 0xA0 (InvalidState), 0xA1 (InvalidCommand) and
+  0xA2 (AbsentAttribute) appear only in BlueZ's error message text; BlueFerry
+  logs them by name.
+- AVRCP is intentionally not used: acting as an AVRCP controller could make
+  iOS route audio to this computer, which BlueFerry's WirePlumber policy
+  exists to prevent.
+
+Open questions for the first hardware test: whether iOS 26/27 exposes AMS
+without soliciting it; that current values follow a registration immediately
+(the specification guarantees it, but it must be verified on hardware); and
+whether AMS traffic affects ANCS reliability on the tested controllers.
+
 ## Historical HFP result
 
 HFP calling is not part of BlueFerry, but the experiment produced one useful

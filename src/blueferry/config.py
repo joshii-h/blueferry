@@ -33,6 +33,8 @@ LOCAL_ENV_KEYS = frozenset({
     "BLUEFERRY_CALL_HISTORY_INTERVAL_SEC",
     "BLUEFERRY_MISSED_CALL_NOTIFICATIONS",
     "BLUEFERRY_CONTACT_PHOTOS",
+    "BLUEFERRY_MEDIA_CONTROL_ENABLED",
+    "BLUEFERRY_MEDIA_MPRIS_ENABLED",
 })
 CONFIG_DIR: Path = Path(
     os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")
@@ -222,6 +224,25 @@ def include_ancs_app(app_id: str) -> bool:
     if selected in ANCS_APP_BLOCKLIST:
         return False
     return ANCS_APP_ALLOWLIST is None or selected in ANCS_APP_ALLOWLIST
+
+MEDIA_CONTROL_ENABLED: bool = _env_bool("BLUEFERRY_MEDIA_CONTROL_ENABLED", False)
+"""Opt in to iPhone now-playing and media commands over Apple Media Service.
+
+Off by default: AMS subscriptions add LE traffic on the bond that carries
+ANCS, and this is outside BlueFerry's messaging core. Requires the full
+(ANCS/LE) delivery mode; compatibility mode never connects LE.
+"""
+
+MEDIA_MPRIS_ENABLED: bool = MEDIA_CONTROL_ENABLED and _env_bool(
+    "BLUEFERRY_MEDIA_MPRIS_ENABLED", False
+)
+"""Additionally publish the iPhone as an MPRIS2 player on the session bus.
+
+MPRIS metadata (title, artist, album) is by design readable by every
+application in the login session, like any desktop music player. It is a
+separate opt-in so enabling media control alone keeps track details behind
+BlueFerry's authenticated Media1 API.
+"""
 
 SHOW_NOTIFICATION_CONTENT: bool = _env_bool(
     "BLUEFERRY_SHOW_NOTIFICATION_CONTENT", True

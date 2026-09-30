@@ -10,6 +10,7 @@ EVENTS_IFACE = f"{BUS_NAME}.Events1"
 # introspection is stable; its methods fail with CallsDisabled when the
 # feature is off. Calls1 does not change MESSAGES_API_VERSION.
 CALLS_IFACE = f"{BUS_NAME}.Calls1"
+MEDIA_IFACE = f"{BUS_NAME}.Media1"
 ERROR_PREFIX = f"{BUS_NAME}.Error"
 
 # Compatibility generation, independent of package versions. Generation 2
@@ -36,6 +37,9 @@ POLICY_CALL_TIMEOUT_SEC = 10
 STORAGE_CALL_TIMEOUT_SEC = 135  # wallet I/O has its own 120-second cancellation deadline
 CLEAR_CALL_TIMEOUT_SEC = 20
 DELETE_CALL_TIMEOUT_SEC = 20
+# A media command waits behind at most a few queued GATT round trips, each
+# bounded by the backend's 10-second BlueZ call timeout.
+MEDIA_CALL_TIMEOUT_SEC = 25
 
 # oFono bounds its own call-control requests at 30 seconds (Dial waits for the
 # phone to accept the call); leave room for the backend's reply.

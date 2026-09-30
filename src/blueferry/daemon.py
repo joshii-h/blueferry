@@ -9,12 +9,14 @@ from __future__ import annotations
 import logging
 import signal
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import dbus
 from gi.repository import GLib
 
 from blueferry import __version__, bluez_setup, config
 from blueferry.adapter_class_supervisor import AdapterClassSupervisor
+from blueferry.ams.client import AmsClient
 from blueferry.ancs.client import ACTION_DISCONNECTED, AncsClient
 from blueferry.backend_lifecycle import installed_release
 from blueferry.backend_operations import BackendDependencies
@@ -51,6 +53,7 @@ from blueferry.history import (
     history_count,
     mark_event_handles_read,
 )
+from blueferry.media import MediaController
 from blueferry.notification_policy import (
     ALL_NOTIFICATIONS,
     NotificationPolicyStore,
@@ -74,6 +77,9 @@ from blueferry.starred_threads import StarredThreadsStore
 from blueferry.storage_preparation import PreparedStorage, prepare_storage
 from blueferry.storage_security import StorageSecurity
 from blueferry.wireplumber_policy import WirePlumberPhoneAudioPolicy
+
+if TYPE_CHECKING:
+    from blueferry.mpris import MprisPlayer
 
 log = logging.getLogger(__name__)
 
@@ -157,6 +163,15 @@ class Daemon:
         # One MAP reconnect per MNS outage; seeing MNS again rearms it.
         self._mns_reconnect_spent = False
         self.ancs: AncsClient | None = None
+        # Opt-in Apple Media Service. The controller exists whenever the user
+        # opted in so clients can see why media is unavailable; the GATT
+        # client exists only where LE is allowed (full delivery mode).
+        self.media: MediaController | None = (
+            MediaController(le_enabled=config.ANCS_ENABLED)
+            if config.MEDIA_CONTROL_ENABLED else None
+        )
+        self.ams: AmsClient | None = None
+        self.mpris: MprisPlayer | None = None
         self.adapter_class = AdapterClassSupervisor(config.ADAPTER)
         self.solicitation = SolicitationSupervisor(config.ADAPTER)
         self.phone_audio = WirePlumberPhoneAudioPolicy()
@@ -291,6 +306,8 @@ class Daemon:
         self.sessions.close_all(remove_remote=False)
         if self.ancs is not None:
             self.ancs.observe_bearer_state(False)
+        if self.ams is not None:
+            self.ams.observe_bearer_state(False)
 
     def _resume_after_recovery(self) -> None:
         if not self._bluetooth_initialized:
@@ -376,6 +393,8 @@ class Daemon:
             self.solicitation.set_needed(True)
         if self.ancs is not None:
             self.ancs.observe_bearer_state(connected)
+        if self.ams is not None:
+            self.ams.observe_bearer_state(connected)
 
     def _on_ancs_status(self) -> None:
         # StartNotify is not the success boundary.  Keep solicitation on air
@@ -439,9 +458,11 @@ class Daemon:
                 calls=self.calls,
                 call_history=self.call_history,
                 contact_photos=config.CONTACT_PHOTOS,
+                media=self.media,
             ),
         )
         self.events.set_dbus_service(self._dbus_service)
+        self._publish_media()
         self._initialize_storage()
         log.info("DBus service ready: %s", BUS_NAME)
         self._emit_status()
@@ -463,6 +484,54 @@ class Daemon:
         # Let the GLib loop begin dispatching D-Bus before potentially slow
         # profile setup. This makes activation and GetStatus deterministic.
         self._startup_id = GLib.timeout_add(250, self._initialize)
+
+    def _publish_media(self) -> None:
+        """Connect the opt-in media controller to its D-Bus surfaces."""
+        if self.media is None or self._dbus_service is None:
+            return
+        self.media.add_listener(self._dbus_service.emit_now_playing_changed)
+        if not config.MEDIA_MPRIS_ENABLED or self.mpris is not None:
+            return
+        from blueferry.mpris import MprisPlayer
+
+        try:
+            self.mpris = MprisPlayer(
+                self._dbus_service.connection,
+                self.media,
+                self._dbus_service.caller_guard,
+            )
+        except Exception:
+            log.warning("could not export the MPRIS player", exc_info=True)
+
+    def _on_media_availability(self, available: bool) -> None:
+        if self.media is not None:
+            self.media.handle_availability(available)
+        self._emit_status()
+
+    def _start_media(self, device_path: str) -> None:
+        if self.media is None or self.ams is not None:
+            return
+        if not config.ANCS_ENABLED:
+            log.info("iPhone media control needs the LE link; compatibility mode disables it")
+            return
+        media = self.media
+        candidate = AmsClient(
+            device_path,
+            on_update=media.handle_update,
+            on_supported_commands=media.handle_supported_commands,
+            on_availability=self._on_media_availability,
+        )
+        self.ams = candidate
+        media.attach(candidate)
+        try:
+            candidate.observe_bearer_state(self.bearers.le_state)
+            candidate.start()
+        except Exception:
+            # Media control is optional: never let it block messaging.
+            log.warning("iPhone media control could not start", exc_info=True)
+            media.attach(None)
+            self.ams = None
+            candidate.stop()
 
     def _retry_storage(self) -> bool:
         # A daemon activated before the desktop keyring opens must recover
@@ -597,6 +666,7 @@ class Daemon:
                 raise
         elif not config.ANCS_ENABLED:
             log.info("ANCS connection disabled by pairing compatibility policy")
+        self._start_media(device_path)
         self._watch_sleep_resume()
 
         # Sinks don't need the OBEX sessions — set them up now so ANCS events
@@ -651,6 +721,8 @@ class Daemon:
         # the new observation until the next physical link transition.
         if self.ancs is not None:
             self.ancs.observe_bluez_owner(old_owner, new_owner)
+        if self.ams is not None:
+            self.ams.observe_bluez_owner(old_owner, new_owner)
         if (
             new_owner
             and not self.recovery.active
@@ -871,6 +943,9 @@ class Daemon:
             "storage_policy": self.storage.status.policy,
             "storage_state": self.storage.status.state,
             "storage_detail": self.storage.status.detail,
+            "media_control_enabled": self.media is not None,
+            "media_control_available": bool(self.media and self.media.available),
+            "media_mpris_enabled": self.mpris is not None,
             **self._controller_identity(),
             **self.connectivity.snapshot(),
         }
@@ -995,6 +1070,13 @@ class Daemon:
             self.listener.stop()
         if self.ancs is not None:
             self.ancs.stop()
+        if self.ams is not None:
+            self.ams.stop()
+        if self.mpris is not None:
+            self.mpris.close()
+            self.mpris = None
+        if self.media is not None:
+            self.media.close()
         self.solicitation.stop()
         self.events.stop()
         self._clear_photo_files()

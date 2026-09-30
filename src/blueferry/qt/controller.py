@@ -72,6 +72,7 @@ class BridgeController(QObject):
     phoneCallsChanged = Signal()
     callHistoryChanged = Signal()
     avatarsChanged = Signal()
+    nowPlayingChanged = Signal()
 
     def __init__(
         self,
@@ -144,6 +145,13 @@ class BridgeController(QObject):
         self._call_history_timer.setSingleShot(True)
         self._call_history_timer.setInterval(100)
         self._call_history_timer.timeout.connect(self.loadCallHistory)
+        # Opt-in iPhone media control: coalesce NowPlayingChanged bursts and
+        # fetch the private snapshot through Media1 only when enabled.
+        self._now_playing: dict = {}
+        self._now_playing_timer = QTimer(self)
+        self._now_playing_timer.setSingleShot(True)
+        self._now_playing_timer.setInterval(150)
+        self._now_playing_timer.timeout.connect(self.refreshNowPlaying)
         self._bus = QDBusConnection.sessionBus() if subscribe else None
         if subscribe:
             self._subscribe()
@@ -290,6 +298,9 @@ class BridgeController(QObject):
     @Property("QVariantList", notify=notificationOpenMapChanged)
     def notificationOpenMap(self):
         return self._notification_open_map
+    @Property("QVariantMap", notify=nowPlayingChanged)
+    def nowPlaying(self):
+        return self._now_playing
 
     @Property("QVariantList", notify=devicesChanged)
     def devices(self):
@@ -485,6 +496,47 @@ class BridgeController(QObject):
             "CallHistoryChanged",
             self,
             SLOT("_callHistoryInvalidated()"),
+        )
+        self._bus.connect(
+            BUS_NAME,
+            OBJECT_PATH,
+            EVENTS_IFACE,
+            "NowPlayingChanged",
+            self,
+            SLOT("_nowPlayingInvalidated()"),
+        )
+
+    @Slot()
+    def _nowPlayingInvalidated(self) -> None:
+        self._now_playing_timer.start()
+
+    def _set_now_playing(self, value: object) -> None:
+        snapshot = dict(value) if isinstance(value, dict) else {}
+        if snapshot != self._now_playing:
+            self._now_playing = snapshot
+            self.nowPlayingChanged.emit()
+
+    @Slot()
+    def refreshNowPlaying(self) -> None:
+        if not self._status.get("media_control_enabled"):
+            self._set_now_playing({})
+            return
+        self._run(
+            self._backend.now_playing,
+            self._set_now_playing,
+            lambda _message: self._set_now_playing({}),
+            busy=False,
+        )
+
+    @Slot(str)
+    def sendMediaCommand(self, command: str) -> None:
+        selected = str(command or "").strip()
+        if not selected:
+            return
+        self._run(
+            lambda: self._backend.send_media_command(selected),
+            lambda _value: None,
+            busy=False,
         )
 
     @Slot("QVariantMap")
@@ -693,6 +745,7 @@ class BridgeController(QObject):
             self._maybe_unlock_storage()
             if self._status.get("calls_enabled") or self._phone_calls:
                 self.refreshCalls()
+            self._now_playing_timer.start()
         self._update_onboarding_stage()
         self._refresh_pairing_issue_report()
         self._set_error(self._state.error)

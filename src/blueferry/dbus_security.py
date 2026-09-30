@@ -52,6 +52,10 @@ _RULES: dict[str, tuple[RateRule, ...]] = {
     # more generous interactive bucket.
     "calls-dial": (RateRule(6, 60), RateRule(60, 3_600)),
     "calls-control": (RateRule(60, 60), RateRule(600, 3_600)),
+    # iPhone media control has its own buckets so a media applet polling
+    # MPRIS, or a held volume key, cannot starve message reads or sends.
+    "media-read": (RateRule(600, 60),),
+    "media-command": (RateRule(60, 60), RateRule(1_200, 3_600)),
 }
 
 

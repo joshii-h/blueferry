@@ -160,6 +160,14 @@ class GroupRoutes(Protocol):
     def clear(self) -> None: ...
 
 
+class MediaControl(Protocol):
+    def snapshot(self) -> dict[str, object]: ...
+
+    def send_command(
+        self, name: str, on_success: Callable[[], None], on_failure: Failure,
+    ) -> None: ...
+
+
 class ConfirmedGroups(Protocol):
     def matching_rosters(self, rosters: Mapping[str, str]) -> set[str]: ...
 
@@ -237,6 +245,7 @@ class BackendDependencies:
     # Present only when BLUEFERRY_CALL_HISTORY_ENABLED is set.
     call_history: CallHistory | None = None
     contact_photos: bool = False
+    media: MediaControl | None = None
 
 
 class BackendOperations:
@@ -1226,6 +1235,21 @@ class BackendOperations:
             success,
             lambda error: failure(OperationFailedError("CallHistorySync", error)),
         )
+    def now_playing(self) -> dict[str, object]:
+        """iPhone now-playing snapshot; ``enabled`` is false when opted out."""
+        if self.dependencies.media is None:
+            return {"enabled": False, "available": False, "detail": "disabled"}
+        return self.dependencies.media.snapshot()
+
+    def send_media_command(
+        self, name: str, on_success: Callable[[], None], on_failure: Failure,
+    ) -> None:
+        if self.dependencies.media is None:
+            raise NotReadyError(
+                "iPhone media control is disabled; set "
+                "BLUEFERRY_MEDIA_CONTROL_ENABLED=true to opt in"
+            )
+        self.dependencies.media.send_command(name, on_success, on_failure)
 
     def is_healthy(self) -> bool:
         return self.sessions.map is not None
