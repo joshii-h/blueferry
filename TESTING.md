@@ -49,6 +49,20 @@ style dependencies fail this check even when CLI/TUI startup still succeeds.
   unlock prompt, or inspect the user's encrypted BlueFerry databases.
 - Lifecycle and concurrency tests assert externally meaningful outcomes, not
   private call order unless the order itself prevents a leak or race.
+- The eight classes with a `schedule`/`cancel` seam (`AdapterClassSupervisor`,
+  `AncsClient`, `BearerSupervisor`, `BluetoothRecovery`, `EventDispatcher`,
+  `MnsWatch`, `ProfileSupervisor`, `SolicitationSupervisor`) get both fakes
+  injected in tests, and `BluetoothRecovery` also its `idle` fake. Their GLib
+  defaults are bound at import time, so patching `GLib` does not replace them.
+  The autouse `glib_source_guard` in `tests/conftest.py` fails any test that
+  leaves a GLib timer or idle source armed, because it would fire later on an
+  orphaned object inside an unrelated test.
+- Private-bus tests open their own connections with
+  `tests.private_bus.open_private_bus`, which disables libdbus's
+  exit-on-disconnect. Otherwise a closed connection that a failing test keeps
+  alive makes the next GLib iteration exit pytest with status 1 and no report.
+  `tests/conftest.py` rejects `dbus.SessionBus(private=True)` and
+  `dbus.SystemBus(private=True)` called directly from test code.
 - Daemon tests build a real `Daemon` with the `make_daemon` fixture, which
   isolates every state path, and replace only hardware-facing collaborators.
   Never assemble one with `Daemon.__new__` and hand-set private fields.
