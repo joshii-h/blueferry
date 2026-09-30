@@ -400,3 +400,98 @@ def test_stop_is_inert_afterwards(harness) -> None:
     bus.notify(EU, bytes([2, 2, 0]) + b"x")
     assert updates == []
     client.stop()
+
+
+def test_characteristic_removed_and_added_during_settle_resubscribes(harness) -> None:
+    client, bus, timers, *_ = harness
+    client.observe_bearer_state(True)
+    client.start()
+    bus.take("GetManagedObjects").succeed(_objects())
+    manager_added, manager_removed = [m for m in bus.matches if m.path == "/"]
+
+    # BlueZ re-enumerates GATT while the LE link is still settling.
+    manager_removed.handler(EA, [GATT])
+    manager_added.handler(EA, {GATT: {"UUID": ENTITY_ATTRIBUTE_CHAR}})
+    assert bus.pending() == []
+    timers.run_all()
+
+    assert bus.pending() == [("StartNotify", RC)]
+
+
+def test_bearer_loss_during_settle_cancels_it(harness) -> None:
+    client, bus, timers, *_ = harness
+    client.observe_bearer_state(True)
+    client.start()
+    bus.take("GetManagedObjects").succeed(_objects())
+    client.observe_bearer_state(False)
+    assert timers.pending == {}
+    assert bus.pending() == []
+
+
+def test_missing_first_update_resubscribes_with_backoff(harness) -> None:
+    client, bus, timers, _updates, _commands, availability = harness
+    _subscribe(client, bus, timers)
+    assert client.available
+    assert list(timers.delays.values())[-1] == 10
+
+    timers.run_all()  # no Entity Update arrived within the window
+
+    assert not client.available
+    assert availability == [True, False]
+    assert list(timers.delays.values())[-1] == 2  # retry, not an LE reset
+    timers.run_all()
+    # The cached Notifying flag is not trusted after a silent registration.
+    assert bus.pending() == [("StartNotify", RC)]
+    bus.take("StartNotify", RC).succeed()
+    bus.take("StartNotify", EU).succeed()
+    for _entity in EntityID:
+        bus.take("WriteValue", EU).succeed()
+    timers.run_all()
+    assert list(timers.delays.values())[-1] == 4  # silence keeps backing off
+
+
+def test_first_update_disarms_the_watchdog(harness) -> None:
+    client, bus, timers, *_ = harness
+    _subscribe(client, bus, timers)
+    bus.notify(EU, bytes([0, 0, 0]) + b"Music")
+    assert timers.pending == {}
+    assert client.available
+
+
+@pytest.mark.parametrize("message,expected", [
+    ("Operation failed with ATT error: 0xa0", "(AMS InvalidState 0xA0)"),
+    ("Application error 0xA1", "(AMS InvalidCommand 0xA1)"),
+    ("att error 0xa2", "(AMS AbsentAttribute 0xA2)"),
+])
+def test_ams_att_codes_are_logged_by_name(harness, caplog, message, expected) -> None:
+    client, bus, timers, *_ = harness
+    _subscribe(client, bus, timers)
+    caplog.set_level("INFO", logger="blueferry.ams.client")
+    client.send_command(RemoteCommandID.Play, lambda: None, lambda _error: None)
+    bus.take("WriteValue", RC).fail(name="org.bluez.Error.Failed", message=message)
+    assert f"org.bluez.Error.Failed {expected}" in caplog.text
+    assert message not in caplog.text
+
+
+def test_unknown_att_code_logs_only_the_error_name(harness, caplog) -> None:
+    client, bus, timers, *_ = harness
+    _subscribe(client, bus, timers)
+    caplog.set_level("INFO", logger="blueferry.ams.client")
+    bus.notify(EU, bytes([2, 2, 1]) + b"Tit")
+    bus.take("WriteValue", EA).fail(message="secret detail 0x0e")
+    assert "org.bluez.Error.Failed" in caplog.text
+    assert "secret detail" not in caplog.text
+    assert "AMS " not in caplog.text.split("full attribute read failed")[-1]
+
+
+def test_subscription_failure_names_the_ams_code(harness, caplog) -> None:
+    client, bus, timers, *_ = harness
+    caplog.set_level("INFO", logger="blueferry.ams.client")
+    client.observe_bearer_state(True)
+    client.start()
+    bus.take("GetManagedObjects").succeed(_objects())
+    timers.run_all()
+    bus.take("StartNotify", RC).succeed()
+    bus.take("StartNotify", EU).succeed()
+    bus.take("WriteValue", EU).fail(message="ATT error: 0xa1")
+    assert "AMS InvalidCommand 0xA1" in caplog.text

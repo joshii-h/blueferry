@@ -20,6 +20,7 @@ D-Bus connection closes.
 from __future__ import annotations
 
 import logging
+import re
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -31,6 +32,7 @@ from gi.repository import GLib
 
 from blueferry.ams.constants import (
     AMS_CHAR_UUIDS,
+    AMS_ERROR_NAMES,
     ENTITY_ATTRIBUTE_CHAR,
     ENTITY_ATTRIBUTES,
     ENTITY_UPDATE_CHAR,
@@ -55,6 +57,10 @@ DBUS_CALL_TIMEOUT_SECONDS = 10
 BEARER_SETTLE_SECONDS = 3
 SUBSCRIBE_RETRY_INITIAL_SECONDS = 2
 SUBSCRIBE_RETRY_MAX_SECONDS = 60
+# The Media Source answers a registration with the current attribute values.
+# Silence after a successful registration means the notifications are not
+# reaching BlueFerry (for example a stale CCC registration).
+FIRST_UPDATE_TIMEOUT_SECONDS = 10
 
 _BLUEZ = "org.bluez"
 _GATT_CHAR = "org.bluez.GattCharacteristic1"
@@ -77,10 +83,23 @@ def _char_path_to_device_path(char_path: str) -> str:
     return "/".join(char_path.rsplit("/", 2)[:-2])
 
 
+_ATT_CODE_RE = re.compile(r"0x([0-9a-f]{2})\b", re.IGNORECASE)
+
+
 def _error_name(error: Exception) -> str:
-    if isinstance(error, dbus.exceptions.DBusException):
-        return error.get_dbus_name() or type(error).__name__
-    return type(error).__name__
+    """D-Bus error name plus a named AMS ATT code when BlueZ reports one.
+
+    Only the error name and a known AMS code are logged; the free-form
+    message is never echoed.
+    """
+    if not isinstance(error, dbus.exceptions.DBusException):
+        return type(error).__name__
+    name = error.get_dbus_name() or type(error).__name__
+    for match in _ATT_CODE_RE.finditer(error.get_dbus_message() or ""):
+        code = int(match.group(1), 16)
+        if code in AMS_ERROR_NAMES:
+            return f"{name} (AMS {AMS_ERROR_NAMES[code]} 0x{code:02X})"
+    return name
 
 
 @dataclass(slots=True)
@@ -130,6 +149,7 @@ class AmsClient:
         self._pending_reads: set[tuple[int, int]] = set()
         self._settle_id: int | None = None
         self._retry_id: int | None = None
+        self._first_update_id: int | None = None
         self._retry_delay = SUBSCRIBE_RETRY_INITIAL_SECONDS
 
     # ---- public state ---------------------------------------------------
@@ -160,6 +180,7 @@ class AmsClient:
         log.info("AMS client stopping")
         self._started = False
         self._bearer_ready = False
+        self._cancel_settle()
         self._reset_subscription()
         self._remove_matches(self._manager_matches)
         self._manager_generation += 1
@@ -173,6 +194,7 @@ class AmsClient:
             if previous is True or self._subscribing or self._available:
                 log.info("iPhone LE bearer unavailable; resetting AMS subscription")
             self._bearer_ready = False
+            self._cancel_settle()
             self._reset_subscription()
             return
         if previous is True:
@@ -186,6 +208,7 @@ class AmsClient:
         if old_owner:
             log.info("BlueZ owner disappeared; resetting AMS discovery")
             self._bearer_ready = False
+            self._cancel_settle()
             self._reset_subscription()
             self._bearer_connected = None
             self._remove_matches(self._manager_matches)
@@ -268,6 +291,16 @@ class AmsClient:
             return
         self._settle_id = self._schedule(BEARER_SETTLE_SECONDS, self._settled)
 
+    def _cancel_settle(self) -> None:
+        """Only a bearer or BlueZ change invalidates the settle window."""
+        if self._settle_id is None:
+            return
+        try:
+            self._cancel(self._settle_id)
+        except Exception:
+            log.debug("could not remove AMS settle timer", exc_info=True)
+        self._settle_id = None
+
     def _settled(self) -> bool:
         self._settle_id = None
         if self._started and self._bearer_connected is True:
@@ -328,9 +361,11 @@ class AmsClient:
                 return
             if not remaining:
                 self._subscribing = False
-                self._retry_delay = SUBSCRIBE_RETRY_INITIAL_SECONDS
                 self._set_available(True)
                 log.info("AMS media updates registered")
+                self._first_update_id = self._schedule(
+                    FIRST_UPDATE_TIMEOUT_SECONDS, self._first_update_missing,
+                )
                 return
             label, run = remaining.popleft()
             if not self._enqueue(_Operation(label, run, next_step, failed, generation)):
@@ -393,6 +428,21 @@ class AmsClient:
         log.info("retrying AMS subscription in %ds", delay)
         self._retry_id = self._schedule(delay, self._retry)
 
+    def _first_update_missing(self) -> bool:
+        self._first_update_id = None
+        if not self._available:
+            return False
+        log.warning(
+            "no AMS entity update within %ds of registering; resubscribing",
+            FIRST_UPDATE_TIMEOUT_SECONDS,
+        )
+        # Ask BlueZ for the notify session again instead of trusting the
+        # cached Notifying flag that may describe a dead registration.
+        self._owned_notify_paths.clear()
+        self._reset_subscription()
+        self._schedule_retry()
+        return False
+
     def _retry(self) -> bool:
         self._retry_id = None
         self._try_subscribe()
@@ -412,7 +462,9 @@ class AmsClient:
         """Forget every in-flight operation; late replies are discarded."""
         self._generation += 1
         self._subscribing = False
-        for attribute in ("_settle_id", "_retry_id"):
+        # The settle timer belongs to the bearer, not to this subscription:
+        # a characteristic can vanish and return while the link settles.
+        for attribute in ("_retry_id", "_first_update_id"):
             source = getattr(self, attribute)
             if source is not None:
                 try:
@@ -524,6 +576,14 @@ class AmsClient:
         except ValueError as error:
             log.warning("AMS entity update rejected: %s", error)
             return
+        if self._first_update_id is not None:
+            try:
+                self._cancel(self._first_update_id)
+            except Exception:
+                log.debug("could not remove AMS first-update timer", exc_info=True)
+            self._first_update_id = None
+        # Backoff resets only once notifications are proven to flow.
+        self._retry_delay = SUBSCRIBE_RETRY_INITIAL_SECONDS
         self._deliver(update)
         if update.truncated:
             self._fetch_full_value(update.entity, update.attribute)

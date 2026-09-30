@@ -85,11 +85,16 @@ class RepeatMode(IntEnum):
     All = 2
 
 
-# ATT application error codes defined by AMS. BlueZ surfaces them as a
-# D-Bus error whose message carries the code; they are logged, never parsed.
+# ATT application error codes defined by AMS. BlueZ surfaces them only in
+# the D-Bus error message text; the client extracts and logs the name.
 AMS_ERROR_INVALID_STATE = 0xA0
 AMS_ERROR_INVALID_COMMAND = 0xA1
 AMS_ERROR_ABSENT_ATTRIBUTE = 0xA2
+AMS_ERROR_NAMES: dict[int, str] = {
+    AMS_ERROR_INVALID_STATE: "InvalidState",
+    AMS_ERROR_INVALID_COMMAND: "InvalidCommand",
+    AMS_ERROR_ABSENT_ATTRIBUTE: "AbsentAttribute",
+}
 
 # Attributes registered per entity. Every attribute AMS defines is used.
 ENTITY_ATTRIBUTES: dict[EntityID, tuple[int, ...]] = {
