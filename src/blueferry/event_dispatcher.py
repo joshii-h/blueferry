@@ -10,6 +10,7 @@ from hashlib import blake2b
 
 from gi.repository import GLib
 
+from blueferry import config
 from blueferry.ancs.constants import MESSAGES_APP_ID
 from blueferry.bus import get_session_bus
 from blueferry.client_activation import request_message_activation
@@ -18,6 +19,20 @@ from blueferry.limits import MAX_ANCS_FINGERPRINTS
 from blueferry.sinks import Sink
 from blueferry.sinks.libnotify import LibnotifySink
 from blueferry.sinks.sqlite import SqliteSink
+
+_OTP_SINK_NAME = "otp-clipboard"
+
+
+def _default_otp_sink(*, notification_policy, session_bus=None) -> Sink:
+    from blueferry.otp_clipboard import ClipboardWriter
+    from blueferry.sinks.otp_clipboard import DesktopNotifier, OtpClipboardSink
+
+    return OtpClipboardSink(
+        writer=ClipboardWriter(clear_after_s=config.OTP_CLEAR_SECONDS),
+        notification_policy=notification_policy,
+        notifier=DesktopNotifier(session_bus),
+    )
+
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +75,8 @@ class EventDispatcher:
         on_call_action: Callable[[str, str], None] | None = None,
         contact_photo: Callable[[str | None], str | None] | None = None,
         notification_sink_factory: Callable[..., Sink] = LibnotifySink,
+        otp_autocopy: Callable[[], bool] | None = None,
+        otp_sink_factory: Callable[..., Sink] = _default_otp_sink,
         session_bus=None,
         schedule: Callable[[int, Callable[[], bool]], int] = GLib.timeout_add_seconds,
         cancel: Callable[[int], object] = GLib.source_remove,
@@ -75,6 +92,8 @@ class EventDispatcher:
         self.on_call_action = on_call_action
         self.contact_photo = contact_photo
         self._notification_sink_factory = notification_sink_factory
+        self._otp_autocopy = otp_autocopy
+        self._otp_sink_factory = otp_sink_factory
         self._session_bus = session_bus
         self._schedule = schedule
         self._cancel = cancel
@@ -100,6 +119,7 @@ class EventDispatcher:
         self._setup_complete = True
         self._watch_notification_owner()
         self._ensure_libnotify_sink()
+        self._ensure_otp_sink()
         log.info("sinks ready: %s", self.names)
         self._setup_logged = True
 
@@ -114,6 +134,36 @@ class EventDispatcher:
                 log.debug("could not remove notification owner watch", exc_info=True)
             self._notification_owner_match = None
         self._remove_libnotify_sink(log_change=False)
+        self._remove_sinks(_OTP_SINK_NAME)
+
+    def _ensure_otp_sink(self) -> None:
+        """Add the opt-in one-time code clipboard sink."""
+        enabled = (
+            self._otp_autocopy() if self._otp_autocopy is not None else config.OTP_AUTOCOPY
+        )
+        if not enabled or any(sink.name == _OTP_SINK_NAME for sink in self.sinks):
+            return
+        try:
+            self.sinks.append(
+                self._otp_sink_factory(
+                    notification_policy=self.notification_policy,
+                    session_bus=self._session_bus,
+                )
+            )
+        except Exception:
+            log.exception("one-time code clipboard sink failed to init — continuing")
+
+    def _remove_sinks(self, name: str) -> None:
+        removed = [sink for sink in self.sinks if sink.name == name]
+        self.sinks = [sink for sink in self.sinks if sink.name != name]
+        for sink in removed:
+            close = getattr(sink, "close", None)
+            if close is None:
+                continue
+            try:
+                close()
+            except Exception:
+                log.debug("could not close %s sink", name, exc_info=True)
 
     def _watch_notification_owner(self) -> None:
         if self._notification_owner_match is not None:

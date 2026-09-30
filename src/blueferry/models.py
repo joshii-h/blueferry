@@ -73,6 +73,7 @@ class BackendStatus:
     phone_signal_strength: int | None = None
     phone_network_name: str | None = None
     phone_network_status: str | None = None
+    otp_autocopy: bool = False
     extra: Mapping[str, Any] = field(default_factory=dict, repr=False)
 
     @property
@@ -116,6 +117,7 @@ class BackendStatus:
             "phone_signal_strength",
             "phone_network_name",
             "phone_network_status",
+            "otp_autocopy",
         }
         return cls(
             daemon=_bool(value.get("daemon")),
@@ -153,6 +155,7 @@ class BackendStatus:
             phone_signal_strength=_percent(value.get("phone_signal_strength")),
             phone_network_name=_optional_str(value.get("phone_network_name")),
             phone_network_status=_optional_str(value.get("phone_network_status")),
+            otp_autocopy=_bool(value.get("otp_autocopy")),
             extra={key: item for key, item in value.items() if key not in known},
         )
 
@@ -189,6 +192,7 @@ class BackendStatus:
             "phone_signal_strength": self.phone_signal_strength,
             "phone_network_name": self.phone_network_name,
             "phone_network_status": self.phone_network_status,
+            "otp_autocopy": self.otp_autocopy,
         }
 
 

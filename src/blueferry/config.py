@@ -22,6 +22,8 @@ LOCAL_ENV_KEYS = frozenset({
     "BLUEFERRY_PHONE_BATTERY_LOW_PERCENT",
     "BLUEFERRY_NOTIFICATION_TIMEOUT_MS",
     "BLUEFERRY_MARK_READ_ON_DISMISS",
+    "BLUEFERRY_OTP_AUTOCOPY",
+    "BLUEFERRY_OTP_CLEAR_SECONDS",
     "BLUEFERRY_HISTORY_RETENTION_DAYS",
     "BLUEFERRY_HISTORY_MAX_EVENTS",
     "BLUEFERRY_HISTORY_MAX_PAYLOAD_BYTES",
@@ -250,6 +252,15 @@ Off by default. Photos enlarge the private contact cache and put more
 remote-controlled bytes in front of client image decoders; see
 ``blueferry.contact_photos`` for the threat model.
 """
+OTP_AUTOCOPY: bool = _env_bool("BLUEFERRY_OTP_AUTOCOPY", False)
+"""Copy one-time codes from newly received messages to the clipboard.
+
+Off by default: it changes the clipboard without a user action. The code is
+never logged or broadcast, and the confirmation popup shows it only when
+``SHOW_NOTIFICATION_CONTENT`` is enabled.
+"""
+OTP_CLEAR_SECONDS: int = _env_int("BLUEFERRY_OTP_CLEAR_SECONDS", 0, 0, 600)
+"""Clear a copied code after this many seconds if nothing replaced it (0 = keep)."""
 HISTORY_RETENTION_DAYS: int = _env_int(
     "BLUEFERRY_HISTORY_RETENTION_DAYS", 30, 1, 3650
 )

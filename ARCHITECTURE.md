@@ -102,6 +102,10 @@ All paths are relative to `src/blueferry/` unless noted.
 | `sinks/__init__.py` | Sink protocol: `handle(event)` plus optional `handle_ancs`, `handle_call`, and `handle_phone_battery_low` (optional HFP calls, desktop UI only). |
 | `sinks/sqlite.py` | Persists events to the private history store. |
 | `sinks/libnotify.py` | Desktop notifications via `org.freedesktop.Notifications`, including open and dismiss actions, optional incoming-call Answer/Decline, and the optional phone low-battery warning. |
+| `sinks/libnotify.py` | Desktop notifications via `org.freedesktop.Notifications`, including open and dismiss actions. |
+| `sinks/otp_clipboard.py` | Opt-in: copies one-time codes from new incoming MAP messages to the clipboard and shows a transient confirmation. |
+| `otp.py` | Pure, keyword-anchored one-time code detection with false-positive filters. |
+| `otp_clipboard.py` | Chooses wl-copy/xclip/xsel and owns one foreground clipboard helper; probes `--sensitive` on a worker, reaps through a GLib child watch, and clearing stops a helper that still owns the code. |
 
 ### Storage and privacy
 
@@ -152,6 +156,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `cli_contacts.py` | `contacts-photo` export of one cached contact photo. |
 | `cli_common.py` | Small CLI presentation helpers. |
 | `cli_calls.py` | Optional `blueferry calls` commands over `Calls1` and `blueferry phone-status` (battery, signal, network from `GetStatus`). |
+| `cli_otp.py` | `otp-status` and `otp-check` for one-time code auto-copy. |
 | `tui.py` | Textual terminal client. |
 | `tui_launcher.py` | Launches the TUI with the package-private Textual bundle when present. |
 | `tui_calls.py` | Optional Textual calls panel. |
@@ -508,9 +513,15 @@ A change to these rules has to be made in both places.
   policy applies exact bundle-ID allow/block rules first and delivers content
   only to an ephemeral popup sink, never retained or broadcast. Apple Messages
   keeps only the fields needed for group correlation.
-- **Logs** exclude message bodies, notification text, and recipient
-  identities at every level. Markup and terminal output are escaped at their
-  display boundaries.
+- **Logs** exclude message bodies, notification text, one-time codes, and
+  recipient identities at every level. Markup and terminal output are escaped
+  at their display boundaries.
+- **One-time codes** (opt-in `BLUEFERRY_OTP_AUTOCOPY`) go from the daemon
+  straight to a clipboard helper's stdin, never to argv, the BlueFerry API,
+  logs, or storage. The transient confirmation popup includes the code only
+  when notification content is enabled. The daemon writes the clipboard
+  itself: a background Wayland client needs a data-control helper such as
+  `wl-copy`, and a GUI client would need the code over the bus.
 - **Configuration** files are owner-only, size-bounded, opened without
   following final symlinks, and restricted to named settings. systemd never
   sources them as a process environment.
