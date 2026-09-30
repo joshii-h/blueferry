@@ -338,6 +338,8 @@ class Daemon:
                 and not self._initializing and self.profiles.ready
                 and self.bearers.bredr_connected and self.bearers.le_state is not None
                 and self.solicitation.active()
+                # A power cycle cannot repair keys the iPhone has discarded.
+                and not self.bearers.le_bond_suspect
             ),
             # A power cycle would silently cut the user's tethered internet,
             # but only a link that demonstrably exists may hold it back.
@@ -470,6 +472,10 @@ class Daemon:
     def _on_ancs_status(self) -> None:
         # StartNotify is not the success boundary.  Keep solicitation on air
         # until a Control Point/Data Source round trip proves ANCS usable.
+        if self.ancs is not None and self.ancs.connected:
+            # An authorized Control Point round trip needs an encrypted LE
+            # link, so it disproves a stale LE bond.
+            self.bearers.note_le_usable("ANCS authorized")
         self._sync_solicitation()
         self._emit_status()
 

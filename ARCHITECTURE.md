@@ -91,7 +91,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `ams/parsers.py` | Pure AMS wire-format parsers and command/registration builders. |
 | `ams/state.py` | `NowPlaying` projection of Player, Queue, and Track attributes. |
 | `ams/constants.py` | AMS UUIDs, identifiers, and public command names. |
-| `bearer_supervisor.py` | Connects BR/EDR first, then keeps LE connected alongside it. |
+| `bearer_supervisor.py` | Connects BR/EDR first, then keeps LE connected alongside it; flags a stale LE bond from bursts of short LE links. |
 | `solicitation_supervisor.py` | Keeps the ANCS solicitation advertisement on air until ANCS is proven healthy. |
 | `adapter_class_supervisor.py` | Detects Class-of-Device drift and repairs it through the constrained system helper. |
 | `bluetooth_recovery.py` | Last-resort, rate-limited adapter power cycle for persistent ANCS outages. |
@@ -440,6 +440,14 @@ A change to these rules has to be made in both places.
   command policy; the optional `mpris` adapter owns its bus name only while a
   player is active. MPRIS broadcasts metadata session-wide by design, which
   is why it is a separate opt-in from `Media1`.
+- **Stale LE bond:** the same supervisor watches `Bearer.LE1.Disconnected`
+  (polled transitions as a fallback). Five LE drops within a minute, each
+  from a link younger than 15 s and with no usable link in between, set
+  `le_bond_suspect`. The supervisor then stops its own LE dials and resets,
+  and recovery skips the adapter power cycle. An authorized ANCS round trip,
+  a held link, a new bond, or a new bluetoothd generation clears it.
+  `GetStatus` carries the flag, the drop count, and a fixed reason token.
+  `doctor`, pairing reports, Qt, and the TUI explain the remedy.
 - **Solicitation:** `solicitation_supervisor` keeps the advertisement on air
   until MAP/PBAP and an ANCS Control Point round trip are both healthy. It
   re-registers the advertisement if BlueZ releases it or changes owner.
@@ -447,10 +455,13 @@ A change to these rules has to be made in both places.
   startup, on BlueZ owner change, and periodically. On drift it runs one fixed
   systemd helper that can only set the validated adapter to A/V Hands-Free, as
   permitted by a narrow Polkit rule. No general `btmgmt` or systemd access is
-  exposed. Without systemd, the same helper runs only through `sudo -n` and an
+  exposed. A freshly restarted bluetoothd can answer with Busy (0x0a) or hide
+  the adapter briefly, so a failed startup or restart check is retried after
+  2, 4, 8, 16, and 32 s before falling back to the periodic check.
+  Without systemd, the same helper runs only through `sudo -n` and an
   administrator-installed sudoers rule. BlueFerry never prompts for or stores
-  credentials, skips sudo under `no_new_privs`, and pauses repair after a
-  refusal until bluetoothd restarts.
+  credentials, skips sudo under `no_new_privs`, and pauses repair (including
+  the quick retries) after a refusal until bluetoothd restarts.
 - **Recovery:** `bluetooth_recovery` performs a last-resort power cycle of the
   selected controller only. It runs after a sustained ANCS outage on a setup
   that previously worked, tries an LE-only reset first, and allows one cycle

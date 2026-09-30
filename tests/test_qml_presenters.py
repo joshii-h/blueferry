@@ -983,6 +983,27 @@ def test_optional_phone_status_indicator_appears_only_with_known_values(
     # The Loader releases its item with deleteLater().
     QGuiApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     assert window.findChild(QObject, "phoneStatusIndicator") is None
+def test_qt_warns_about_a_suspect_le_bond_only_when_the_backend_reports_it(
+    qml_engine, settings_window,
+):
+    from blueferry.models import BackendStatus
+
+    window, bridge = settings_window
+    message = _settings_object(window, "leBondSuspectMessage")
+    assert "forget" in message.property("text")
+    assert _evaluate(qml_engine, "testWindow.leBondSuspect()") is False
+
+    bridge.setProperty(
+        "status",
+        BackendStatus.from_dict({"daemon": True, "le_bond_suspect": True}).to_dict(),
+    )
+    assert _evaluate(qml_engine, "testWindow.leBondSuspect()") is True
+
+    bridge.setProperty(
+        "status",
+        BackendStatus.from_dict({"daemon": True, "le_bond_suspect": "true"}).to_dict(),
+    )
+    assert _evaluate(qml_engine, "testWindow.leBondSuspect()") is False
 
 
 def test_phone_settings_first_run_and_reopening_keep_the_page_alive(qml_engine, settings_window):
