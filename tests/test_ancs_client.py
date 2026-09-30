@@ -1428,7 +1428,7 @@ class _ActionBus:
         return self.control_point
 
 
-def _action_client(monkeypatch, *, enabled=True, removed=None):
+def _action_client(monkeypatch, *, enabled=True, removed=None, reset=None):
     emitted = []
     cp = _AsyncControlPoint()
     monkeypatch.setattr(client_module, "get_system_bus", lambda: _ActionBus(cp))
@@ -1439,6 +1439,7 @@ def _action_client(monkeypatch, *, enabled=True, removed=None):
         include_non_message_notifications=lambda: True,
         notification_actions=enabled,
         on_notification_removed=removed,
+        on_actions_reset=reset,
         schedule=lambda _delay, _callback: 5,
         cancel=lambda _source: None,
     )
@@ -1668,3 +1669,16 @@ def test_session_reset_invalidates_previous_uids(monkeypatch) -> None:
     assert results == [client_module.ACTION_UNAVAILABLE]
     # A late reply from the old session still reports to its caller safely.
     pending["reply_handler"]()
+
+
+def test_session_reset_tells_the_desktop_to_retire_old_buttons(monkeypatch) -> None:
+    resets = []
+    client, _cp, _emitted = _action_client(
+        monkeypatch, reset=lambda: resets.append(True)
+    )
+    _deliver_call(client)
+
+    client.observe_bearer_state(False)
+
+    assert resets == [True]
+    assert client.perform_notification_action(42, True) is False
