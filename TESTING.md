@@ -136,7 +136,10 @@ controller; no test dials, answers, or reaches `org.ofono`. The phone battery,
 signal, and operator values use the same fake transport for the Handsfree and
 NetworkRegistration interfaces, Hypothesis for the property parsers, and the
 private bus only to check the `GetStatus` keys and the argument-free
-`StatusChanged`.
+`StatusChanged`. The `InProgress` retry runs on the manual timer queue, the
+StatusChanged coalescing on an injected `idle_add`, and log-capture tests
+check that neither levels, operator names, nor the phone's own number are
+logged.
 
 The Arch package check runs Ruff over the complete source and test tree,
 Bandit over the Python security boundaries, and type-checks every backend

@@ -151,7 +151,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `ui/window.py` | Main GTK window. |
 | `ui/conversations.py` | GTK conversations page: history, group confirmation, replies. |
 | `ui/status.py` | GTK iPhone page: setup, health, preferences, maintenance. |
-| `ui/status_presenter.py` | Pure presentation rules for the status page. |
+| `ui/status_presenter.py` | Pure presentation rules for the status page (including the optional phone battery/signal suffix). |
 | `ui/client.py` | Asynchronous GTK backend calls and D-Bus invalidations. |
 | `ui/setup_runner.py` | GTK-independent worker for blocking setup operations. |
 | `ui/util.py` | Small UI helpers. |
@@ -167,7 +167,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `qt/qml/GroupConfirmationDialog.qml` | Group recipient confirmation before sending. |
 | `qt/qml/NewMessageDialog.qml` | New message composition. |
 | `qt/qml/CallsDialog.qml` | Optional phone-calls dialog (list, dial, answer, hang up). |
-| `qt/qml/PhoneStatusIndicator.qml` | Optional iPhone battery/signal indicator (loaded only when values are known). |
+| `qt/qml/PhoneStatusIndicator.qml` | Optional iPhone battery/signal indicator (loaded only when values are known; plain-text tooltip). |
 | `qt/qml/ExpandingMessageComposer.qml` | Growing message editor. |
 | `qt/qml/MessageBubble.qml` | Message bubble. |
 | `quickshell_bridge.py` | Persistent stdin/stdout JSON bridge from Quickshell to the session D-Bus API. |
@@ -188,6 +188,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `ThemePalette.qml` | Pure color/geometry tokens with a system-palette fallback. |
 | `Ferry*.qml` | Styled controls (button, check box, combo box, label, text field, composer, section label, info row). |
 | `QuickshellMessageBubble.qml`, `QuickshellThreadPreview.qml` | Message bubble and thread preview. |
+| `QuickshellPhoneStatus.qml` | Optional iPhone battery/signal caption in the header (hidden when unknown). |
 
 `data/blueferry-quickshell` is the launcher script, and
 `data/io.weirdware.BlueFerry.xml` is the canonical D-Bus introspection
@@ -419,13 +420,18 @@ A change to these rules has to be made in both places.
   state; control replies still reach their D-Bus caller.
 - Call events go to local desktop sinks only (`handle_call`); they are not
   persisted and nothing about them is broadcast except `CallsChanged`.
-- Phone status: while the modem is online, the controller watches
-  `Handsfree` and `NetworkRegistration` (only when listed in the modem's
-  `Interfaces`) and reads them with an asynchronous `GetProperties`. Values
-  are additive `GetStatus` keys (`null` when unknown); a change emits the
-  existing argument-free `StatusChanged`. The opt-in low-battery warning goes
-  to sinks through `handle_phone_battery_low` and fires once per discharge
-  cycle.
+- Phone status: from `Powered=true` on (oFono creates these atoms in
+  `hfp_pre_sim`, independent of `Online`), the controller watches `Handsfree`
+  and `NetworkRegistration` (only when listed in the modem's `Interfaces`)
+  and reads them with an asynchronous `GetProperties`. A failed read other
+  than a vanished interface (typically `InProgress` while oFono queries
+  `AT+CNUM`) is retried once after 30 s. Values are cleared on
+  `Powered=false`, interface or modem removal, an oFono owner change, and
+  stop. They are additive `GetStatus` keys (`null` when unknown); calls-state
+  and phone-status changes emit one coalesced, argument-free `StatusChanged`
+  per main-loop iteration. The opt-in low-battery warning goes to sinks
+  through `handle_phone_battery_low` and fires once per discharge cycle (and
+  again after a daemon restart).
 
 ## Storage and privacy
 
