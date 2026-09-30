@@ -78,7 +78,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `vcard.py` | Linear, resource-bounded vCard block extraction. |
 | `vcard.py` | Linear, resource-bounded vCard block extraction; the photo-aware variant splits PHOTO out under its own budget. |
 | `contact_photos.py` | Opt-in contact photos: bounded base64 PHOTO decoding (JPEG/PNG signatures only, no URIs, no pixel decoding) and volatile owner-only copies for notification icons. |
-| `ancs/client.py` | ANCS GATT client: subscribes to characteristics, requests attributes, emits `AncsEvent`s. |
+| `ancs/client.py` | ANCS GATT client: subscribes to characteristics, requests attributes, emits `AncsEvent`s, and sends opt-in `PerformNotificationAction` writes. |
 | `ancs/parsers.py` | Pure ANCS wire-format parsers and command builders. |
 | `ancs/constants.py` | ANCS spec constants. |
 | `ancs/events.py` | `AncsEvent`, the normalized per-app notification. |
@@ -101,8 +101,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | --- | --- |
 | `sinks/__init__.py` | Sink protocol: `handle(event)` plus optional `handle_ancs`, `handle_call`, and `handle_phone_battery_low` (optional HFP calls, desktop UI only). |
 | `sinks/sqlite.py` | Persists events to the private history store. |
-| `sinks/libnotify.py` | Desktop notifications via `org.freedesktop.Notifications`, including open and dismiss actions, optional incoming-call Answer/Decline, and the optional phone low-battery warning. |
-| `sinks/libnotify.py` | Desktop notifications via `org.freedesktop.Notifications`, including open and dismiss actions. |
+| `sinks/libnotify.py` | Desktop notifications via `org.freedesktop.Notifications`, including open and dismiss actions, optional incoming-call Answer/Decline, the optional phone low-battery warning, and opt-in iPhone action buttons. |
 | `sinks/otp_clipboard.py` | Opt-in: copies one-time codes from new incoming MAP messages to the clipboard and shows a transient confirmation. |
 | `otp.py` | Pure, keyword-anchored one-time code detection with false-positive filters. |
 | `otp_clipboard.py` | Chooses wl-copy/xclip/xsel and owns one foreground clipboard helper; probes `--sensitive` on a worker, reaps through a GLib child watch, and clearing stops a helper that still owns the code. |
@@ -513,6 +512,15 @@ A change to these rules has to be made in both places.
   policy applies exact bundle-ID allow/block rules first and delivers content
   only to an ephemeral popup sink, never retained or broadcast. Apple Messages
   keeps only the fields needed for group correlation.
+- **ANCS actions** (`BLUEFERRY_ANCS_ACTIONS`, off by default): action labels
+  are app-defined content, so they are requested only while notification
+  content is shown, only for non-Messages notifications that announce an
+  action, shown only as popup buttons (markup characters removed), and never
+  retained, logged, or broadcast. A phone action runs only after a click on its
+  button, once per notification, and only for a UID announced in the current
+  ANCS session; a session reset closes every popup that still carries buttons.
+  There is no D-Bus method for it because clients never see ANCS notifications
+  or UIDs.
 - **Logs** exclude message bodies, notification text, one-time codes, and
   recipient identities at every level. Markup and terminal output are escaped
   at their display boundaries.

@@ -95,6 +95,14 @@ def doctor(verbose: bool = typer.Option(False, "-v", "--verbose")):
             )
             warnings = True
 
+    if config.ancs_actions_active():
+        actions_state = "enabled"
+    elif config.ANCS_ACTIONS:
+        actions_state = "disabled while BLUEFERRY_SHOW_NOTIFICATION_CONTENT=false"
+    else:
+        actions_state = "disabled"
+    log.info("ANCS notification actions: %s (BLUEFERRY_ANCS_ACTIONS)", actions_state)
+
     # State dir writable
     try:
         config.ensure_dirs()

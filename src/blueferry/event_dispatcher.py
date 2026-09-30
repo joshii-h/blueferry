@@ -74,6 +74,7 @@ class EventDispatcher:
         on_incoming_message=None,
         on_call_action: Callable[[str, str], None] | None = None,
         contact_photo: Callable[[str | None], str | None] | None = None,
+        perform_ancs_action=None,
         notification_sink_factory: Callable[..., Sink] = LibnotifySink,
         otp_autocopy: Callable[[], bool] | None = None,
         otp_sink_factory: Callable[..., Sink] = _default_otp_sink,
@@ -91,6 +92,7 @@ class EventDispatcher:
         self.on_incoming_message = on_incoming_message
         self.on_call_action = on_call_action
         self.contact_photo = contact_photo
+        self.perform_ancs_action = perform_ancs_action
         self._notification_sink_factory = notification_sink_factory
         self._otp_autocopy = otp_autocopy
         self._otp_sink_factory = otp_sink_factory
@@ -206,6 +208,8 @@ class EventDispatcher:
             # Likewise only with the calls opt-in: the historical keyword set
             # stays exact for sinks that predate optional features.
             options["on_call_action"] = self.on_call_action
+        if self.perform_ancs_action is not None:
+            options["on_ancs_action"] = self.perform_ancs_action
         try:
             sink = self._notification_sink_factory(
                 defer_mark_read=self.defer_mark_read,
@@ -279,6 +283,28 @@ class EventDispatcher:
 
     def set_dbus_service(self, service) -> None:
         self.dbus_service = service
+
+    def ancs_removed(self, notification_id: int) -> None:
+        """Retire desktop popups whose iPhone notification was removed."""
+        for sink in self.sinks:
+            close = getattr(sink, "close_ancs_notification", None)
+            if close is None:
+                continue
+            try:
+                close(notification_id)
+            except Exception:
+                log.exception("sink %s failed to close ANCS popup", sink.name)
+
+    def ancs_actions_reset(self) -> None:
+        """Retire every action popup after the ANCS session reset its UIDs."""
+        for sink in self.sinks:
+            close_all = getattr(sink, "close_all_ancs_notifications", None)
+            if close_all is None:
+                continue
+            try:
+                close_all()
+            except Exception:
+                log.exception("sink %s failed to retire ANCS popups", sink.name)
 
     def _open_message(self, handle: str, token: str) -> None:
         request_message_activation(handle, token)
