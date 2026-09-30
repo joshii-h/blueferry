@@ -22,6 +22,7 @@ LOCAL_ENV_KEYS = frozenset({
     "BLUEFERRY_HISTORY_RETENTION_DAYS",
     "BLUEFERRY_HISTORY_MAX_EVENTS",
     "BLUEFERRY_HISTORY_MAX_PAYLOAD_BYTES",
+    "BLUEFERRY_MEDIA_CONTROL_ENABLED",
 })
 CONFIG_DIR: Path = Path(
     os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")
@@ -194,6 +195,14 @@ def include_ancs_app(app_id: str) -> bool:
     if selected in ANCS_APP_BLOCKLIST:
         return False
     return ANCS_APP_ALLOWLIST is None or selected in ANCS_APP_ALLOWLIST
+
+MEDIA_CONTROL_ENABLED: bool = _env_bool("BLUEFERRY_MEDIA_CONTROL_ENABLED", False)
+"""Opt in to iPhone now-playing and media commands over Apple Media Service.
+
+Off by default: AMS subscriptions add LE traffic on the bond that carries
+ANCS, and this is outside BlueFerry's messaging core. Requires the full
+(ANCS/LE) delivery mode; compatibility mode never connects LE.
+"""
 
 SHOW_NOTIFICATION_CONTENT: bool = _env_bool(
     "BLUEFERRY_SHOW_NOTIFICATION_CONTENT", True

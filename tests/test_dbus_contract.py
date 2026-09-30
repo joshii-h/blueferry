@@ -5,7 +5,7 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 from blueferry.dbus_service import MessagesService
-from blueferry.protocol import EVENTS_IFACE, MESSAGES_IFACE, OBJECT_PATH
+from blueferry.protocol import EVENTS_IFACE, MEDIA_IFACE, MESSAGES_IFACE, OBJECT_PATH
 
 CONTRACT = Path(__file__).resolve().parents[1] / "data/io.weirdware.BlueFerry.xml"
 
@@ -22,19 +22,30 @@ def test_contract_matches_exported_methods_and_signals() -> None:
     node = ElementTree.parse(CONTRACT).getroot()
     assert node.attrib["name"] == OBJECT_PATH
 
-    messages = node.find(f"interface[@name='{MESSAGES_IFACE}']")
-    assert messages is not None
-    xml_methods = {method.attrib["name"]: method for method in messages.findall("method")}
-    exported_methods = {
-        name: member
-        for name, member in vars(MessagesService).items()
-        if getattr(member, "_dbus_interface", None) == MESSAGES_IFACE
-        and getattr(member, "_dbus_is_method", False)
+    for interface_name in (MESSAGES_IFACE, MEDIA_IFACE):
+        interface = node.find(f"interface[@name='{interface_name}']")
+        assert interface is not None
+        xml_methods = {
+            method.attrib["name"]: method for method in interface.findall("method")
+        }
+        exported_methods = {
+            name: member
+            for name, member in vars(MessagesService).items()
+            if getattr(member, "_dbus_interface", None) == interface_name
+            and getattr(member, "_dbus_is_method", False)
+        }
+        assert xml_methods.keys() == exported_methods.keys()
+        for name, member in exported_methods.items():
+            assert _signature(xml_methods[name], "in") == member._dbus_in_signature
+            assert _signature(xml_methods[name], "out") == member._dbus_out_signature
+
+    exported_interfaces = {
+        getattr(member, "_dbus_interface", None)
+        for member in vars(MessagesService).values()
+        if getattr(member, "_dbus_is_method", False)
+        or getattr(member, "_dbus_is_signal", False)
     }
-    assert xml_methods.keys() == exported_methods.keys()
-    for name, member in exported_methods.items():
-        assert _signature(xml_methods[name], "in") == member._dbus_in_signature
-        assert _signature(xml_methods[name], "out") == member._dbus_out_signature
+    assert exported_interfaces == {MESSAGES_IFACE, MEDIA_IFACE, EVENTS_IFACE}
 
     events = node.find(f"interface[@name='{EVENTS_IFACE}']")
     assert events is not None
@@ -65,6 +76,7 @@ def test_every_documented_error_has_the_stable_namespace() -> None:
         "ConfirmationRequired",
         "ContactSyncFailed",
         "InvalidArgs",
+        "MediaCommandFailed",
         "NotFound",
         "NotReady",
         "QueryFailed",
@@ -73,3 +85,14 @@ def test_every_documented_error_has_the_stable_namespace() -> None:
         "SendFailed",
         "SendOutcomeUnknown",
     }
+
+
+def test_events_signals_carry_no_media_content() -> None:
+    """NowPlayingChanged is an argument-free invalidation, like StatusChanged."""
+    root = ElementTree.parse(CONTRACT).getroot()
+    signal = root.find(
+        f"interface[@name='{EVENTS_IFACE}']/signal[@name='NowPlayingChanged']"
+    )
+    assert signal is not None
+    assert signal.findall("arg") == []
+    assert MessagesService.NowPlayingChanged._dbus_signature == ""
