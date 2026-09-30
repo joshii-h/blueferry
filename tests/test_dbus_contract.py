@@ -76,6 +76,7 @@ def test_every_documented_error_has_the_stable_namespace() -> None:
         "CallFailed",
         "CallsDisabled",
         "CallsUnavailable",
+        "CallHistorySyncFailed",
         "ConfirmationRequired",
         "ContactSyncFailed",
         "InvalidArgs",

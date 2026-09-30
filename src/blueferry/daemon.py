@@ -28,6 +28,13 @@ from blueferry.bluetooth_recovery import (
 )
 from blueferry.build_info import build_id, installed_build_sha, running_build_sha
 from blueferry.bus import get_system_bus, main_loop
+from blueferry.call_history import (
+    CallRecord,
+    MissedCallNotice,
+    display_caller,
+    resolve_contact_name,
+)
+from blueferry.call_history_sync import CallHistorySync
 from blueferry.calls.controller import CallController
 from blueferry.calls.phone_status import LowBatteryMonitor, PhoneStatus
 from blueferry.confirmed_groups import ConfirmedGroupsStore
@@ -176,6 +183,17 @@ class Daemon:
             contacts=self.contacts,
             submit=lambda *args, **kwargs: self.obex_worker.submit(*args, **kwargs),
             on_refreshed=self._contacts_refreshed,
+        )
+        # Opt-in: without the flag nothing is pulled, stored, or scheduled.
+        self.call_history: CallHistorySync | None = (
+            CallHistorySync(
+                sessions=self.sessions,
+                storage=self.storage,
+                submit=lambda *args, **kwargs: self.obex_worker.submit(*args, **kwargs),
+                on_changed=self._call_history_changed,
+                on_missed=self._missed_calls,
+            )
+            if config.CALL_HISTORY_ENABLED else None
         )
         self._bus_name = None
         self._dbus_service: MessagesService | None = None
@@ -400,6 +418,7 @@ class Daemon:
                 on_storage_prepared=self._apply_storage_preparation,
                 on_storage_changed=self._on_storage_changed,
                 calls=self.calls,
+                call_history=self.call_history,
             ),
         )
         self.events.set_dbus_service(self._dbus_service)
@@ -443,6 +462,8 @@ class Daemon:
         self.contacts.adopt_cache(prepared.contacts)
         self.contact_sync.storage_prepared()
         self.events.seed_historical_ancs(prepared.historical_ancs)
+        if self.call_history is not None:
+            self.call_history.adopt(prepared.call_history)
         if prepared.has_messages:
             self._mark_setup_task(MESSAGE_NOTIFICATIONS)
 
@@ -450,6 +471,8 @@ class Daemon:
         if self.storage.status.can_write and self.contacts.count() > 0:
             self._mark_setup_task(CONTACTS)
         self.contact_sync.storage_changed()
+        if self.call_history is not None:
+            self.call_history.storage_changed()
         self._emit_status()
 
     def _initialize(self) -> bool:
@@ -660,6 +683,8 @@ class Daemon:
     def _post_available_sessions_setup(self) -> None:
         """Start consumers for whichever OBEX profiles are currently live."""
         self.contact_sync.profiles_available()
+        if self.call_history is not None:
+            self.call_history.profiles_available()
 
         # Wire up MAP MNS listener.
         # Resolve through the current cache; contacts refreshes in place.
@@ -722,6 +747,34 @@ class Daemon:
             self._dbus_service.emit_history_changed()
         self._emit_status()
 
+    def request_call_history_sync(self, reason: str) -> None:
+        """Integration hook, e.g. for an HFP "call ended" event.
+
+        A no-op unless call history is enabled. Requests coalesce and respect
+        the MAP gating of automatic pulls; ``reason`` must not contain
+        personal data because it is logged.
+        """
+        if self.call_history is not None:
+            self.call_history.request_sync(reason)
+
+    def _call_history_changed(self) -> None:
+        if self._dbus_service is not None:
+            self._dbus_service.emit_call_history_changed()
+
+    def _missed_calls(self, records: list[CallRecord]) -> None:
+        """GLib-side: resolve callers against the contact cache and notify."""
+        if not config.MISSED_CALL_NOTIFICATIONS:
+            return
+        notices = []
+        for record in records:
+            resolved = resolve_contact_name(record, self.contacts.resolve)
+            notices.append(MissedCallNotice(
+                caller=display_caller(record, resolved),
+                known_contact=resolved is not None,
+                occurred_at=record.occurred_at,
+            ))
+        self.events.missed_calls(notices)
+
     def _status(self) -> dict:
         if self.contacts.count() > 0:
             self._mark_setup_task(CONTACTS)
@@ -740,6 +793,10 @@ class Daemon:
             "events": history_count(storage=self.storage),
             "verified_iphone_setup": list(self.setup_verification.verified),
             "history_retention_days": config.HISTORY_RETENTION_DAYS,
+            "call_history_enabled": self.call_history is not None,
+            "missed_call_notifications": bool(
+                self.call_history is not None and config.MISSED_CALL_NOTIFICATIONS
+            ),
             "notification_timeout_ms": config.NOTIFICATION_TIMEOUT_MS,
             "notification_policy": self.notification_policy.value,
             "contacts_only_notifications": (
@@ -840,6 +897,8 @@ class Daemon:
         self.bearers.stop()
         self.profiles.stop()
         self.contact_sync.stop()
+        if self.call_history is not None:
+            self.call_history.stop()
         for tid_attr in (
             "_release_check_id",
             "_target_config_check_id",

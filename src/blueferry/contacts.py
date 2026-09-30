@@ -6,13 +6,14 @@ not `SetFolder`. Then `PullAll(targetfile, filters)`.
 """
 from __future__ import annotations
 
+import io
 import logging
 import tempfile
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from copy import copy
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TextIO, TypeVar
 
 import dbus
 
@@ -30,6 +31,8 @@ from blueferry.obex.sessions import SessionManager
 from blueferry.obex.transfer import wait_for_transfer
 from blueferry.private_files import runtime_private_directory
 from blueferry.vcard import iter_bounded_lines, iter_vcard_bodies
+
+_T = TypeVar("_T")
 
 if TYPE_CHECKING:
     from blueferry.storage_security import StorageSecurity
@@ -107,31 +110,60 @@ def _phonebook_temp_root() -> Path:
     return runtime_private_directory()
 
 
-def pull_phonebook(
+def pull_vcard_listing(
     sessions: SessionManager,
+    phonebook: str,
     *,
-    max_contacts: int = 65535,
-    storage: StorageSecurity | None = None,
-) -> int:
-    """Pull the iPhone's main phonebook over PBAP and return contact count.
+    max_entries: int,
+    max_bytes: int | None = None,
+    allow_empty: bool = False,
+    overall_timeout_s: float = _PHONEBOOK_TRANSFER_MAX_SECONDS,
+) -> str:
+    """Select one PBAP phonebook in ``int/telecom`` and return its vCards.
 
-    Replaces the local cache atomically (transaction).
+    Blocking; call it only on the OBEX worker.
     """
-    max_contacts = max(1, min(int(max_contacts), MAX_PHONEBOOK_CONTACTS))
-    if storage is not None and not storage.status.can_write:
-        raise RuntimeError(storage.status.detail)
+    return _pull_vcard_stream(
+        sessions,
+        phonebook,
+        max_entries=max_entries,
+        max_bytes=max_bytes,
+        allow_empty=allow_empty,
+        overall_timeout_s=overall_timeout_s,
+        read=lambda stream: stream.read(),
+    )
+
+
+def _pull_vcard_stream(
+    sessions: SessionManager,
+    phonebook: str,
+    *,
+    max_entries: int,
+    read: Callable[[TextIO], _T],
+    max_bytes: int | None = None,
+    allow_empty: bool = False,
+    overall_timeout_s: float = _PHONEBOOK_TRANSFER_MAX_SECONDS,
+) -> _T:
+    """Select one PBAP phonebook and hand its vCard file to ``read``.
+
+    Blocking; call it only on the OBEX worker. The plaintext listing lives in
+    an owner-only runtime directory for the duration of the transfer only.
+    """
+    byte_limit = MAX_PHONEBOOK_BYTES if max_bytes is None else int(max_bytes)
+    # PBAP's MaxCount is a UInt16; never let a caller overflow it.
+    max_entries = max(1, min(int(max_entries), MAX_PHONEBOOK_CONTACTS))
     temporary_root = _phonebook_temp_root()
     pbap = obex(sessions.pbap_path, "org.bluez.obex.PhonebookAccess1")
-    log.info("PBAP Select(int, pb)")
-    pbap.Select("int", "pb", timeout=10.0)
+    log.info("PBAP Select(int, %s)", phonebook)
+    pbap.Select("int", phonebook, timeout=10.0)
 
     with tempfile.TemporaryDirectory(
         prefix="phonebook-", dir=temporary_root
     ) as temporary_name:
-        out = Path(temporary_name) / "pb.vcf"
-        log.info("PBAP PullAll → %s (max=%d)", out, max_contacts)
+        out = Path(temporary_name) / f"{phonebook}.vcf"
+        log.info("PBAP PullAll → %s (max=%d)", out, max_entries)
         ret = pbap.PullAll(
-            str(out), _pbap_pull_filters(max_contacts), timeout=30.0
+            str(out), _pbap_pull_filters(max_entries), timeout=30.0
         )
         if isinstance(ret, tuple | list):
             transfer_path = str(ret[0])
@@ -146,11 +178,11 @@ def pull_phonebook(
         initial_status = str(initial.get("Status", "queued"))
         log.debug("PBAP transfer %s initial status=%s size=%s",
                   transfer_path, initial_status, initial.get("Size", "unknown"))
-        def phonebook_size() -> int:
+        def listing_size() -> int:
             size = out.stat().st_size if out.exists() else 0
-            if max(size, int(initial.get("Size", 0) or 0)) > MAX_PHONEBOOK_BYTES:
+            if max(size, int(initial.get("Size", 0) or 0)) > byte_limit:
                 raise RuntimeError(
-                    f"phonebook exceeds {MAX_PHONEBOOK_BYTES} byte safety limit"
+                    f"phonebook exceeds {byte_limit} byte safety limit"
                 )
             return size
 
@@ -158,10 +190,10 @@ def pull_phonebook(
             transfer_path,
             initial_status=initial_status,
             timeout_s=60,
-            overall_timeout_s=_PHONEBOOK_TRANSFER_MAX_SECONDS,
+            overall_timeout_s=overall_timeout_s,
             property_timeout_s=10.0,
             allow_disappearance=True,
-            get_progress=phonebook_size,
+            get_progress=listing_size,
         )
 
         # obexd may remove a completed transfer object just before its output
@@ -174,22 +206,44 @@ def pull_phonebook(
         size = out.stat().st_size if out.exists() else 0
         log.info("transfer status: %s, file size: %d bytes", status, size)
         if size == 0:
+            if allow_empty:
+                return read(io.StringIO(""))
             raise RuntimeError(
                 "iPhone returned an empty phonebook; verify Settings → "
                 "Bluetooth → this computer → Sync Contacts is enabled"
             )
-        phonebook_size()
-
-        # Stream lines rather than read_text() plus splitlines(): the
-        # phonebook may be up to MAX_PHONEBOOK_BYTES, and two whole copies of
-        # it are not needed to extract bounded cards.
+        listing_size()
         with out.open(errors="replace") as stream:
-            parsed = _parse_vcard_records(
-                iter_bounded_lines(stream), maximum=max_contacts,
-            )
-        log.info("parsed %d contacts from %d bytes", len(parsed), size)
+            return read(stream)
 
-        return ContactRepository(storage).replace(parsed)
+
+def pull_phonebook(
+    sessions: SessionManager,
+    *,
+    max_contacts: int = 65535,
+    storage: StorageSecurity | None = None,
+) -> int:
+    """Pull the iPhone's main phonebook over PBAP and return contact count.
+
+    Replaces the local cache atomically (transaction).
+    """
+    max_contacts = max(1, min(int(max_contacts), MAX_PHONEBOOK_CONTACTS))
+    if storage is not None and not storage.status.can_write:
+        raise RuntimeError(storage.status.detail)
+    # Stream lines rather than read() plus splitlines(): the phonebook may be
+    # up to MAX_PHONEBOOK_BYTES, and two whole copies of it are not needed to
+    # extract bounded cards.
+    parsed = _pull_vcard_stream(
+        sessions,
+        "pb",
+        max_entries=max_contacts,
+        read=lambda stream: _parse_vcard_records(
+            iter_bounded_lines(stream), maximum=max_contacts,
+        ),
+    )
+    log.info("parsed %d contacts", len(parsed))
+
+    return ContactRepository(storage).replace(parsed)
 
 
 # ---- Lookup -------------------------------------------------------------
