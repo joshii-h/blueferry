@@ -272,3 +272,26 @@ def test_enabled_media_follows_the_shared_le_bearer(make_daemon, monkeypatch) ->
     ams.callbacks["on_availability"](True)
     assert statuses == [True]
     assert instance.media is not None and instance.media.available
+    instance.media.close()  # cancel the real coalescing timer
+
+
+def test_mpris_set_authorizes_before_revealing_property_details() -> None:
+    from blueferry.errors import RateLimitError
+    from blueferry.mpris import MprisPlayer
+
+    class _Guard:
+        def authorize(self, _sender, action):
+            assert action == "media-command"
+            raise RateLimitError("too many requests; wait before trying again")
+
+    media, _writer, _timers = _controller()
+    player = MprisPlayer(object(), media, _Guard())  # never exported: no player yet
+    try:
+        with pytest.raises(Exception) as raised:
+            player.Set("org.mpris.MediaPlayer2.Player", "PlaybackStatus", "x", sender=":1.5")
+        assert raised.value.get_dbus_name() == "io.weirdware.BlueFerry.Error.RateLimited"
+        with pytest.raises(Exception) as raised:
+            player.Seek(1, sender=":1.5")
+        assert raised.value.get_dbus_name() == "io.weirdware.BlueFerry.Error.RateLimited"
+    finally:
+        player.close()

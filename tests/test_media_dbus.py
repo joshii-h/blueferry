@@ -23,7 +23,7 @@ from blueferry.ams.parsers import EntityUpdate
 from blueferry.backend_operations import BackendDependencies
 from blueferry.dbus_service import MessagesService
 from blueferry.media import MediaController
-from blueferry.mpris import PLAYER_IFACE, ROOT_IFACE, MprisPlayer
+from blueferry.mpris import MPRIS_PATH, PLAYER_IFACE, ROOT_IFACE, MprisPlayer
 from blueferry.protocol import BUS_NAME, EVENTS_IFACE, MEDIA_IFACE, OBJECT_PATH
 
 pytestmark = pytest.mark.private_dbus
@@ -82,8 +82,20 @@ def _call(name, path, interface, method, *args):
     return outcome
 
 
+_controllers: list[MediaController] = []
+
+
+@pytest.fixture(autouse=True)
+def _close_controllers():
+    """Cancel each controller's pending GLib coalescing timer after a test."""
+    yield
+    while _controllers:
+        _controllers.pop().close()
+
+
 def _media():
     media = MediaController(clock=lambda: 10.0)
+    _controllers.append(media)
     writer = _Writer()
     media.attach(writer)
     media.handle_supported_commands(frozenset({
@@ -195,6 +207,11 @@ def mpris_factory():
         bus.release_name(guard_name)
 
 
+def _exported(bus) -> bool:
+    parent, child = MPRIS_PATH.rsplit("/", 1)
+    return child in [str(name) for name in bus.list_exported_child_objects(parent)]
+
+
 def _owner(bus, name) -> bool:
     return bool(bus.name_has_owner(name))
 
@@ -204,14 +221,18 @@ def test_mpris_name_is_published_only_while_a_player_is_active(mpris_factory) ->
     bus, name, player = mpris_factory(media)
     assert not player.owned and not _owner(bus, name)
 
+    assert _exported(bus) is False
     _play(media)
     _dispatch_until(lambda: player.owned)
     assert _owner(bus, name)
+    assert _exported(bus) is True
 
     media.attach(None)
     media.handle_availability(False)
     _dispatch_until(lambda: not player.owned)
-    assert not _owner(bus, name)
+    _dispatch_until(lambda: not _owner(bus, name))
+    # The object is unexported together with the name.
+    assert _exported(bus) is False
 
 
 def test_mpris_properties_and_methods(mpris_factory) -> None:
@@ -222,7 +243,8 @@ def test_mpris_properties_and_methods(mpris_factory) -> None:
 
     root = _call(name, "/org/mpris/MediaPlayer2", dbus.PROPERTIES_IFACE, "GetAll", ROOT_IFACE)
     assert root["value"]["Identity"] == "iPhone (BlueFerry)"
-    assert root["value"]["CanRaise"] is False or root["value"]["CanRaise"] == 0
+    assert not root["value"]["CanRaise"]
+    assert root["value"]["DesktopEntry"] == "io.weirdware.BlueFerry.Qt"
 
     props = _call(
         name, "/org/mpris/MediaPlayer2", dbus.PROPERTIES_IFACE, "GetAll", PLAYER_IFACE,
@@ -243,6 +265,15 @@ def test_mpris_properties_and_methods(mpris_factory) -> None:
     assert "error" not in _call(name, "/org/mpris/MediaPlayer2", PLAYER_IFACE, "Next")
     # Unsupported actions have no effect, as MPRIS requires.
     assert "error" not in _call(name, "/org/mpris/MediaPlayer2", PLAYER_IFACE, "Play")
+    assert writer.sent == [RemoteCommandID.TogglePlayPause, RemoteCommandID.NextTrack]
+    # CanSeek is false: Seek and SetPosition must have no effect.
+    assert "error" not in _call(
+        name, "/org/mpris/MediaPlayer2", PLAYER_IFACE, "Seek", dbus.Int64(15_000_000),
+    )
+    assert "error" not in _call(
+        name, "/org/mpris/MediaPlayer2", PLAYER_IFACE, "SetPosition",
+        dbus.ObjectPath("/org/mpris/MediaPlayer2/TrackList/NoTrack"), dbus.Int64(0),
+    )
     assert writer.sent == [RemoteCommandID.TogglePlayPause, RemoteCommandID.NextTrack]
 
     # Relative volume: one iPhone step toward the requested level.

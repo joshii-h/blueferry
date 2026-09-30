@@ -40,6 +40,12 @@ PROPERTIES_IFACE = dbus.PROPERTIES_IFACE
 NO_TRACK = "/org/mpris/MediaPlayer2/TrackList/NoTrack"
 TRACK_PATH_PREFIX = "/io/weirdware/BlueFerry/MediaPlayer/Track"
 IDENTITY = "iPhone (BlueFerry)"
+# Basename of the Kirigami client's installed desktop file; desktops use it
+# for the player's icon and name.
+DESKTOP_ENTRY = "io.weirdware.BlueFerry.Qt"
+_DBUS_NAME = "org.freedesktop.DBus"
+_DBUS_PATH = "/org/freedesktop/DBus"
+NAME_CALL_TIMEOUT_SECONDS = 10
 # A reported position farther than this from the extrapolated one is a seek.
 SEEK_THRESHOLD_SECONDS = 1.5
 
@@ -48,6 +54,7 @@ _ROOT_PROPERTIES = {
     "CanRaise": "b",
     "HasTrackList": "b",
     "Identity": "s",
+    "DesktopEntry": "s",
     "SupportedUriSchemes": "as",
     "SupportedMimeTypes": "as",
 }
@@ -105,13 +112,16 @@ class MprisPlayer(dbus.service.Object):
         clock: Callable[[], float] = time.monotonic,
         bus_name: str = MPRIS_BUS_NAME,
     ) -> None:
-        super().__init__(connection, MPRIS_PATH)
+        # Exported only while the player name is owned or being requested.
+        super().__init__()
         self._connection = connection
         self._media = media
         self._guard = caller_guard
         self._clock = clock
         self._bus_name = bus_name
         self._owned = False
+        self._exported = False
+        self._name_call_pending = False
         self._last_properties: dict[str, object] = {}
         self._track_identity: tuple | None = None
         self._track_serial = 0
@@ -142,10 +152,6 @@ class MprisPlayer(dbus.service.Object):
             return
         if not self._owned:
             self._acquire()
-            if not self._owned:
-                return
-            self._last_properties = self._player_properties()
-            self._remember_position()
             return
         current = self._player_properties()
         changed = {
@@ -162,43 +168,89 @@ class MprisPlayer(dbus.service.Object):
             )
         self._maybe_emit_seeked()
 
-    def _acquire(self) -> None:
-        try:
-            result = self._connection.request_name(
-                self._bus_name, dbus.bus.NAME_FLAG_DO_NOT_QUEUE,
-            )
-        except dbus.exceptions.DBusException as error:
-            log.warning("could not publish MPRIS player: %s", error.get_dbus_name())
+    def _name_call(self, method: str, args: tuple, signature: str, reply, error) -> None:
+        self._connection.call_async(
+            _DBUS_NAME, _DBUS_PATH, _DBUS_NAME, method, signature, args,
+            reply, error, timeout=NAME_CALL_TIMEOUT_SECONDS,
+        )
+
+    def _export(self) -> None:
+        if not self._exported:
+            self.add_to_connection(self._connection, MPRIS_PATH)
+            self._exported = True
+
+    def _unexport(self) -> None:
+        if not self._exported:
             return
-        if result in (
-            dbus.bus.REQUEST_NAME_REPLY_PRIMARY_OWNER,
-            dbus.bus.REQUEST_NAME_REPLY_ALREADY_OWNER,
-        ):
-            self._owned = True
-            log.info("published iPhone MPRIS player")
-        else:
-            log.warning("MPRIS player name is owned by another process")
+        self._exported = False
+        try:
+            self.remove_from_connection()
+        except Exception:
+            log.debug("could not unexport MPRIS player", exc_info=True)
+
+    def _acquire(self) -> None:
+        """Request the name asynchronously; the GLib loop never waits."""
+        if self._name_call_pending or self._owned:
+            return
+        self._name_call_pending = True
+        # Export first so the object answers as soon as the name appears.
+        self._export()
+
+        def acquired(result) -> None:
+            self._name_call_pending = False
+            if int(result) in (
+                dbus.bus.REQUEST_NAME_REPLY_PRIMARY_OWNER,
+                dbus.bus.REQUEST_NAME_REPLY_ALREADY_OWNER,
+            ):
+                self._owned = True
+                self._last_properties = self._player_properties()
+                self._remember_position()
+                log.info("published iPhone MPRIS player")
+            else:
+                log.warning("MPRIS player name is owned by another process")
+                self._unexport()
+            # The player may have stopped while the request was in flight.
+            if self._closed or not self._should_own():
+                self._release()
+
+        def failed(error) -> None:
+            self._name_call_pending = False
+            name = (
+                error.get_dbus_name()
+                if isinstance(error, dbus.exceptions.DBusException)
+                else type(error).__name__
+            )
+            log.warning("could not publish MPRIS player: %s", name)
+            self._unexport()
+
+        self._name_call(
+            "RequestName",
+            (self._bus_name, dbus.UInt32(dbus.bus.NAME_FLAG_DO_NOT_QUEUE)),
+            "su", acquired, failed,
+        )
 
     def _release(self) -> None:
         if not self._owned:
+            # A pending request re-checks and releases from its reply.
+            if not self._name_call_pending:
+                self._unexport()
             return
         self._owned = False
         self._last_properties = {}
         self._last_position = None
-        try:
-            self._connection.release_name(self._bus_name)
-        except dbus.exceptions.DBusException:
-            log.debug("could not release MPRIS player name", exc_info=True)
+        self._unexport()
+        self._name_call(
+            "ReleaseName", (self._bus_name,), "s",
+            lambda _result: None,
+            lambda _error: log.debug("could not release MPRIS player name"),
+        )
         log.info("withdrew iPhone MPRIS player")
 
     def close(self) -> None:
         self._closed = True
         self._media.remove_listener(self.refresh)
         self._release()
-        try:
-            self.remove_from_connection()
-        except Exception:
-            log.debug("could not unexport MPRIS player", exc_info=True)
+        self._unexport()
 
     def _update_track_identity(self) -> None:
         state = self._media.state
@@ -285,6 +337,7 @@ class MprisPlayer(dbus.service.Object):
             "CanRaise": dbus.Boolean(False),
             "HasTrackList": dbus.Boolean(False),
             "Identity": dbus.String(IDENTITY),
+            "DesktopEntry": dbus.String(DESKTOP_ENTRY),
             "SupportedUriSchemes": dbus.Array([], signature="s"),
             "SupportedMimeTypes": dbus.Array([], signature="s"),
         }
@@ -329,11 +382,11 @@ class MprisPlayer(dbus.service.Object):
         PROPERTIES_IFACE, in_signature="ssv", out_signature="", sender_keyword="sender",
     )
     def Set(self, interface: str, name: str, value, sender=None) -> None:
+        self._authorize(sender, "media-command")
         if (str(interface), str(name)) not in _WRITABLE:
             if str(name) in self._all(str(interface)):
                 raise _ReadOnly(f"property is read-only: {name}")
             raise _UnknownProperty(f"no such property: {name}")
-        self._authorize(sender, "media-command")
         # AMS has no absolute volume; move one iPhone volume step toward the
         # requested level. Plasma sends a new value per scroll step.
         current = self._media.state.volume
@@ -405,13 +458,11 @@ class MprisPlayer(dbus.service.Object):
 
     @dbus.service.method(PLAYER_IFACE, in_signature="x", out_signature="", sender_keyword="sender")
     def Seek(self, offset: int, sender=None) -> None:
-        # CanSeek is false: AMS only offers fixed skip steps. Map relative
-        # seeks to those steps for clients that call Seek anyway.
+        """CanSeek is false, so MPRIS requires Seek to have no effect.
+
+        AMS fixed skips remain available through Media1 and the CLI.
+        """
         self._authorize(sender, "media-command")
-        if int(offset) > 0:
-            self._command("skip-forward")
-        elif int(offset) < 0:
-            self._command("skip-backward")
 
     @dbus.service.method(PLAYER_IFACE, in_signature="ox", out_signature="", sender_keyword="sender")
     def SetPosition(self, track_id, position: int, sender=None) -> None:
