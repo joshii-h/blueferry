@@ -95,6 +95,9 @@ def test_style_is_selected_before_qt_application_and_qml_engine_exist(monkeypatc
         def __init__(self) -> None:
             events.append("engine")
 
+        def addImageProvider(self, _name, _provider) -> None:
+            pass
+
         def setInitialProperties(self, _properties) -> None:
             pass
 
@@ -115,7 +118,10 @@ def test_style_is_selected_before_qt_application_and_qml_engine_exist(monkeypatc
     )
     monkeypatch.setattr(app_module, "_install_translation", lambda _application: None)
     monkeypatch.setattr(app_module, "ClientActivation", Activation)
-    monkeypatch.setattr(app_module, "BridgeController", lambda *, parent: object())
+    monkeypatch.setattr(
+        app_module, "BridgeController",
+        lambda *, parent: types.SimpleNamespace(avatar_bytes=lambda _address: None),
+    )
     monkeypatch.setattr(app_module, "QQmlApplicationEngine", Engine)
 
     assert app_module.main() == 1
