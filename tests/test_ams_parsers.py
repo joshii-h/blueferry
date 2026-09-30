@@ -42,6 +42,13 @@ def test_entity_update_exact_layout() -> None:
     )
 
 
+def test_truncated_value_drops_a_split_multibyte_remnant() -> None:
+    encoded = "Café".encode()[:-1]  # cut inside the two-byte "é"
+    assert EntityUpdate.parse(bytes([2, 2, 1]) + encoded).value == "Caf"
+    # A complete value keeps a replacement character that the phone sent.
+    assert EntityUpdate.parse(bytes([2, 2, 0]) + encoded).value == "Caf\ufffd"
+
+
 def test_entity_update_rejects_short_and_oversized_packets() -> None:
     with pytest.raises(ValueError):
         EntityUpdate.parse(b"\x02\x02")
@@ -76,7 +83,7 @@ def test_entity_update_round_trips_utf8_values(entity, attribute, flags, value) 
     except UnicodeDecodeError:
         return
     update = EntityUpdate.parse(bytes([entity, attribute, flags]) + encoded)
-    assert update.value == value
+    assert update.value == (value.rstrip("\ufffd") if flags & 1 else value)
     assert update.truncated == bool(flags & 1)
 
 
@@ -202,7 +209,19 @@ def test_clean_text_removes_controls_and_bounds_length(value: str) -> None:
     cleaned = clean_text(value)
     assert len(cleaned) <= MAX_REMOTE_PROPERTY_CHARS
     assert not any(ord(character) < 0x20 or character == "\x7f" for character in cleaned)
-    assert "‮" not in cleaned  # bidi override is a format character
+    assert not any(
+        0x202A <= ord(character) <= 0x202E or 0x2066 <= ord(character) <= 0x2069
+        or character in "\u200e\u200f"
+        for character in cleaned
+    )
+
+
+def test_clean_text_keeps_emoji_sequences_and_unassigned_code_points() -> None:
+    family = "\U0001F468\u200D\U0001F469\u200D\U0001F467"  # ZWJ family
+    assert clean_text(f"Song {family}") == f"Song {family}"
+    future = "\U0001FAFF"  # unassigned in older Unicode databases
+    assert clean_text(f"New {future}") == f"New {future}"
+    assert clean_text("\u202eevil\u202c\u200f name\x07") == "evil name"
 
 
 def test_truncated_value_is_replaced_by_full_read() -> None:

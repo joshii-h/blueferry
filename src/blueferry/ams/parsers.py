@@ -39,11 +39,17 @@ class EntityUpdate:
         if len(raw) - 3 > MAX_AMS_VALUE_BYTES:
             raise ValueError("AMS entity update value is too large")
         entity, attribute, flags = raw[0], raw[1], raw[2]
+        truncated = bool(flags & EntityUpdateFlag.Truncated)
+        value = raw[3:].decode("utf-8", errors="replace")
+        if truncated:
+            # Truncation can split a multi-byte character; drop its remnant
+            # until the full value arrives through Entity Attribute.
+            value = value.rstrip("\ufffd")
         return cls(
             entity=entity,
             attribute=attribute,
-            truncated=bool(flags & EntityUpdateFlag.Truncated),
-            value=raw[3:].decode("utf-8", errors="replace"),
+            truncated=truncated,
+            value=value,
         )
 
 
@@ -108,13 +114,26 @@ def build_entity_attribute_request(entity: EntityID | int, attribute: int) -> by
 # ---- attribute value semantics -------------------------------------------
 
 
+# Bidirectional embedding, override and isolate controls plus LRM/RLM can
+# visually reorder surrounding UI text. Other format characters such as the
+# zero-width joiner are part of emoji sequences and stay.
+_BIDI_CONTROLS = frozenset(
+    [chr(code) for code in range(0x202A, 0x202F)]
+    + [chr(code) for code in range(0x2066, 0x206A)]
+    + ["\u200e", "\u200f"]
+)
+
+
 def clean_text(value: str) -> str:
-    """Bound remote display text and drop control/format characters."""
+    """Bound remote display text and drop C0/C1 and bidi controls.
+
+    Unassigned code points are kept so emoji newer than this Python's
+    Unicode database still display.
+    """
     kept = "".join(
         character
         for character in value
-        if unicodedata.category(character) not in {"Cc", "Cf", "Cs", "Co", "Cn"}
-        or character == " "
+        if character not in _BIDI_CONTROLS and unicodedata.category(character) != "Cc"
     )
     return kept.strip()[:MAX_REMOTE_PROPERTY_CHARS]
 
