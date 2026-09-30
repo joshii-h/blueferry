@@ -219,6 +219,12 @@ class CallHistory(Protocol):
     def sync(self, success: Success, failure: Failure) -> None: ...
 
     def discard_cache(self) -> None: ...
+class TetherControl(Protocol):
+    def snapshot(self) -> dict[str, object]: ...
+
+    def connect(self, *, automatic: bool = False) -> dict[str, object]: ...
+
+    def disconnect(self) -> dict[str, object]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,6 +252,7 @@ class BackendDependencies:
     call_history: CallHistory | None = None
     contact_photos: bool = False
     media: MediaControl | None = None
+    tether: TetherControl | None = None
 
 
 class BackendOperations:
@@ -1250,6 +1257,19 @@ class BackendOperations:
                 "BLUEFERRY_MEDIA_CONTROL_ENABLED=true to opt in"
             )
         self.dependencies.media.send_command(name, on_success, on_failure)
+    def _tether(self) -> TetherControl:
+        if self.dependencies.tether is None:
+            raise NotReadyError("Bluetooth tethering is unavailable in this backend")
+        return self.dependencies.tether
+
+    def tether_state(self) -> dict[str, object]:
+        return self._tether().snapshot()
+
+    def tether_connect(self) -> dict[str, object]:
+        return self._tether().connect()
+
+    def tether_disconnect(self) -> dict[str, object]:
+        return self._tether().disconnect()
 
     def is_healthy(self) -> bool:
         return self.sessions.map is not None

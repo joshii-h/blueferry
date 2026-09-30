@@ -76,6 +76,8 @@ from blueferry.solicitation_supervisor import SolicitationSupervisor
 from blueferry.starred_threads import StarredThreadsStore
 from blueferry.storage_preparation import PreparedStorage, prepare_storage
 from blueferry.storage_security import StorageSecurity
+from blueferry.tether import NetworkLinkWatch, TetherController
+from blueferry.tether_backends import choose_backend
 from blueferry.wireplumber_policy import WirePlumberPhoneAudioPolicy
 
 if TYPE_CHECKING:
@@ -211,6 +213,26 @@ class Daemon:
         )
         # Opt-in sub-feature of calls: one low-battery warning per cycle.
         self.low_battery = LowBatteryMonitor(config.PHONE_BATTERY_LOW_PERCENT)
+        # Tethering is an explicit user action layered on the Classic link the
+        # bearer supervisor keeps; it never connects or drops that link itself.
+        self.tether = TetherController(
+            choose_backend(
+                get_system_bus, device_path, config.IPHONE_MAC, config.TETHER_BACKEND,
+            ),
+            link_watch=NetworkLinkWatch(
+                get_system_bus,
+                device_path,
+                lambda connected, interface: self.tether.observe_link(connected, interface),
+            ),
+            classic_ready=lambda: classic_reachable(self.bearers, self.sessions),
+            autoconnect_ready=lambda: (
+                self.profiles.ready and not self.recovery.active
+            ),
+            on_changed=self._emit_tether_changed,
+            autoconnect=config.TETHER_AUTOCONNECT,
+            schedule=GLib.timeout_add_seconds,
+            cancel=GLib.source_remove,
+        )
         self.contact_sync = ContactSync(
             sessions=self.sessions,
             storage=self.storage,
@@ -284,6 +306,9 @@ class Daemon:
 
     def _recovery_observation(self) -> RecoveryObservation:
         ancs = self.ancs
+        # Re-check the tether link so a stale "connected" cannot keep holding
+        # recovery back; the answer arrives before the next observation.
+        self.tether.probe_link()
         return RecoveryObservation(
             healthy=bool(ancs and ancs.connected and not ancs.permission_denied),
             health_proof=ancs.health_proof if ancs else None,
@@ -293,7 +318,9 @@ class Daemon:
                 and self.bearers.bredr_connected and self.bearers.le_state is not None
                 and self.solicitation.active()
             ),
-            busy=self.bearers.busy,
+            # A power cycle would silently cut the user's tethered internet,
+            # but only a link that demonstrably exists may hold it back.
+            busy=self.bearers.busy or self.tether.link_alive(),
         )
 
     def _pause_for_recovery(self) -> None:
@@ -387,6 +414,10 @@ class Daemon:
     def _on_bearer_status(self) -> None:
         self.calls.poke()
         self._emit_status()
+    def _emit_tether_changed(self) -> None:
+        emit = getattr(self._dbus_service, "emit_tether_changed", None)
+        if emit is not None:
+            emit()
 
     def _observe_le_state(self, connected: bool | None) -> None:
         if connected is not True:
@@ -459,6 +490,7 @@ class Daemon:
                 call_history=self.call_history,
                 contact_photos=config.CONTACT_PHOTOS,
                 media=self.media,
+                tether=self.tether,
             ),
         )
         self.events.set_dbus_service(self._dbus_service)
@@ -630,6 +662,7 @@ class Daemon:
         # outbound LE bootstrap until ProfileSupervisor completes its first
         # MAP/PBAP attempt. Phone-initiated LE remains usable for ANCS.
         self.bearers.start()
+        self.tether.start()
 
         # ANCS — per-app notifications via BLE GATT. Independent of MAP/PBAP.
         # The bearer supervisor connects LE alongside BR/EDR; the client waits
@@ -711,6 +744,8 @@ class Daemon:
         self.recovery.invalidate()
         if old_owner:
             bluez_setup.forget_advert_registration()
+            # bluetoothd took every BNEP link and pending reply with it.
+            self.tether.reset_after_bluez_restart()
         if new_owner and not self.recovery.active:
             # Reset before ANCS publishes status: that callback can already
             # register an advert with the replacement owner. Forgetting it
@@ -737,6 +772,7 @@ class Daemon:
         # Hold first because resetting bearer observations immediately probes
         # the replacement daemon. The old OBEX transport is already gone, so
         # discard its local sessions without asking obexd to remove them.
+        self.tether.reset_after_bluez_restart()
         self.bearers.hold_le()
         self.profiles.reconnect(
             "bluetoothd restarted",
@@ -840,6 +876,9 @@ class Daemon:
         self._post_available_sessions_setup()
 
         self._sync_solicitation()
+        # Only when BLUEFERRY_TETHER_AUTOCONNECT is set, and never ahead of
+        # MAP/PBAP: the phone's first host-initiated transactions stay theirs.
+        self.tether.maybe_autoconnect()
 
         log.info(
             "=== BlueFerry ready (contacts=%d, sinks=%s) ===",
@@ -1043,6 +1082,7 @@ class Daemon:
                 log.debug("could not remove BlueZ owner watch", exc_info=True)
         self.recovery.stop()
         self.calls.stop()
+        self.tether.stop()
         self.read_receipts.close()
         self.adapter_class.stop()
         self.bearers.stop()

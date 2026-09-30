@@ -19,3 +19,5 @@ src/blueferry/qt/qml/PhoneStatusIndicator.qml
 src/blueferry/qt/qml/RecentCallsPage.qml
 src/blueferry/qt/qml/NowPlayingBar.qml
 src/blueferry/qt/qml/NotificationOpenMapEditor.qml
+src/blueferry/qt/qml/TetherSection.qml
+src/blueferry/tether_status.py

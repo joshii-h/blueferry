@@ -543,6 +543,26 @@ Open questions for the first hardware test: whether iOS 26/27 exposes AMS
 without soliciting it; that current values follow a registration immediately
 (the specification guarantees it, but it must be verified on hardware); and
 whether AMS traffic affects ANCS reliability on the tested controllers.
+## Bluetooth PAN tethering (not yet observed)
+
+No real-device result is recorded yet. The implementation relies on these
+expectations, which need verification with a phone, iOS version, BlueZ
+version, and controller noted as the maintenance rule below requires:
+
+- The iPhone exposes Personal Hotspot as a PAN NAP service, so BlueZ
+  publishes `org.bluez.Network1` on the bonded device and
+  `Network1.Connect("nap")` returns a `bnep` interface. Whether iOS lists the
+  NAP record while Personal Hotspot is off, and whether the A/V Hands-Free
+  Class of Device used for pairing affects that, is unknown.
+- With Personal Hotspot off, iOS is expected to refuse the BNEP connection;
+  BlueZ then reports `org.bluez.Error.Failed`, which BlueFerry maps to
+  `hotspot-refused`. A missing `Network1` interface (no NAP record, or no
+  BlueZ network plugin / `BT_BNEP`) maps to `not-supported`.
+- PAN shares the Classic ACL link with MAP and PBAP. It is not known whether
+  iOS keeps MAP/PBAP/ANCS undisturbed while BNEP is up.
+- BlueZ ties a `Network1` connection to the D-Bus caller that created it, so
+  the link-only fallback ends with the daemon. NetworkManager-owned links
+  survive a daemon restart and are re-adopted through the `Network1` watch.
 
 ## Historical HFP result
 

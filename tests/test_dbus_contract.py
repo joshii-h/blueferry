@@ -11,6 +11,7 @@ from blueferry.protocol import (
     MEDIA_IFACE,
     MESSAGES_IFACE,
     OBJECT_PATH,
+    TETHER_IFACE,
 )
 
 CONTRACT = Path(__file__).resolve().parents[1] / "data/io.weirdware.BlueFerry.xml"
@@ -24,48 +25,54 @@ def _signature(member, direction: str) -> str:
     )
 
 
-def _assert_methods_match(node, interface_name: str) -> None:
-    interface = node.find(f"interface[@name='{interface_name}']")
-    assert interface is not None
-    xml_methods = {method.attrib["name"]: method for method in interface.findall("method")}
-    exported_methods = {
+def _exported(interface: str, kind: str) -> dict:
+    return {
         name: member
         for name, member in vars(MessagesService).items()
-        if getattr(member, "_dbus_interface", None) == interface_name
-        and getattr(member, "_dbus_is_method", False)
+        if getattr(member, "_dbus_interface", None) == interface
+        and getattr(member, kind, False)
     }
-    assert xml_methods.keys() == exported_methods.keys()
-    for name, member in exported_methods.items():
-        assert _signature(xml_methods[name], "in") == member._dbus_in_signature
-        assert _signature(xml_methods[name], "out") == member._dbus_out_signature
+
+
+_INTERFACES = (MESSAGES_IFACE, CALLS_IFACE, MEDIA_IFACE, EVENTS_IFACE, TETHER_IFACE)
 
 
 def test_contract_matches_exported_methods_and_signals() -> None:
     node = ElementTree.parse(CONTRACT).getroot()
     assert node.attrib["name"] == OBJECT_PATH
-
-    for interface_name in (MESSAGES_IFACE, CALLS_IFACE, MEDIA_IFACE):
-        _assert_methods_match(node, interface_name)
+    xml_interfaces = {interface.attrib["name"] for interface in node.findall("interface")}
     exported_interfaces = {
         getattr(member, "_dbus_interface", None)
         for member in vars(MessagesService).values()
     } - {None}
-    xml_interfaces = {interface.attrib["name"] for interface in node.findall("interface")}
-    assert exported_interfaces == xml_interfaces
-    assert exported_interfaces == {MESSAGES_IFACE, CALLS_IFACE, MEDIA_IFACE, EVENTS_IFACE}
+    assert xml_interfaces == exported_interfaces == set(_INTERFACES)
 
-    events = node.find(f"interface[@name='{EVENTS_IFACE}']")
-    assert events is not None
-    xml_signals = {signal.attrib["name"]: signal for signal in events.findall("signal")}
-    exported_signals = {
-        name: member
-        for name, member in vars(MessagesService).items()
-        if getattr(member, "_dbus_interface", None) == EVENTS_IFACE
-        and getattr(member, "_dbus_is_signal", False)
+    for interface_name in _INTERFACES:
+        interface = node.find(f"interface[@name='{interface_name}']")
+        assert interface is not None
+        xml_methods = {method.attrib["name"]: method for method in interface.findall("method")}
+        exported_methods = _exported(interface_name, "_dbus_is_method")
+        assert xml_methods.keys() == exported_methods.keys()
+        for name, member in exported_methods.items():
+            assert _signature(xml_methods[name], "in") == member._dbus_in_signature
+            assert _signature(xml_methods[name], "out") == member._dbus_out_signature
+
+        xml_signals = {signal.attrib["name"]: signal for signal in interface.findall("signal")}
+        exported_signals = _exported(interface_name, "_dbus_is_signal")
+        assert xml_signals.keys() == exported_signals.keys()
+        for name, member in exported_signals.items():
+            assert _signature(xml_signals[name], "out") == member._dbus_signature
+
+
+def test_tether_interface_is_small_and_its_signal_is_content_free() -> None:
+    assert set(_exported(TETHER_IFACE, "_dbus_is_method")) == {
+        "Connect", "Disconnect", "GetState",
     }
-    assert xml_signals.keys() == exported_signals.keys()
-    for name, member in exported_signals.items():
-        assert _signature(xml_signals[name], "out") == member._dbus_signature
+    signals = _exported(TETHER_IFACE, "_dbus_is_signal")
+    assert set(signals) == {"TetherChanged"}
+    assert signals["TetherChanged"]._dbus_signature == ""
+    # Tethering never widens the messaging generation's Events1 contract.
+    assert "TetherChanged" not in _exported(EVENTS_IFACE, "_dbus_is_signal")
 
 
 def test_every_documented_error_has_the_stable_namespace() -> None:

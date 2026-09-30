@@ -148,3 +148,39 @@ def test_media_reads_do_not_consume_message_read_quota() -> None:
     with pytest.raises(RateLimitError):
         guard.authorize(":1.20", "media-read")
     guard.authorize(":1.20", "read")
+def test_tether_commands_have_their_own_bucket() -> None:
+    now = [100.0]
+    guard = CallerGuard(
+        expected_uid=1000,
+        credential_provider=lambda _sender: {"UnixUserID": 1000},
+        clock=lambda: now[0],
+    )
+
+    for _ in range(10):
+        guard.authorize(":1.20", "tether")
+    with pytest.raises(RateLimitError):
+        guard.authorize(":1.20", "tether")
+    # Toggling tethering never starves status reads or other settings.
+    guard.authorize(":1.20", "status")
+    guard.authorize(":1.20", "settings")
+    # A reconnecting client does not get a fresh daemon-wide quota.
+    with pytest.raises(RateLimitError):
+        guard.authorize(":1.21", "tether")
+
+    now[0] += 61
+    guard.authorize(":1.20", "tether")
+
+
+def test_tether_bucket_has_an_hourly_ceiling() -> None:
+    now = [0.0]
+    guard = CallerGuard(
+        expected_uid=1000,
+        credential_provider=lambda _sender: {"UnixUserID": 1000},
+        clock=lambda: now[0],
+    )
+    for _ in range(6):
+        for _ in range(10):
+            guard.authorize(":1.20", "tether")
+        now[0] += 61
+    with pytest.raises(RateLimitError):
+        guard.authorize(":1.20", "tether")
