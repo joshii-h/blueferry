@@ -149,14 +149,14 @@ class Daemon:
             on_le_dial=self.solicitation.set_dialing,
             inbound_le_primed=self.solicitation.active,
         )
-        # Optional HFP calls through oFono. Inert unless explicitly enabled;
-        # construction performs no I/O. oFono is only asked to page the phone
-        # (Modem.Powered) while the Classic bearer is up.
         # Calls-state and phone-status changes often arrive in bursts (a
         # modem going away, a flapping indicator); coalesce their
         # StatusChanged into one per main-loop iteration.
         self._status_emit_pending = False
-        self._idle_add: Callable[[Callable[[], bool]], int] = GLib.idle_add
+        self._idle_add: Callable[..., int] = GLib.idle_add
+        # Optional HFP calls through oFono. Inert unless explicitly enabled;
+        # construction performs no I/O. oFono is only asked to page the phone
+        # (Modem.Powered) while the Classic bearer is up.
         self.calls = CallController(
             enabled=config.CALLS_ENABLED,
             mac=config.IPHONE_MAC,
@@ -291,7 +291,9 @@ class Daemon:
             return False
 
         try:
-            self._idle_add(flush)
+            # GLib.idle_add defaults to PRIORITY_DEFAULT_IDLE, which busy
+            # D-Bus traffic can starve; status is as urgent as other events.
+            self._idle_add(flush, priority=GLib.PRIORITY_DEFAULT)
         except Exception:
             log.debug("could not defer StatusChanged; emitting now", exc_info=True)
             flush()

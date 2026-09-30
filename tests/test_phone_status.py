@@ -186,7 +186,7 @@ def _daemon_with_recorders(make_daemon):
     seen: list[object] = []
     instance._emit_status = lambda: seen.append("status")
     # Run deferred StatusChanged emissions immediately.
-    instance._idle_add = lambda callback: callback()
+    instance._idle_add = lambda callback, **_options: callback()
     instance.events.phone_battery_low = lambda percent: seen.append(("low", percent))
     return instance, seen
 
@@ -214,7 +214,7 @@ def test_calls_and_phone_status_changes_share_one_deferred_status_changed(make_d
     seen: list[str] = []
     queued: list = []
     instance._emit_status = lambda: seen.append("status")
-    instance._idle_add = lambda callback: queued.append(callback) or 1
+    instance._idle_add = lambda callback, **_options: queued.append(callback) or 1
 
     # A modem losing power: calls state and phone values change together.
     instance.calls._on_state_changed()
@@ -229,12 +229,24 @@ def test_calls_and_phone_status_changes_share_one_deferred_status_changed(make_d
     assert len(queued) == 1
 
 
+def test_deferred_status_uses_default_priority(make_daemon) -> None:
+    from gi.repository import GLib
+
+    instance = make_daemon()
+    calls: list[dict] = []
+    instance._idle_add = lambda _callback, **options: calls.append(options) or 1
+
+    instance._emit_status_soon()
+
+    assert calls == [{"priority": GLib.PRIORITY_DEFAULT}]
+
+
 def test_status_is_still_emitted_when_deferring_fails(make_daemon) -> None:
     instance = make_daemon()
     seen: list[str] = []
     instance._emit_status = lambda: seen.append("status")
 
-    def broken(_callback):
+    def broken(_callback, **_options):
         raise RuntimeError("no main loop")
 
     instance._idle_add = broken
@@ -249,7 +261,7 @@ def test_failed_deferred_status_emission_is_logged_and_rearmed(make_daemon, capl
 
     instance = make_daemon()
     queued: list = []
-    instance._idle_add = lambda callback: queued.append(callback) or 1
+    instance._idle_add = lambda callback, **_options: queued.append(callback) or 1
 
     def broken():
         raise RuntimeError("bus gone")
