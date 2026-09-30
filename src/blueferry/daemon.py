@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import signal
+from typing import TYPE_CHECKING
 
 import dbus
 from gi.repository import GLib
@@ -63,6 +64,9 @@ from blueferry.starred_threads import StarredThreadsStore
 from blueferry.storage_preparation import PreparedStorage, prepare_storage
 from blueferry.storage_security import StorageSecurity
 from blueferry.wireplumber_policy import WirePlumberPhoneAudioPolicy
+
+if TYPE_CHECKING:
+    from blueferry.mpris import MprisPlayer
 
 log = logging.getLogger(__name__)
 
@@ -136,6 +140,7 @@ class Daemon:
             if config.MEDIA_CONTROL_ENABLED else None
         )
         self.ams: AmsClient | None = None
+        self.mpris: MprisPlayer | None = None
         self.adapter_class = AdapterClassSupervisor(config.ADAPTER)
         self.solicitation = SolicitationSupervisor(config.ADAPTER)
         self.phone_audio = WirePlumberPhoneAudioPolicy()
@@ -359,6 +364,18 @@ class Daemon:
         if self.media is None or self._dbus_service is None:
             return
         self.media.add_listener(self._dbus_service.emit_now_playing_changed)
+        if not config.MEDIA_MPRIS_ENABLED or self.mpris is not None:
+            return
+        from blueferry.mpris import MprisPlayer
+
+        try:
+            self.mpris = MprisPlayer(
+                self._dbus_service.connection,
+                self.media,
+                self._dbus_service.caller_guard,
+            )
+        except Exception:
+            log.warning("could not export the MPRIS player", exc_info=True)
 
     def _on_media_availability(self, available: bool) -> None:
         if self.media is not None:
@@ -715,6 +732,7 @@ class Daemon:
             "storage_detail": self.storage.status.detail,
             "media_control_enabled": self.media is not None,
             "media_control_available": bool(self.media and self.media.available),
+            "media_mpris_enabled": self.mpris is not None,
             **self._controller_identity(),
             **self.connectivity.snapshot(),
         }
@@ -824,6 +842,9 @@ class Daemon:
             self.ancs.stop()
         if self.ams is not None:
             self.ams.stop()
+        if self.mpris is not None:
+            self.mpris.close()
+            self.mpris = None
         if self.media is not None:
             self.media.close()
         self.solicitation.stop()

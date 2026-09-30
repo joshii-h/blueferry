@@ -189,6 +189,7 @@ def test_close_cancels_pending_invalidation() -> None:
 
 def test_media_is_off_by_default_and_creates_no_ble_client(make_daemon) -> None:
     assert daemon_mod.config.MEDIA_CONTROL_ENABLED is False
+    assert daemon_mod.config.MEDIA_MPRIS_ENABLED is False
     instance = make_daemon()
     assert instance.media is None
 
@@ -196,6 +197,7 @@ def test_media_is_off_by_default_and_creates_no_ble_client(make_daemon) -> None:
     instance._observe_le_state(True)
 
     assert instance.ams is None
+    assert instance.mpris is None
 
 
 def test_default_status_reports_media_disabled(make_daemon, monkeypatch) -> None:
@@ -206,6 +208,7 @@ def test_default_status_reports_media_disabled(make_daemon, monkeypatch) -> None
     status = instance._status()
     assert status["media_control_enabled"] is False
     assert status["media_control_available"] is False
+    assert status["media_mpris_enabled"] is False
 
 
 def test_compatibility_mode_never_starts_ams(make_daemon, monkeypatch) -> None:
