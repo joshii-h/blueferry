@@ -369,7 +369,11 @@ How it decides:
 
 Locking uses `org.freedesktop.ScreenSaver.Lock` on the session bus (KDE
 Plasma and others) and falls back to `org.freedesktop.login1.Session.Lock`
-for your own logind or elogind session.
+for your own logind or elogind session. KDE answers only once its lock
+screen is up; a slow answer is reported as `screensaver-requested` and does
+not fall back to logind. If screen locking is disabled by policy (for
+example a KDE Kiosk `lock_screen=false` restriction), Plasma reports the
+request as successful without locking, and BlueFerry cannot tell.
 
 ## Command line
 
