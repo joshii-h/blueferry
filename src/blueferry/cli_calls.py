@@ -1,6 +1,7 @@
 """Optional phone-call CLI (`blueferry calls ...`) over the Calls1 interface."""
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from typing import TypeVar
 
@@ -145,8 +146,6 @@ def phone_status(
     as_json: bool = typer.Option(False, "--json", help="Print the raw status keys as JSON"),
 ) -> None:
     """Show the iPhone's battery, signal, and network (needs calls enabled)."""
-    import json
-
     status = _run(lambda: _client().status(), "Could not read status")
     if as_json:
         typer.echo(json.dumps({key: status.to_dict()[key] for key in PHONE_STATUS_KEYS}))

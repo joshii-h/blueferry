@@ -341,6 +341,25 @@ def test_status_model_decodes_phone_fields_defensively() -> None:
 # ---- CLI ---------------------------------------------------------------------------
 
 
+def test_phone_status_fields_skip_unknown_registration_and_optional_network() -> None:
+    unknown = BackendStatus.from_dict({"phone_network_status": "unknown"})
+    assert phone_status_fields(unknown) == []
+    named_unknown = BackendStatus.from_dict({
+        "phone_network_name": "Sunrise", "phone_network_status": "unknown",
+    })
+    assert phone_status_fields(named_unknown) == [("Network", "Sunrise")]
+    searching = BackendStatus.from_dict({"phone_network_status": "searching"})
+    assert phone_status_fields(searching) == [("Network", "searching")]
+
+    full = BackendStatus.from_dict({
+        "phone_battery_level": 20, "phone_signal_strength": 40,
+        "phone_network_name": "Sunrise", "phone_network_status": "registered",
+    })
+    assert phone_status_fields(full, include_network=False) == [
+        ("Battery", "about 20 %"), ("Signal", "40 %"),
+    ]
+
+
 class _StatusClient:
     def __init__(self, **status) -> None:
         self._status = BackendStatus.from_dict(status)

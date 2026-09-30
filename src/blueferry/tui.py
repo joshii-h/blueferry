@@ -884,8 +884,8 @@ class BlueFerryApp(App[None]):
             summary, summary_class = "iPhone offline", "bad"
         # Optional HFP phone status (battery/signal) when oFono provides it.
         extras = [
-            f"{label} {value}" for label, value in phone_status_fields(status)
-            if label in {"Battery", "Signal"}
+            f"{label} {value}"
+            for label, value in phone_status_fields(status, include_network=False)
         ]
         if extras:
             summary = "  ·  ".join([summary, *extras])
