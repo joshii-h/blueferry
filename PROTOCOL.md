@@ -467,8 +467,9 @@ BlueFerry against the device list above. The profile registration race itself
 is unchanged.
 
 oFono 2.18 creates the HFP modem's `VoiceCallManager`, `NetworkRegistration`,
-`Handsfree`, and `CallVolume` atoms together in `hfp_pre_sim`, i.e. once the
-modem is powered; they survive `Online` dropping. A listed
+`Handsfree`, and `CallVolume` atoms, among others (device info and Siri),
+together in `hfp_pre_sim`, i.e. once the modem is powered; they survive
+`Online` dropping. A listed
 `VoiceCallManager` alone therefore does not mean call control works; the
 controller requires `Online` as well. The phone-status atoms expose the
 phone's standard HFP `+CIND` indicators (`doc/handsfree-api.txt`,
