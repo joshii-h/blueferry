@@ -624,6 +624,9 @@ def settings_window(qml_engine):
             property string errorText: ""
             property string pairingIssueReport: ""
             property string version: "test"
+            property bool callHistoryEnabled: false
+            property var callHistory: []
+            property string callHistoryError: ""
             signal pairingConfirmationRequested(string passkey)
             signal messageOpenRequested(string handle)
             signal messageSendSucceeded(string recipient, string body)
@@ -644,6 +647,9 @@ def settings_window(qml_engine):
             function forgetDevice(mac) { record("forgetDevice", [mac]); }
             function activateBluetooth() { record("activateBluetooth", []); }
             function filePairingIssue() { record("filePairingIssue", []); }
+            function watchCallHistory(watched) { record("watchCallHistory", [watched]); }
+            function loadCallHistory() { record("loadCallHistory", []); }
+            function syncCallHistory() { record("syncCallHistory", []); }
         }
     ''', QUrl())
     assert not component.isError(), [error.toString() for error in component.errors()]
@@ -1847,7 +1853,7 @@ def test_recent_calls_page_loads_once_and_filters_missed_calls(qml_engine):
         assert not failed, expression.error().toString()
         return value
 
-    assert bridge.loads == 1, "opening the page fetches the list once"
+    assert bridge.loads == 0, "creating the page must not fetch call records"
     assert evaluate("visibleCalls().length") == 2
     page.setProperty("missedOnly", True)
     assert evaluate("visibleCalls().map(call => call.direction).join()") == "missed"
@@ -1856,3 +1862,24 @@ def test_recent_calls_page_loads_once_and_filters_missed_calls(qml_engine):
     source = (ROOT / "src/blueferry/qt/qml/RecentCallsPage.qml").read_text()
     assert source.count("Controls.Label {") == source.count("textFormat: Text.PlainText")
     page.deleteLater()
+
+
+def test_recent_calls_load_on_open_and_are_forgotten_on_close(qml_engine, settings_window):
+    _window, bridge = settings_window
+    _evaluate(qml_engine, "testWindow.openRecentCalls()")
+    assert _evaluate(qml_engine, "testWindow.recentCallsPage === null") is True
+    assert _evaluate(qml_engine, "testBridge.calls") == [], "disabled feature: nothing opens"
+
+    bridge.setProperty("callHistoryEnabled", True)
+    QGuiApplication.processEvents()
+    _evaluate(qml_engine, "testWindow.openRecentCalls()")
+    QGuiApplication.processEvents()
+    assert _evaluate(qml_engine, "testWindow.recentCallsPage !== null") is True
+    assert [call["method"] for call in _evaluate(qml_engine, "testBridge.calls")] == ["watchCallHistory"]
+    assert _evaluate(qml_engine, "testBridge.calls")[0]["args"] == [True]
+
+    _evaluate(qml_engine, "testWindow.closeRecentCalls()")
+    QGuiApplication.processEvents()
+    assert _evaluate(qml_engine, "testWindow.recentCallsPage === null") is True
+    assert _evaluate(qml_engine, "testBridge.calls")[-1] == {"method": "watchCallHistory", "args": [False]}
+    assert _evaluate(qml_engine, "testWindow.pageStack.depth") == 1

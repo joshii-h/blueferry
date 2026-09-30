@@ -38,8 +38,6 @@ Kirigami.ScrollablePage {
         return "call-incoming"
     }
 
-    Component.onCompleted: callsPage.bridge.loadCallHistory()
-
     actions: [
         Kirigami.Action {
             text: qsTr("Missed Only")

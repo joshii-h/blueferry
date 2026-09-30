@@ -118,14 +118,18 @@ Kirigami.ApplicationWindow {
         }
         closePhoneSettings()
         recentCallsPage = pageStack.push(recentCallsLoader.item)
+        // Records are fetched only while the page is open.
+        bridge.watchCallHistory(true)
     }
 
     function closeRecentCalls() {
         if (recentCallsPage === null)
             return
-        const page = recentCallsPage
+        // Remove before clearing the reference: the Loader stays active while
+        // recentCallsPage is set, so the page is never destroyed on the stack.
+        pageStack.removePage(recentCallsPage)
         recentCallsPage = null
-        pageStack.removePage(page)
+        bridge.watchCallHistory(false)
     }
 
     function togglePhoneSettings() {

@@ -105,6 +105,8 @@ class BridgeController(QObject):
         self._call_history_error = ""
         self._call_history_loading = False
         self._call_history_again = False
+        # Only a visible Recent Calls page keeps call records in this process.
+        self._call_history_watched = False
         self._call_history_timer = QTimer(self)
         self._call_history_timer.setSingleShot(True)
         self._call_history_timer.setInterval(100)
@@ -337,15 +339,28 @@ class BridgeController(QObject):
 
     @Slot()
     def _callHistoryInvalidated(self) -> None:
-        # Only a client that already shows the list keeps it fresh; the
-        # signal itself carries nothing.
-        if self.callHistoryEnabled and (self._call_history or self._call_history_error):
+        # The signal carries nothing; only a shown list is refetched.
+        if self.callHistoryEnabled and self._call_history_watched:
             self._call_history_timer.start()
+
+    @Slot(bool)
+    def watchCallHistory(self, watched: bool) -> None:
+        """The Recent Calls page opened (load now) or closed (forget it)."""
+        self._call_history_watched = bool(watched)
+        if self._call_history_watched:
+            self.loadCallHistory()
+            return
+        self._call_history_timer.stop()
+        self._call_history_again = False
+        if self._call_history or self._call_history_error:
+            self._call_history = []
+            self._call_history_error = ""
+            self.callHistoryChanged.emit()
 
     @Slot()
     def loadCallHistory(self) -> None:
         """Fetch the opt-in call list; never touches the conversation error."""
-        if not self.callHistoryEnabled:
+        if not self.callHistoryEnabled or not self._call_history_watched:
             return
         if self._call_history_loading:
             self._call_history_again = True
@@ -356,14 +371,17 @@ class BridgeController(QObject):
             return [entry.to_dict() for entry in self._backend.call_history(200)]
 
         def completed(value: object) -> None:
-            self._call_history = list(value) if isinstance(value, list) else []
-            self._call_history_error = ""
-            self.callHistoryChanged.emit()
+            # A reply that lands after the page closed is discarded.
+            if self._call_history_watched:
+                self._call_history = list(value) if isinstance(value, list) else []
+                self._call_history_error = ""
+                self.callHistoryChanged.emit()
             finished()
 
         def failed(message: str) -> None:
-            self._call_history_error = message or _("Call history is unavailable")
-            self.callHistoryChanged.emit()
+            if self._call_history_watched:
+                self._call_history_error = message or _("Call history is unavailable")
+                self.callHistoryChanged.emit()
             finished()
 
         def finished() -> None:
@@ -380,8 +398,9 @@ class BridgeController(QObject):
             return
 
         def failed(message: str) -> None:
-            self._call_history_error = message or _("Call history sync failed")
-            self.callHistoryChanged.emit()
+            if self._call_history_watched:
+                self._call_history_error = message or _("Call history sync failed")
+                self.callHistoryChanged.emit()
 
         self._run(
             self._backend.sync_call_history,

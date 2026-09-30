@@ -850,6 +850,7 @@ def test_call_history_is_inert_until_the_backend_reports_the_opt_in():
 
     controller = _call_history_controller(Backend(), enabled=False)
 
+    controller.watchCallHistory(True)
     controller.loadCallHistory()
     controller.syncCallHistory()
     controller._callHistoryInvalidated()
@@ -899,6 +900,9 @@ def test_call_history_uses_worker_tasks_without_touching_conversation_errors(mon
     changes = []
     controller.callHistoryChanged.connect(lambda: changes.append(True))
 
+    controller.loadCallHistory()
+    assert runs == [], "nothing is fetched until the page is shown"
+    controller._call_history_watched = True
     controller.syncCallHistory()
 
     assert runs == [True, False], "sync shows busy; the list refresh does not"
@@ -918,7 +922,7 @@ def test_call_history_failure_is_reported_on_its_own_property(monkeypatch):
     controller = _call_history_controller(Backend())
     _inline_runs(controller, monkeypatch)
 
-    controller.loadCallHistory()
+    controller.watchCallHistory(True)
 
     assert "storage is locked" in controller.callHistoryError
     assert controller.errorText == ""
@@ -928,9 +932,52 @@ def test_content_free_invalidation_reloads_only_a_shown_list(monkeypatch):
     controller = _call_history_controller(_Backend())
     started = []
     monkeypatch.setattr(controller._call_history_timer, "start", lambda: started.append(1))
+    monkeypatch.setattr(controller, "loadCallHistory", lambda: None)
 
     controller._callHistoryInvalidated()
-    controller._call_history = [{"caller": "x"}]
+    controller.watchCallHistory(True)
     controller._callHistoryInvalidated()
 
     assert started == [1]
+
+
+def test_opening_loads_and_closing_forgets_call_records(monkeypatch):
+    from blueferry.models import CallHistoryEntry
+
+    class Backend(_Backend):
+        loads = 0
+
+        def call_history(self, _limit):
+            type(self).loads += 1
+            return [CallHistoryEntry.from_dict({
+                "direction": "incoming", "timestamp": "2026-09-28T09:00:00+00:00",
+                "address": "+15551230002",
+            })]
+
+    controller = _call_history_controller(Backend())
+    runs = _inline_runs(controller, monkeypatch)
+    assert Backend.loads == 0
+
+    controller.watchCallHistory(True)
+    assert Backend.loads == 1 and len(controller.callHistory) == 1
+
+    controller.watchCallHistory(False)
+    assert controller.callHistory == []
+    controller._callHistoryInvalidated()
+    assert Backend.loads == 1 and runs == [False]
+
+
+def test_late_reply_after_close_is_discarded(monkeypatch):
+    controller = _call_history_controller(_Backend())
+    captured = {}
+
+    def run(operation, done=None, failed=None, **_kwargs):
+        captured["done"] = done
+
+    monkeypatch.setattr(controller, "_run", run)
+    controller.watchCallHistory(True)
+    controller.watchCallHistory(False)
+
+    captured["done"]([{"caller": "late"}])
+
+    assert controller.callHistory == []
