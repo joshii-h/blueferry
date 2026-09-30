@@ -349,7 +349,12 @@ CALL_HISTORY_INTERVAL_SEC: int = _env_int(
 MISSED_CALL_NOTIFICATIONS: bool = _env_bool(
     "BLUEFERRY_MISSED_CALL_NOTIFICATIONS", True
 )
-"""Desktop popups for newly seen missed calls; only with call history enabled."""
+"""Desktop popups for newly missed calls.
+
+Applies to call history (``BLUEFERRY_CALL_HISTORY_ENABLED``) and to calls that
+stop ringing unanswered on the HFP path (``BLUEFERRY_CALLS_ENABLED``). With
+both on, a call announced through HFP is not announced again by call history.
+"""
 TETHER_AUTOCONNECT: bool = _env_bool("BLUEFERRY_TETHER_AUTOCONNECT", False)
 """Start Bluetooth tethering automatically once MAP/PBAP are up.
 

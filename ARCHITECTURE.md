@@ -102,6 +102,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `calls/ofono.py` | Asynchronous oFono system-bus transport (hand-built calls with NO_AUTO_START, no synchronous owner lookup). |
 | `calls/controller.py` | Optional HFP calls: oFono modem discovery, Powered→Online bring-up, call tracking and control, backoff; watches the phone's battery/signal interfaces while online. |
 | `calls/phone_status.py` | Optional phone status: pure parsing of oFono's Handsfree/NetworkRegistration properties and the once-per-cycle low-battery decision. |
+| `calls/missed.py` | Optional: detects HFP calls that stop ringing unanswered and keeps a short in-memory (time, number) list so call history does not announce the same missed call again. |
 | `tether.py` | Opt-in Bluetooth PAN tethering state machine, Network1 link watch, and BlueZ error tokens. |
 | `tether_backends.py` | Tethering strategies: a per-user NetworkManager PAN profile, or plain `Network1.Connect("nap")`. |
 

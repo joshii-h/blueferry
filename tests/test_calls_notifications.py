@@ -210,6 +210,12 @@ def test_notification_action_on_disabled_calls_is_logged_not_raised(make_daemon)
 
 def test_controller_events_are_routed_to_the_dispatcher(make_daemon) -> None:
     instance = make_daemon()
+    routed = []
+    instance.events.call = routed.append
+    event = CallEvent("call_incoming", _record())
 
-    assert instance.calls._on_event == instance.events.call
+    # The daemon observes events for missed-call handling, then forwards them.
+    assert instance.calls._on_event == instance._on_call_event
+    instance.calls._on_event(event)
+    assert routed == [event]
     assert instance.events.on_call_action == instance._notification_call_action

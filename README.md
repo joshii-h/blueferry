@@ -693,6 +693,12 @@ BLUEFERRY_CALL_HISTORY_INTERVAL_SEC=300
   never connected, the list is fetched once after a three-minute grace period
   and then only on demand. Each of the three call lists must finish within
   two minutes. `--sync` and **Refresh from iPhone** are never held back.
+- With phone calls (`BLUEFERRY_CALLS_ENABLED`) also on, a call that stops
+  ringing unanswered is announced right away through hands-free, and call
+  history is refreshed after every call. Its later entry for the same call
+  (same number, within two minutes) is then not announced a second time; a
+  call you declined from the BlueFerry popup is not announced at all. This
+  pairing is kept in memory for ten minutes only.
 - The first refresh after enabling the option (or after clearing history)
   only records the existing list; you are not flooded with old missed calls.
   Each missed call is announced once, calls older than 12 hours are never

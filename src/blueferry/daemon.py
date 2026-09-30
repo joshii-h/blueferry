@@ -38,6 +38,13 @@ from blueferry.call_history import (
 )
 from blueferry.call_history_sync import CallHistorySync
 from blueferry.calls.controller import CallController
+from blueferry.calls.missed import (
+    MissedCallMemory,
+    MissedCallTracker,
+    MissedHfpCall,
+    call_number_identity,
+)
+from blueferry.calls.model import CallEvent
 from blueferry.calls.phone_status import LowBatteryMonitor, PhoneStatus
 from blueferry.confirmed_groups import ConfirmedGroupsStore
 from blueferry.connectivity import Connectivity
@@ -220,6 +227,10 @@ class Daemon:
         # Optional HFP calls through oFono. Inert unless explicitly enabled;
         # construction performs no I/O. oFono is only asked to page the phone
         # (Modem.Powered) while the Classic bearer is up.
+        # HFP-announced missed calls, remembered briefly (memory only) so the
+        # later call-history entry for the same call does not pop up again.
+        self._missed_tracker = MissedCallTracker()
+        self._hfp_missed_calls = MissedCallMemory()
         self.calls = CallController(
             enabled=config.CALLS_ENABLED,
             mac=config.IPHONE_MAC,
@@ -227,7 +238,7 @@ class Daemon:
             resolve_contact=self.contacts.resolve,
             on_calls_changed=self._emit_calls_changed,
             on_state_changed=self._emit_status_soon,
-            on_event=self.events.call,
+            on_event=self._on_call_event,
             phone_reachable=lambda: self.bearers.bredr_connected,
             on_phone_status=self._on_phone_status,
         )
@@ -411,9 +422,39 @@ class Daemon:
         if emit is not None:
             emit()
 
+    def _on_call_event(self, event: CallEvent) -> None:
+        """Forward an HFP call event; after a call, refresh call history."""
+        self.events.call(event)
+        missed = self._missed_tracker.observe(event)
+        if event.kind != "call_ended":
+            return
+        if missed is not None:
+            self._hfp_missed_call(missed)
+        # The reason is logged: it must never carry the number.
+        self.request_call_history_sync("call ended")
+
+    def _hfp_missed_call(self, missed: MissedHfpCall) -> None:
+        """Announce a call that stopped ringing unanswered, and remember it."""
+        record = missed.record
+        # A call the user declined here still shows up as missed in the
+        # phone's call history; remembering it keeps that entry silent too.
+        self._hfp_missed_calls.remember(
+            missed.occurred_at, call_number_identity(record.number),
+        )
+        if missed.declined or not config.MISSED_CALL_NOTIFICATIONS:
+            return
+        caller = record.contact_name or record.network_name or record.number or None
+        self.events.missed_calls([MissedCallNotice(
+            caller=caller,
+            known_contact=bool(record.contact_name),
+            occurred_at=missed.occurred_at,
+        )])
+
     def _notification_call_action(self, call_id: str, action: str) -> None:
         """Answer or decline from an incoming-call desktop notification."""
         operation = self.calls.answer if action == "answer" else self.calls.hangup
+        if action != "answer":
+            self._missed_tracker.declined(call_id)
 
         def failed(error: Exception) -> None:
             # The controller already logged oFono's error name; never log the
@@ -1066,13 +1107,19 @@ class Daemon:
             return
         notices = []
         for record in records:
+            # HFP already announced this call when it stopped ringing.
+            if self._hfp_missed_calls.suppresses(
+                record.occurred_at, record.number_identity or None,
+            ):
+                continue
             resolved = resolve_contact_name(record, self.contacts.resolve)
             notices.append(MissedCallNotice(
                 caller=display_caller(record, resolved),
                 known_contact=resolved is not None,
                 occurred_at=record.occurred_at,
             ))
-        self.events.missed_calls(notices)
+        if notices:
+            self.events.missed_calls(notices)
 
     def _status(self) -> dict:
         if self.contacts.count() > 0:
