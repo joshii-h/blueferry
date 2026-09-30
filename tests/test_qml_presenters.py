@@ -1820,6 +1820,18 @@ def test_now_playing_bar_is_absent_until_media_is_available(
     qml_engine.globalObject().setProperty("nowPlayingLabel", qml_engine.newQObject(label))
     assert _evaluate(qml_engine, "nowPlayingLabel.textFormat") == 0  # Text.PlainText
     assert not window.findChild(QObject, "nowPlayingPrevious").property("enabled")
+    assert window.findChild(QObject, "nowPlayingBar").property("stateIcon") == (
+        "media-playback-start"
+    )
+    _evaluate(qml_engine, """testBridge.nowPlaying = Object.assign(
+        {}, testBridge.nowPlaying, {player: {state: "paused"}})""")
+    QGuiApplication.processEvents()
+    assert window.findChild(QObject, "nowPlayingBar").property("stateIcon") == (
+        "media-playback-pause"
+    )
+    _evaluate(qml_engine, """testBridge.nowPlaying = Object.assign(
+        {}, testBridge.nowPlaying, {player: {state: "playing"}})""")
+    QGuiApplication.processEvents()
 
     _click_control(window, window.findChild(QObject, "nowPlayingNext"))
     _click_control(window, window.findChild(QObject, "nowPlayingToggle"))

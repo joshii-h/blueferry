@@ -17,6 +17,8 @@ Controls.ToolBar {
     readonly property bool playing: player.state === "playing"
         || player.state === "rewinding" || player.state === "fast-forwarding"
 
+    readonly property string stateIcon: playing ? "media-playback-start" : "media-playback-pause"
+
     function supports(name) {
         return commands.indexOf(name) >= 0
     }
@@ -37,7 +39,8 @@ Controls.ToolBar {
         spacing: Kirigami.Units.smallSpacing
 
         Kirigami.Icon {
-            source: "media-playback-start"
+            // Shows the iPhone's current state; the toggle button shows the action.
+            source: bar.stateIcon
             implicitWidth: Kirigami.Units.iconSizes.small
             implicitHeight: Kirigami.Units.iconSizes.small
             Layout.leftMargin: Kirigami.Units.smallSpacing
