@@ -178,7 +178,9 @@ def test_hostile_email_like_input_stays_linear() -> None:
     assert len(body) <= MAX_OTP_MESSAGE_CHARS
     started = time.perf_counter()
     extract_otp(body)
-    assert time.perf_counter() - started < 0.05
+    # The old pattern took about 1.6 s here; linear matching takes well under
+    # a millisecond, so 0.5 s leaves ample room on a loaded machine.
+    assert time.perf_counter() - started < 0.5
 
 
 def test_non_ascii_script_digits_are_not_codes() -> None:
