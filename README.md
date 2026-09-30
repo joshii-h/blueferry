@@ -361,8 +361,9 @@ application you run can read the current title, artist and album and is
 notified of changes, exactly as with a desktop music player. Without the MPRIS
 option, track details are only available through BlueFerry's own
 authenticated D-Bus API, and its change signal carries no content. AMS has no
-absolute volume or seek, so MPRIS volume changes move the iPhone one step, and
-seeking is not offered.
+absolute volume, seek or stop, so through MPRIS a volume change moves the
+iPhone one step, seeking is not offered (use `blueferry media skip-forward` or
+`skip-backward` for the phone's fixed skips), and Stop pauses playback.
 
 BlueFerry deliberately does not use AVRCP for this: acting as an AVRCP
 controller could make the iPhone route its audio to this computer.
