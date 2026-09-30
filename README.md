@@ -403,9 +403,10 @@ What happens then:
 - The backend looks for the iPhone's oFono modem (type `hfp`, path ending in
   `dev_XX_XX_XX_XX_XX_XX` for the paired phone). iOS does not power this modem
   up by itself: BlueFerry sets `Powered=true` while the Classic link is up,
-  waits for oFono to confirm it, then sets `Online=true`, after which the
-  call manager appears. It also raises oFono's call volume to 100 % because
-  the 50 % default is nearly inaudible with an iPhone.
+  waits for oFono to confirm it, then sets `Online=true`. Call control is
+  ready once the modem is online and lists oFono's call manager. It also
+  raises oFono's call volume to 100 % because the 50 % default is nearly
+  inaudible with an iPhone.
 - An incoming call shows a desktop notification with **Answer** and
   **Decline** (without the caller when
   `BLUEFERRY_SHOW_NOTIFICATION_CONTENT=false`; the contacts-only notification

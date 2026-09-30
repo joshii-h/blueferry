@@ -34,8 +34,10 @@ iOS/oFono quirk: the iPhone's hands-free modem does not power itself up. The
 controller sets ``Modem.Powered=true`` (oFono then connects the HFP profile
 and establishes the service-level connection), waits for oFono to report
 ``Powered=true``, and only then requests ``Online=true``; oFono rejects Online
-before Powered. ``VoiceCallManager`` appears in the modem's ``Interfaces``
-once it is online.
+before Powered. oFono's HFP driver registers ``VoiceCallManager`` already
+while powering the modem (``hfp_pre_sim``), so its presence in ``Interfaces``
+alone does not mean call control works: the controller treats the modem as
+voice-ready only when it is Online *and* lists ``VoiceCallManager``.
 """
 from __future__ import annotations
 
