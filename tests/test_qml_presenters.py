@@ -833,6 +833,55 @@ def test_proximity_lock_settings_appear_only_for_supporting_daemons(qml_engine, 
     ) == [{"method": "setProximityLock", "args": [True, 90]}]
 
 
+def test_proximity_grace_edit_survives_a_status_refresh_before_saving(qml_engine):
+    component = QQmlComponent(qml_engine)
+    component.setData(b'''
+        import QtQuick
+        QtObject {
+            property var status: ({})
+            property bool busy: false
+            property var calls: []
+            function setProximityLock(enabled, grace) {
+                calls = calls.concat([[enabled, grace]]);
+            }
+        }
+    ''', QUrl())
+    bridge = component.create()
+    bridge.setProperty("status", {
+        "daemon": True, "proximity_lock": "armed",
+        "proximity_lock_enabled": True, "proximity_lock_grace_sec": 60,
+    })
+    settings_component = _component(
+        qml_engine, "src/blueferry/qt/qml/ProximityLockSettings.qml"
+    )
+    settings = settings_component.createWithInitialProperties({"bridge": bridge})
+    spin = settings.findChild(QObject, "proximityLockGraceSpinBox")
+    assert spin.property("value") == 60
+
+    assert QMetaObject.invokeMethod(spin, "increase")
+    assert QMetaObject.invokeMethod(spin, "valueModified")
+    # An unrelated StatusChanged refresh arrives inside the coalescing window.
+    bridge.setProperty("status", {
+        "daemon": True, "proximity_lock": "armed",
+        "proximity_lock_enabled": True, "proximity_lock_grace_sec": 60,
+    })
+    assert spin.property("value") == 70
+    QTest.qWait(1000)
+    calls = bridge.property("calls")
+    if hasattr(calls, "toVariant"):
+        calls = calls.toVariant()
+    assert calls == [[True, 70]]
+
+    # After saving, the daemon's value is followed again.
+    bridge.setProperty("status", {
+        "daemon": True, "proximity_lock": "armed",
+        "proximity_lock_enabled": True, "proximity_lock_grace_sec": 120,
+    })
+    assert spin.property("value") == 120
+    settings.deleteLater()
+    bridge.deleteLater()
+
+
 @pytest.mark.parametrize("status,expected", [
     ({"proximity_lock": "armed"}, "Armed"),
     ({"proximity_lock": "grace", "proximity_lock_remaining_sec": 12}, "locking in 12 s"),

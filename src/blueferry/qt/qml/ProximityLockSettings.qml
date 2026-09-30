@@ -67,7 +67,7 @@ ColumnLayout {
             to: 3600
             stepSize: 10
             editable: true
-            value: proximitySettings.status.proximity_lock_grace_sec || 60
+            value: 60
             enabled: proximitySettings.available
             // Coalesce spin clicks into one settings call.
             onValueModified: saveTimer.restart()
@@ -80,6 +80,15 @@ ColumnLayout {
             textFormat: Text.PlainText
             text: proximitySettings.stateText()
         }
+    }
+    // Follow the daemon's value, except while an edit is waiting to be saved:
+    // a StatusChanged refresh in that window must not undo the user's input.
+    Binding {
+        target: graceBox
+        property: "value"
+        value: proximitySettings.status.proximity_lock_grace_sec || 60
+        when: !saveTimer.running
+        restoreMode: Binding.RestoreNone
     }
     Timer {
         id: saveTimer
