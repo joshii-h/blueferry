@@ -143,11 +143,15 @@ def test_low_battery_warns_once_per_discharge_cycle() -> None:
 
 
 def test_low_battery_threshold_is_clamped_and_first_reading_can_warn() -> None:
-    assert LowBatteryMonitor(250).threshold == 100
+    assert LowBatteryMonitor(250).threshold == 80
+    assert LowBatteryMonitor(100).threshold == 80
     assert LowBatteryMonitor(-5).threshold == 0
     monitor = LowBatteryMonitor(20)
     assert monitor.observe(0) is True
     assert monitor.warned
+    # The highest threshold can still re-arm: 100 % is one step above 80 %.
+    top = LowBatteryMonitor(100)
+    assert [top.observe(level) for level in (80, 100, 80)] == [True, False, True]
 
 
 @pytest.mark.parametrize("value,expected", [
