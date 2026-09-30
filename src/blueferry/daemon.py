@@ -150,11 +150,10 @@ class Daemon:
         # bearer supervisor keeps; it never connects or drops that link itself.
         self.tether = TetherController(
             choose_backend(
-                lambda: get_system_bus(), device_path, config.IPHONE_MAC,
-                config.TETHER_BACKEND,
+                get_system_bus, device_path, config.IPHONE_MAC, config.TETHER_BACKEND,
             ),
             link_watch=NetworkLinkWatch(
-                lambda: get_system_bus(),
+                get_system_bus,
                 device_path,
                 lambda connected, interface: self.tether.observe_link(connected, interface),
             ),
@@ -229,6 +228,9 @@ class Daemon:
 
     def _recovery_observation(self) -> RecoveryObservation:
         ancs = self.ancs
+        # Re-check the tether link so a stale "connected" cannot keep holding
+        # recovery back; the answer arrives before the next observation.
+        self.tether.probe_link()
         return RecoveryObservation(
             healthy=bool(ancs and ancs.connected and not ancs.permission_denied),
             health_proof=ancs.health_proof if ancs else None,
@@ -238,8 +240,9 @@ class Daemon:
                 and self.bearers.bredr_connected and self.bearers.le_state is not None
                 and self.solicitation.active()
             ),
-            # A power cycle would silently cut the user's tethered internet.
-            busy=self.bearers.busy or self.tether.active,
+            # A power cycle would silently cut the user's tethered internet,
+            # but only a link that demonstrably exists may hold it back.
+            busy=self.bearers.busy or self.tether.link_alive(),
         )
 
     def _pause_for_recovery(self) -> None:
@@ -521,6 +524,8 @@ class Daemon:
         self.recovery.invalidate()
         if old_owner:
             bluez_setup.forget_advert_registration()
+            # bluetoothd took every BNEP link and pending reply with it.
+            self.tether.reset_after_bluez_restart()
         if new_owner and not self.recovery.active:
             # Reset before ANCS publishes status: that callback can already
             # register an advert with the replacement owner. Forgetting it
