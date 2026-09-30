@@ -55,6 +55,8 @@ All paths are relative to `src/blueferry/` unless noted.
 | `private_files.py` | Race-resistant owner-only reads and atomic writes for small files. |
 | `build_info.py` | Package release + source-SHA build identity. |
 | `wireplumber_policy.py` | Manages one WirePlumber fragment that keeps iPhone audio on the phone. |
+| `media.py` | Opt-in now-playing projection, media command policy, and coalesced change listeners. |
+| `mpris.py` | Optional MPRIS2 player (`org.mpris.MediaPlayer2.blueferry_iphone`) over `media.py`. |
 
 ### Bluetooth transports and supervision
 
@@ -77,6 +79,10 @@ All paths are relative to `src/blueferry/` unless noted.
 | `ancs/constants.py` | ANCS spec constants. |
 | `ancs/events.py` | `AncsEvent`, the normalized per-app notification. |
 | `ancs/sequencer.py` | Bounded, duplicate-aware backlog of serialized ANCS requests. |
+| `ams/client.py` | Opt-in Apple Media Service GATT client on the ANCS LE link; asynchronous, serialized, bounded. |
+| `ams/parsers.py` | Pure AMS wire-format parsers and command/registration builders. |
+| `ams/state.py` | `NowPlaying` projection of Player, Queue, and Track attributes. |
+| `ams/constants.py` | AMS UUIDs, identifiers, and public command names. |
 | `bearer_supervisor.py` | Connects BR/EDR first, then keeps LE connected alongside it. |
 | `solicitation_supervisor.py` | Keeps the ANCS solicitation advertisement on air until ANCS is proven healthy. |
 | `adapter_class_supervisor.py` | Detects Class-of-Device drift and repairs it through the constrained system helper. |
@@ -139,6 +145,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `cli.py`, `__main__.py` | Typer CLI (`run`, `doctor`, sync, setup, and hidden `pairing-*` JSON helpers). |
 | `cli_messages.py` | CLI message listing, recipient selection, and send. |
 | `cli_common.py` | Small CLI presentation helpers. |
+| `cli_media.py` | `blueferry media` now-playing status and commands. |
 | `tui.py` | Textual terminal client. |
 | `tui_launcher.py` | Launches the TUI with the package-private Textual bundle when present. |
 | `ui/app.py` | GTK4/libadwaita application entry point. |
@@ -162,6 +169,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `qt/qml/NewMessageDialog.qml` | New message composition. |
 | `qt/qml/ExpandingMessageComposer.qml` | Growing message editor. |
 | `qt/qml/MessageBubble.qml` | Message bubble. |
+| `qt/qml/NowPlayingBar.qml` | Opt-in iPhone now-playing bar with transport buttons. |
 | `quickshell_bridge.py` | Persistent stdin/stdout JSON bridge from Quickshell to the session D-Bus API. |
 
 ### Quickshell client (`data/quickshell/`)
@@ -203,7 +211,10 @@ contract.
 ## D-Bus API and compatibility
 
 - `Messages1` carries commands and unicast snapshots; `Events1` carries
-  content-free live coordination. Identifiers live in `protocol.py`.
+  content-free live coordination. The opt-in `Media1` interface returns the
+  now-playing snapshot and sends validated media commands; its
+  `NowPlayingChanged` invalidation on `Events1` has no arguments.
+  Identifiers live in `protocol.py`.
 - `data/io.weirdware.BlueFerry.xml` is canonical, installed under
   `dbus-1/interfaces`, and checked against the service's dbus-python
   decorators.
@@ -228,8 +239,8 @@ contract.
   in the daemon log.
 - Every public method checks the caller's UID against the backend's and
   applies per-connection plus daemon-wide quotas, with separate limits for
-  sends, contact sync, storage unlock, destructive operations, reads, and
-  status. Reconnecting does not reset daemon-wide limits. Snapshot sizes,
+  sends, contact sync, storage unlock, destructive operations, reads,
+  status, media reads, and media commands. Reconnecting does not reset daemon-wide limits. Snapshot sizes,
   query text, and replies are bounded.
 - `ListThreads` fits an 8 MiB budget by keeping the newest contiguous tail of
   each thread, capped at 500 messages per thread, and includes retained
@@ -363,6 +374,12 @@ A change to these rules has to be made in both places.
 - **Bearers:** `bearer_supervisor` keeps BR/EDR and LE connected, independent
   of desktop applets. In full mode a missing LE bearer holds back MAP/PBAP
   reconnects. Compatibility mode leaves LE disabled.
+- **Media (opt-in):** `ams/client` never dials. It follows the bearer
+  supervisor's LE observations and BlueZ owner changes, subscribes after the
+  link settles, and resets without `StopNotify` on loss. `media` owns the
+  command policy; the optional `mpris` adapter owns its bus name only while a
+  player is active. MPRIS broadcasts metadata session-wide by design, which
+  is why it is a separate opt-in from `Media1`.
 - **Solicitation:** `solicitation_supervisor` keeps the advertisement on air
   until MAP/PBAP and an ANCS Control Point round trip are both healthy. It
   re-registers the advertisement if BlueZ releases it or changes owner.

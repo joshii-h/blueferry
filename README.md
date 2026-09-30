@@ -327,6 +327,46 @@ installed. After a successful bond the daemon keeps reconciling the same
 file. Set `BLUEFERRY_KEEP_PHONE_AUDIO_ON_PHONE=false` to remove BlueFerry's
 fragment only.
 
+## iPhone media control (optional)
+
+BlueFerry can show what the iPhone is playing and send play, pause, next,
+previous, volume, skip and like/dislike commands through Apple's Media
+Service (AMS). AMS uses the same Bluetooth LE bond as notifications, so it
+needs the full pairing mode; compatibility mode never connects LE. It is off
+by default because it adds Bluetooth traffic and is outside BlueFerry's
+messaging focus. Opt in in `~/.config/blueferry/local.env` and restart the
+user service:
+
+```bash
+BLUEFERRY_MEDIA_CONTROL_ENABLED=true
+# Optional: also publish the iPhone as an MPRIS player for Plasma, media keys
+# and playerctl. See the privacy note below before enabling it.
+BLUEFERRY_MEDIA_MPRIS_ENABLED=true
+```
+
+```bash
+blueferry media            # now playing
+blueferry media toggle     # also: play, pause, next, previous, volume-up,
+                           # volume-down, skip-forward, skip-backward, like, ...
+```
+
+Only commands the iPhone currently offers are sent; for example, like/dislike
+exist only for players that advertise them. The Kirigami client shows a small
+now-playing bar above the conversations while a player is active.
+
+With the MPRIS option, BlueFerry registers
+`org.mpris.MediaPlayer2.blueferry_iphone` on your session bus while the iPhone
+reports an active player. **MPRIS is public within your login session:** any
+application you run can read the current title, artist and album and is
+notified of changes, exactly as with a desktop music player. Without the MPRIS
+option, track details are only available through BlueFerry's own
+authenticated D-Bus API, and its change signal carries no content. AMS has no
+absolute volume or seek, so MPRIS volume changes move the iPhone one step, and
+seeking is not offered.
+
+BlueFerry deliberately does not use AVRCP for this: acting as an AVRCP
+controller could make the iPhone route its audio to this computer.
+
 ## Command line
 
 The graphical clients cover normal use, but the CLI is useful for diagnostics
@@ -338,6 +378,7 @@ blueferry sms-send '+15551234567' 'on my way'
 blueferry sms-send person@icloud.com 'hello from Linux'
 blueferry sms-send Alice 'running late'
 blueferry contacts-sync
+blueferry media status
 blueferry history-clear
 blueferry doctor
 ```
