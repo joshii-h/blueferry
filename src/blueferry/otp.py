@@ -34,7 +34,9 @@ _DASHES = dict.fromkeys((0x2010, 0x2011, 0x2012, 0x2013, 0x2014, 0x2212), "-")
 
 # ``\w*code`` covers compounds (Bestätigungscode, Sicherheitscode,
 # verificatiecode, passcode) as well as the plain word.
-_CODE_WORD = re.compile(r"(?<!\w)(\w*?)(code|kode|codice|c[oó]digo)(?!\w)", re.IGNORECASE)
+_CODE_WORD = re.compile(
+    r"(?<!\w)(\w*?)(codes?|kode|codice|c[oó]digos?)(?!\w)", re.IGNORECASE
+)
 
 # Keywords specific enough that alphanumeric candidates are acceptable.
 _STRONG_KEYWORD = re.compile(
@@ -43,12 +45,16 @@ _STRONG_KEYWORD = re.compile(
     r"|authenti\w*|authentifi\w*|autenti\w*"
     r"|otp|2fa|mfa|two[- ]?factor|two[- ]?step|zwei[- ]?faktor\w*|double authentification"
     r"|one[- ]time|einmal\w*|usage unique|monouso|un solo uso"
-    r"|passcode|[ms]?tan|pushtan|smstan|phototan"
+    r"|passcode"
     r"|do not share|don'?t share|never share|nicht weiter\w*|niemandem|"
     r"ne (?:le |la )?partagez|non condividere|no (?:lo )?compartas"
     r")(?!\w)",
     re.IGNORECASE,
 )
+
+# Bank transaction numbers. Case-sensitive on purpose: "tan" is an ordinary
+# word in English ("a tan") and Spanish ("tan barato").
+_TAN_KEYWORD = re.compile(r"(?<!\w)(?:m|sms|push|photo|chip)?TAN(?!\w)")
 
 # Weak keywords are accepted for plain numeric codes only.
 _WEAK_KEYWORD = re.compile(
@@ -105,11 +111,17 @@ _UNIT_AFTER = re.compile(
     re.IGNORECASE,
 )
 
-_URL = re.compile(r"(?:https?://|www\.)\S+|\S+@\S+\.\w+", re.IGNORECASE)
+# Linear on hostile input: the e-mail branch cannot backtrack across "@"
+# or "." boundaries (a naive \S+@\S+\.\w+ is cubic).
+_URL = re.compile(
+    r"(?:https?://|www\.)\S+|[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+", re.IGNORECASE
+)
 
 # One token: optional letter prefix (Google's G-123456), then 3-3 grouped
 # digits, 4-8 plain digits, or 4-8 upper-case alphanumerics with at least one
-# letter and one digit.
+# letter and one digit. Only ASCII digits count: NFKC already maps full-width
+# digits, while other scripts' digits (Arabic-Indic, Devanagari, ...) are
+# deliberately not treated as codes because verification fields expect ASCII.
 _CANDIDATE = re.compile(
     r"(?<![\w])"
     r"(?:(?P<prefix>[A-Z]{1,3})-)?"
@@ -163,6 +175,8 @@ def _keywords(text: str) -> list[_Keyword]:
         )
         found.append(_Keyword(match.start(), match.end(), strong))
     for match in _STRONG_KEYWORD.finditer(text):
+        found.append(_Keyword(match.start(), match.end(), True))
+    for match in _TAN_KEYWORD.finditer(text):
         found.append(_Keyword(match.start(), match.end(), True))
     for match in _WEAK_KEYWORD.finditer(text):
         found.append(_Keyword(match.start(), match.end(), False))

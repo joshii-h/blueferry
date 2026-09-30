@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import time
 
 import pytest
 from hypothesis import given, settings
@@ -36,6 +37,8 @@ PROPERTY_SETTINGS = settings(max_examples=300, derandomize=True, deadline=None)
         ("Dein Einmalcode lautet 5521.", "5521"),
         ("Ihr Code für die Anmeldung: 123 456", "123456"),
         ("mTAN: 12345678 für Überweisung von CHF 250.00", "12345678"),
+        ("Ihre SMS-TAN lautet 443355", "443355"),
+        ("Your codes: 998877 (valid 5 minutes)", "998877"),
         ("Ihr Bestätigungscode für Bestellung 12345678 lautet 654321", "654321"),
         # French
         ("Votre code de vérification est 834211.", "834211"),
@@ -95,6 +98,10 @@ def test_detects_codes(body: str, expected: str) -> None:
         "Your booking reference is ABC123, flight code LX1234",
         "Use code SUMMER2026 at checkout",
         "Our code is on page 1234 of the book",
+        # "tan" as an ordinary word, not a bank TAN.
+        "Es tan barato: 1500 pesos",
+        "I got a tan, 2024",
+        "Tan 2024 was a great year",
         # URLs.
         "see https://example.com/code/123456",
         # Too long to be an OTP message.
@@ -164,3 +171,16 @@ def test_a_keyword_next_to_a_number_is_well_formed(keyword: str, number: int) ->
         assert result is None
     elif not (len(value) == 4 and 1900 <= number <= 2099):
         assert result == value
+
+
+def test_hostile_email_like_input_stays_linear() -> None:
+    body = "code " + "@.@" * 331
+    assert len(body) <= MAX_OTP_MESSAGE_CHARS
+    started = time.perf_counter()
+    extract_otp(body)
+    assert time.perf_counter() - started < 0.05
+
+
+def test_non_ascii_script_digits_are_not_codes() -> None:
+    # Arabic-Indic digits: verification fields expect ASCII digits.
+    assert extract_otp("Your code: \u0664\u0668\u0662\u0669\u0661\u0663") is None
