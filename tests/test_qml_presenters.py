@@ -894,12 +894,29 @@ def test_optional_phone_status_indicator_appears_only_with_known_values(
     QGuiApplication.processEvents()
     tool_tip = indicator.findChild(QObject, "phoneStatusToolTip")
     assert tool_tip is not None
-    label = tool_tip.property("contentItem")
-    assert label.objectName() == "phoneStatusToolTipLabel"
+    content = tool_tip.property("contentItem")
+    label = content.findChild(QObject, "phoneStatusToolTipLabel")
+    assert label is not None
     qml_engine.globalObject().setProperty("phoneToolTipLabel", qml_engine.newQObject(label))
     # Qt::PlainText is 0 (AutoText, the style default, is 2).
     assert _evaluate(qml_engine, "phoneToolTipLabel.textFormat") == int(Qt.TextFormat.PlainText.value)
+    # Text.Wrap is 4, like the style's own tooltip label.
+    assert _evaluate(qml_engine, "phoneToolTipLabel.wrapMode") == 4
     assert label.property("text") == "iPhone battery about 40 % · <b>Sun</b>"
+
+    # A long name wraps inside the style's 14-grid-unit width cap.
+    bridge.setProperty("status", {
+        "calls_enabled": True,
+        "phone_battery_level": 40,
+        "phone_network_name": "Very Long Operator Name " * 3,
+        "phone_network_status": "registered",
+    })
+    QGuiApplication.processEvents()
+    cap = label.property("maxTextWidth")
+    assert cap > 0
+    assert content.property("implicitWidth") <= cap
+    assert label.property("contentWidth") <= cap
+    assert label.property("lineCount") > 1
 
     # Signal only: the battery parts hide, the indicator stays.
     bridge.setProperty("status", {"calls_enabled": True, "phone_signal_strength": 20})

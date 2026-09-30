@@ -77,17 +77,38 @@ RowLayout {
 
     // The operator name comes from the phone. The attached ToolTip of the
     // org.kde.desktop style renders AutoText, i.e. HTML such as "<b>…</b>";
-    // an explicit PlainText label shows it literally.
+    // an explicit PlainText label shows it literally. Replacing the style's
+    // contentItem also replaces its sizing and colors, so this mirrors them:
+    // wrap at 14 grid units, and use the text color of the ToolTip's own
+    // color set (Tooltip, or Complementary on complementary surfaces), which
+    // matches the style's background.
     Controls.ToolTip {
         id: toolTip
         objectName: "phoneStatusToolTip"
         text: indicator.summary
         visible: hover.hovered && indicator.summary !== ""
-        contentItem: Controls.Label {
-            objectName: "phoneStatusToolTipLabel"
-            text: toolTip.text
-            textFormat: Text.PlainText
-            wrapMode: Text.NoWrap
+        contentItem: Item {
+            implicitWidth: Math.min(toolTipLabel.maxTextWidth, toolTipLabel.contentWidth)
+            implicitHeight: toolTipLabel.implicitHeight
+
+            Controls.Label {
+                id: toolTipLabel
+                objectName: "phoneStatusToolTipLabel"
+                readonly property real maxTextWidth: Kirigami.Units.gridUnit * 14
+                text: toolTip.text
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+                font: toolTip.font
+                color: Kirigami.Theme.textColor
+                Kirigami.Theme.colorSet: toolTip.Kirigami.Theme.colorSet
+                Kirigami.Theme.inherit: false
+                // Like the style: cap each line instead of binding the width
+                // to the popup, which would form a binding loop.
+                onLineLaidOut: line => {
+                    if (line.implicitWidth > toolTipLabel.maxTextWidth)
+                        line.width = toolTipLabel.maxTextWidth
+                }
+            }
         }
     }
 }
