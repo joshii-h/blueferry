@@ -323,15 +323,24 @@ desktop popup:
 
 ```bash
 BLUEFERRY_ANCS_ACTIONS=true
+# Popups with action buttons stay longer than ordinary ones (1000-120000 ms):
+BLUEFERRY_ANCS_ACTION_TIMEOUT_MS=30000
 ```
 
 Clicking a button asks the iPhone to perform that action through ANCS. This is
 independent of hands-free calling: *Accept* on a call answers it on the
 iPhone, and the audio stays wherever iOS routes it. Nothing is sent to the
 phone unless you click a labelled button. Dismissing or letting a popup
-expire never touches the phone, and each popup runs at most one action. The
-button text comes from iOS, so it matches the phone's language. Messages
-popups come from MAP and keep their existing open and dismiss behavior.
+expire never touches the phone, and each popup runs at most one action.
+Messages popups come from MAP and keep their existing open and dismiss
+behavior.
+
+The button text is chosen by the app that sent the notification, so it can
+contain content (for example "Pay CHF 50 to Bob"). Actions therefore stay off
+while `BLUEFERRY_SHOW_NOTIFICATION_CONTENT=false`: the labels are then not even
+requested from the iPhone. When the iPhone connection is re-established,
+popups whose buttons belonged to the previous connection are closed, because
+iOS may reuse their notification numbers.
 
 If the notification was already handled on the iPhone, or the phone
 disconnected in the meantime, BlueFerry shows a short "iPhone action not

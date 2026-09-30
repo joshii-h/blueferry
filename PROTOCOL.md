@@ -450,8 +450,10 @@ as an ATT error on the write, which BlueZ surfaces as
 (invalid parameter) means the UID no longer exists, typically because the
 notification was handled on the phone first; `0xA3` means the action failed;
 `0xA0`/`0xA1` mean the command was not understood. UIDs are valid only within
-one ANCS session, so a subscription reset discards every pending action. This
-path is verified only against simulated responses, not a physical iPhone.
+one ANCS session, so a subscription reset discards every pending action and
+closes the desktop popups still wired to the old UIDs. Labels are app-defined
+strings and are requested only while notification content is shown. This path
+is verified only against simulated responses, not a physical iPhone.
 
 Conversation reads update local history immediately. The daemon delays the
 corresponding MAP read acknowledgements by at least five seconds, including

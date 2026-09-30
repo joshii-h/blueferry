@@ -419,11 +419,14 @@ A change to these rules has to be made in both places.
   only to an ephemeral popup sink, never retained or broadcast. Apple Messages
   keeps only the fields needed for group correlation.
 - **ANCS actions** (`BLUEFERRY_ANCS_ACTIONS`, off by default): action labels
-  are requested only for non-Messages notifications that announce an action,
-  shown only as popup buttons, and never retained, logged, or broadcast. A
-  phone action runs only after a click on its button, once per notification,
-  and only for a UID announced in the current ANCS session. There is no D-Bus
-  method for it because clients never see ANCS notifications or UIDs.
+  are app-defined content, so they are requested only while notification
+  content is shown, only for non-Messages notifications that announce an
+  action, shown only as popup buttons (markup characters removed), and never
+  retained, logged, or broadcast. A phone action runs only after a click on its
+  button, once per notification, and only for a UID announced in the current
+  ANCS session; a session reset closes every popup that still carries buttons.
+  There is no D-Bus method for it because clients never see ANCS notifications
+  or UIDs.
 - **Logs** exclude message bodies, notification text, and recipient
   identities at every level. Markup and terminal output are escaped at their
   display boundaries.
