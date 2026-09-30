@@ -111,6 +111,7 @@ def pull_vcard_listing(
     max_entries: int,
     max_bytes: int | None = None,
     allow_empty: bool = False,
+    overall_timeout_s: float = _PHONEBOOK_TRANSFER_MAX_SECONDS,
 ) -> str:
     """Select one PBAP phonebook in ``int/telecom`` and return its vCards.
 
@@ -118,6 +119,8 @@ def pull_vcard_listing(
     an owner-only runtime directory for the duration of the transfer only.
     """
     byte_limit = MAX_PHONEBOOK_BYTES if max_bytes is None else int(max_bytes)
+    # PBAP's MaxCount is a UInt16; never let a caller overflow it.
+    max_entries = max(1, min(int(max_entries), MAX_PHONEBOOK_CONTACTS))
     temporary_root = _phonebook_temp_root()
     pbap = obex(sessions.pbap_path, "org.bluez.obex.PhonebookAccess1")
     log.info("PBAP Select(int, %s)", phonebook)
@@ -156,7 +159,7 @@ def pull_vcard_listing(
             transfer_path,
             initial_status=initial_status,
             timeout_s=60,
-            overall_timeout_s=_PHONEBOOK_TRANSFER_MAX_SECONDS,
+            overall_timeout_s=overall_timeout_s,
             property_timeout_s=10.0,
             allow_disappearance=True,
             get_progress=listing_size,
@@ -197,7 +200,8 @@ def pull_phonebook(
         raise RuntimeError(storage.status.detail)
     blob = pull_vcard_listing(sessions, "pb", max_entries=max_contacts)
     parsed = _parse_vcard_records(blob, maximum=max_contacts)
-    log.info("parsed %d contacts from %d characters", len(parsed), len(blob))
+    log.info("parsed %d contacts from %d bytes", len(parsed),
+             len(blob.encode("utf-8", errors="replace")))
 
     return ContactRepository(storage).replace(parsed)
 
