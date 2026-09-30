@@ -336,18 +336,20 @@ same way. This has only been exercised against simulated BlueZ and
 NetworkManager services, not yet with a real iPhone.
 
 1. On the iPhone, open **Settings → Personal Hotspot** and turn on **Allow
-   Others to Join**. iOS refuses the Bluetooth connection otherwise, and
-   BlueFerry tells you so.
+   Others to Join**. When it is off the connection usually fails, and
+   BlueFerry points you here.
 2. Make sure BlueFerry's normal connection to the iPhone is up. Tethering
    uses that existing Bluetooth link and never connects or disconnects the
    phone itself, so messages, contacts and notifications keep working.
 3. Run `blueferry tether on` or flip the switch.
 
-With NetworkManager running, BlueFerry asks it to activate a Bluetooth
-network profile named "BlueFerry iPhone hotspot". The profile is created once,
-is visible only to your user, and has autoconnect turned off, so
-NetworkManager does not tether by itself either. NetworkManager handles the
-address and DNS. If NetworkManager reports a permission error, the daemon is
+With NetworkManager running, BlueFerry asks it to activate the phone's
+Bluetooth network (PAN) profile. If one already exists, for example because
+you connected through the Plasma network applet before, BlueFerry reuses it
+as is and never changes or deletes it. Only when there is none does it create
+"BlueFerry iPhone hotspot": visible only to your user, with autoconnect
+turned off, so NetworkManager does not tether by itself because of it.
+NetworkManager handles the address and DNS. If NetworkManager reports a permission error, the daemon is
 probably not part of an active desktop session as far as polkit is
 concerned.
 
@@ -368,8 +370,18 @@ BLUEFERRY_TETHER_AUTOCONNECT=false
 BLUEFERRY_TETHER_BACKEND=auto
 ```
 
-While tethering is active, BlueFerry skips its last-resort Bluetooth adapter
-power cycle so it does not cut your connection.
+Even if you never use tethering, this version changes a few things in the
+background:
+
+- The daemon exports the `Tether1` D-Bus interface and watches the phone's
+  Bluetooth network state (read-only).
+- A tether started elsewhere, for example from the Plasma network applet, is
+  shown as active in BlueFerry and can be turned off from it.
+- While a tether link demonstrably exists (its network interface is present),
+  BlueFerry skips its last-resort Bluetooth adapter power cycle so it does not
+  cut your connection. This applies to applet-started tethers too.
+- Turning a tether off in the network applet counts as a deliberate stop:
+  automatic tethering does not bring it back until you turn it on again.
 
 ## Command line
 

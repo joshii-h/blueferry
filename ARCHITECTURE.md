@@ -394,15 +394,20 @@ A change to these rules has to be made in both places.
   link the bearer supervisor owns. `Connect` is refused until that link is
   up, and the code never calls `Device1`/`Bearer` `Connect`/`Disconnect` or
   `ConnectProfile`, only `Network1` or NetworkManager, so it cannot fight the
-  supervisor over the ACL link or reorder MAP-first startup. With
-  NetworkManager the daemon activates a per-user, non-autoconnecting
-  `bluetooth`/`panu` profile and NetworkManager runs DHCP; without it the
-  daemon brings up the `bnep` link only and never spawns a DHCP client. A
-  `Network1` property watch reports link loss and adopts links started
-  elsewhere. An active tether marks the adapter busy for recovery, and a
-  BlueZ owner change resets it. Automatic tethering exists only behind
-  `BLUEFERRY_TETHER_AUTOCONNECT`, waits for MAP/PBAP, backs off after
-  refusals, and pauses after an explicit disconnect.
+  supervisor over the ACL link or reorder MAP-first startup (a fake bus and
+  a source check enforce this). With NetworkManager the daemon reuses the
+  phone's existing `bluetooth`/`panu` profile untouched (its own, else the
+  most recently used) or creates a per-user, non-autoconnecting one, and
+  NetworkManager runs DHCP; without it the daemon brings up the `bnep` link
+  only and never spawns a DHCP client. A `Network1` property watch reports
+  link loss and adopts links started elsewhere; stopping an adopted link
+  finishes only once BlueZ confirms it is down. Only a tether whose network
+  interface exists (with an unknown interface, for at most ten minutes)
+  marks the adapter busy for recovery, and a BlueZ owner loss resets it.
+  Automatic tethering exists only behind `BLUEFERRY_TETHER_AUTOCONNECT`,
+  waits for MAP/PBAP, backs off after refusals, never chases links another
+  tool started, and pauses after an explicit disconnect, including a
+  NetworkManager deactivation with reason `USER_DISCONNECTED`.
 - **Read receipts** go through `read_receipts`, which delays MAP write-back so
   ANCS can still fetch group metadata. Local reads take effect immediately.
 

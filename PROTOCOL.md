@@ -464,7 +464,7 @@ version, and controller noted as the maintenance rule below requires:
   the link-only fallback ends with the daemon. NetworkManager-owned links
   survive a daemon restart and are re-adopted through the `Network1` watch.
 
-
+## Historical HFP result
 
 HFP calling is not part of BlueFerry, but the experiment produced one useful
 independent result: an iPhone exposed call control through oFono's
