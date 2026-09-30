@@ -22,6 +22,7 @@ import json
 import logging
 from collections.abc import Callable
 from html import escape
+from pathlib import Path
 from typing import Protocol
 
 import dbus
@@ -101,6 +102,7 @@ class LibnotifySink:
         contacts_only_notifications=None,
         on_open_message=None,
         on_call_action=None,
+        contact_photo: Callable[[str | None], str | None] | None = None,
     ) -> None:
         self._defer_mark_read = defer_mark_read
         # (call_id, "answer" | "decline") from an incoming-call popup button.
@@ -108,6 +110,7 @@ class LibnotifySink:
         # notification_id <-> call_id for ringing-call popups.
         self._call_notifications: dict[int, str] = {}
         self._call_popups: dict[str, int] = {}
+        self._contact_photo = contact_photo
         self._notification_policy = notification_policy
         self._contacts_only_notifications = contacts_only_notifications
         self._on_open_message = on_open_message
@@ -198,6 +201,11 @@ class LibnotifySink:
             # is reason=1 and therefore leaves the iPhone's read state alone.
             handle = str(getattr(event, "handle", "") or "")
             actions = ["default", "Open conversation"] if handle else []
+            hints = _notification_hints(handle)
+            photo = self._photo_uri(event)
+            if photo:
+                # The notification server decodes the image, not the daemon.
+                hints["image-path"] = photo
             nid = int(self._notif.Notify(
                 _APP_NAME,
                 dbus.UInt32(0),
@@ -205,7 +213,7 @@ class LibnotifySink:
                 title,
                 body,
                 dbus.Array(actions, signature="s"),
-                dbus.Dictionary(_notification_hints(handle), signature="sv"),
+                dbus.Dictionary(hints, signature="sv"),
                 dbus.Int32(_MESSAGE_EXPIRE_MS),
             ))
         except dbus.exceptions.DBusException as e:
@@ -237,6 +245,18 @@ class LibnotifySink:
                     error.get_dbus_name(),
                 )
         self._prune_trackers()
+
+    def _photo_uri(self, event: SmsEvent) -> str:
+        """``file://`` URI of the sender's volatile avatar copy, or ``""``."""
+        provider = getattr(self, "_contact_photo", None)
+        if provider is None:
+            return ""
+        try:
+            path = provider(event.sender_address)
+        except Exception:
+            log.debug("contact photo lookup failed", exc_info=True)
+            return ""
+        return Path(path).as_uri() if path else ""
 
     def _prune_trackers(self) -> None:
         """Bound read-state subscriptions if close signals never arrive."""

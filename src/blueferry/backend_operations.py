@@ -16,6 +16,7 @@ from typing import Any, Protocol
 from blueferry.call_history import CallRecord, resolve_contact_name
 from blueferry.call_history_repository import clear_call_history
 from blueferry.calls.phone_status import UNKNOWN_PHONE_STATUS
+from blueferry.contact_repository import PhotoStoreBusy
 from blueferry.contacts import clear_contact_cache
 from blueferry.errors import (
     CallsDisabledError,
@@ -113,6 +114,8 @@ class ContactIndex(Protocol):
     ) -> list[tuple[str | None, list[str], list[str]]]: ...
 
     def resolve(self, address: str | None) -> str | None: ...
+
+    def photo(self, address: str | None) -> bytes | None: ...
 
     def refresh(self) -> int: ...
 
@@ -225,6 +228,7 @@ class BackendDependencies:
     calls: CallControl | None = None
     # Present only when BLUEFERRY_CALL_HISTORY_ENABLED is set.
     call_history: CallHistory | None = None
+    contact_photos: bool = False
 
 
 class BackendOperations:
@@ -625,6 +629,28 @@ class BackendOperations:
             )
         ]
 
+    def contact_photo(self, address: str) -> bytes:
+        """Return the validated photo of the one contact owning ``address``.
+
+        Empty when photos are disabled, the address is unknown or ambiguous,
+        or the contact has no usable photo. Bytes are a bounded JPEG or PNG
+        that the caller must decode with a hardened toolkit loader.
+        """
+        selected = str(address).strip()
+        if not selected or len(selected) > MAX_CONTACT_ADDRESS_CHARS:
+            raise InvalidArgumentsError("contact address is empty or too long")
+        if not self.dependencies.contact_photos:
+            return b""
+        contacts = self.dependencies.contacts
+        if contacts is None:
+            raise NotReadyError("contact cache is unavailable")
+        try:
+            return contacts.photo(selected) or b""
+        except PhotoStoreBusy as error:
+            # A sync holds the database. Clients retry NotReady later rather
+            # than remembering the contact as photo-less.
+            raise NotReadyError("contact photos are being updated; retry later") from error
+
     def set_group_participants(
         self, thread_key: str, recipients: Sequence[object]
     ) -> dict:
@@ -712,6 +738,7 @@ class BackendOperations:
             "contacts_only_notifications": (
                 self.get_contacts_only_notifications()
             ),
+            "contact_photos": bool(self.dependencies.contact_photos),
         }
         calls = self.dependencies.calls
         status.update(

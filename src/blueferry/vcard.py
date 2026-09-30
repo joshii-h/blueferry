@@ -140,3 +140,91 @@ def iter_vcard_bodies(
             lines = []
             continue
         lines.append(line)
+
+
+def iter_vcard_cards(
+    blob: str | Iterable[str],
+    *,
+    maximum: int,
+    max_card_chars: int = MAX_VCARD_CHARS,
+    max_photo_chars: int,
+) -> Iterator[tuple[str, str | None]]:
+    """Yield ``(body, photo)`` with the PHOTO property split out of each card.
+
+    The body is exactly what :func:`iter_vcard_bodies` would yield for the
+    card minus its PHOTO lines, so contact parsing is unchanged. ``photo`` is
+    the unfolded ``params:value`` text of the first PHOTO property, or
+    ``None``. Photo text is budgeted separately: an oversized photo is dropped
+    while the card itself is kept, because a large avatar must not hide the
+    person's addresses. Only the first PHOTO property of a card is retained.
+    LOGO, SOUND, and KEY values are consumed without being retained or
+    counted, as in the photo-blind path. ``blob`` may be the whole text or an
+    iterable of lines (see :func:`iter_bounded_lines`).
+    """
+    selected_maximum = max(0, int(maximum))
+    selected_card_limit = max(0, int(max_card_chars))
+    selected_photo_limit = max(0, int(max_photo_chars))
+    yielded = 0
+    active = False
+    overflowed = False
+    size = 0
+    lines: list[str] = []
+    photo: list[str] | None = None
+    photo_size = 0
+    photo_seen = False
+    skipping: tuple[str, bool] | None = None
+    previous = ""
+    retaining = False
+
+    source = (
+        blob.splitlines()
+        if isinstance(blob, str)
+        else (line.rstrip("\r\n") for line in blob)
+    )
+    for line in source:
+        marker = line.strip().casefold()
+        if marker in ("begin:vcard", "end:vcard"):
+            if marker == "end:vcard" and active and not overflowed:
+                yield "\n".join(lines), "".join(photo) if photo is not None else None
+                yielded += 1
+                if yielded >= selected_maximum:
+                    return
+            active = marker == "begin:vcard"
+            overflowed = False
+            size = 0
+            lines = []
+            photo = None
+            photo_seen = retaining = False
+            skipping = None
+            continue
+        if not active or overflowed:
+            continue
+        if skipping is not None and _continues_skipped(line, previous, skipping[1]):
+            previous = line
+            if retaining and photo is not None:
+                photo_size += len(line)
+                if photo_size > selected_photo_limit:
+                    photo = None
+                    retaining = False
+                else:
+                    photo.append(line[1:] if line[:1] in (" ", "\t") else line)
+            continue
+        skipping = _skipped_property(line)
+        previous = line
+        retaining = False
+        if skipping is not None:
+            # Consume every skipped property and its continuation lines, but
+            # retain only the first PHOTO, and only while it fits its budget.
+            if skipping[0] == "photo":
+                retaining = not photo_seen and len(line) <= selected_photo_limit
+                photo_seen = True
+                photo_size = len(line)
+                if retaining:
+                    photo = [line]
+            continue
+        size += len(line) + 1
+        if size > selected_card_limit:
+            overflowed = True
+            lines = []
+            continue
+        lines.append(line)
