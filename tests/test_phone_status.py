@@ -185,6 +185,8 @@ def _daemon_with_recorders(make_daemon):
     instance = make_daemon()
     seen: list[object] = []
     instance._emit_status = lambda: seen.append("status")
+    # Run deferred StatusChanged emissions immediately.
+    instance._idle_add = lambda callback: callback()
     instance.events.phone_battery_low = lambda percent: seen.append(("low", percent))
     return instance, seen
 
@@ -205,6 +207,41 @@ def test_phone_status_changes_emit_status_but_warn_only_when_opted_in(
 
     assert seen.count("status") == 8
     assert [item for item in seen if item != "status"] == [("low", 20), ("low", 20)]
+
+
+def test_calls_and_phone_status_changes_share_one_deferred_status_changed(make_daemon) -> None:
+    instance = make_daemon()
+    seen: list[str] = []
+    queued: list = []
+    instance._emit_status = lambda: seen.append("status")
+    instance._idle_add = lambda callback: queued.append(callback) or 1
+
+    # A modem losing power: calls state and phone values change together.
+    instance.calls._on_state_changed()
+    instance._on_phone_status(PhoneStatus())
+    instance._on_phone_status(PhoneStatus(battery_steps=2))
+    assert seen == [] and len(queued) == 1
+
+    assert queued.pop()() is False
+    assert seen == ["status"]
+    # The next burst schedules a new emission.
+    instance._on_phone_status(PhoneStatus())
+    assert len(queued) == 1
+
+
+def test_status_is_still_emitted_when_deferring_fails(make_daemon) -> None:
+    instance = make_daemon()
+    seen: list[str] = []
+    instance._emit_status = lambda: seen.append("status")
+
+    def broken(_callback):
+        raise RuntimeError("no main loop")
+
+    instance._idle_add = broken
+    instance._emit_status_soon()
+    instance._emit_status_soon()
+
+    assert seen == ["status", "status"]
 
 
 def test_daemon_wires_the_controller_to_its_phone_status_handler(make_daemon) -> None:

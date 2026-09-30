@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import signal
+from collections.abc import Callable
 
 import dbus
 from gi.repository import GLib
@@ -151,13 +152,18 @@ class Daemon:
         # Optional HFP calls through oFono. Inert unless explicitly enabled;
         # construction performs no I/O. oFono is only asked to page the phone
         # (Modem.Powered) while the Classic bearer is up.
+        # Calls-state and phone-status changes often arrive in bursts (a
+        # modem going away, a flapping indicator); coalesce their
+        # StatusChanged into one per main-loop iteration.
+        self._status_emit_pending = False
+        self._idle_add: Callable[[Callable[[], bool]], int] = GLib.idle_add
         self.calls = CallController(
             enabled=config.CALLS_ENABLED,
             mac=config.IPHONE_MAC,
             adapter=config.ADAPTER,
             resolve_contact=self.contacts.resolve,
             on_calls_changed=self._emit_calls_changed,
-            on_state_changed=self._emit_status,
+            on_state_changed=self._emit_status_soon,
             on_event=self.events.call,
             phone_reachable=lambda: self.bearers.bredr_connected,
             on_phone_status=self._on_phone_status,
@@ -268,6 +274,23 @@ class Daemon:
         if emit is not None:
             emit()
 
+    def _emit_status_soon(self) -> None:
+        """Emit one StatusChanged for everything changed in this iteration."""
+        if self._status_emit_pending:
+            return
+        self._status_emit_pending = True
+
+        def flush() -> bool:
+            self._status_emit_pending = False
+            self._emit_status()
+            return False
+
+        try:
+            self._idle_add(flush)
+        except Exception:
+            log.debug("could not defer StatusChanged; emitting now", exc_info=True)
+            flush()
+
     def _emit_calls_changed(self) -> None:
         emit = getattr(self._dbus_service, "emit_calls_changed", None)
         if emit is not None:
@@ -292,7 +315,7 @@ class Daemon:
 
     def _on_phone_status(self, status: PhoneStatus) -> None:
         """The phone's battery/signal/operator changed: content-free signal."""
-        self._emit_status()
+        self._emit_status_soon()
         if not config.PHONE_BATTERY_NOTIFY:
             return
         percent = status.battery_percent
