@@ -18,6 +18,7 @@ from blueferry.bearer_supervisor import (
     STABLE_CONNECTION_SECONDS,
     BearerSupervisor,
 )
+from tests.private_bus import open_private_bus
 
 TIMEOUT = "org.bluez.Reason.Timeout"
 LE = "org.bluez.Bearer.LE1"
@@ -337,8 +338,8 @@ def test_watch_failure_falls_back_to_polling() -> None:
 def test_real_bearer_disconnected_signals_reach_the_supervisor(monkeypatch) -> None:
     """dbus-python match rules against a fake org.bluez on an isolated bus."""
     device = "/org/bluez/hci9/dev_02_00_00_00_00_01"
-    server = dbus.SystemBus(private=True)
-    monitor = dbus.SystemBus(private=True)
+    server = open_private_bus("system")
+    monitor = open_private_bus("system")
     server.request_name("org.bluez", dbus.bus.NAME_FLAG_DO_NOT_QUEUE)
     monkeypatch.setattr(bearer_supervisor, "get_system_bus", lambda: monitor)
     clock = _Clock()

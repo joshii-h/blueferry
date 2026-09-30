@@ -29,6 +29,7 @@ from blueferry.protocol import (
     MESSAGES_IFACE,
     OBJECT_PATH,
 )
+from tests.private_bus import open_private_bus
 
 pytestmark = pytest.mark.private_dbus
 _service_ids = itertools.count()
@@ -165,7 +166,7 @@ def _call(name, interface_name, method, *args):
     outcome = {}
 
     def request():
-        connection = dbus.SessionBus(private=True, mainloop=dbus.mainloop.NULL_MAIN_LOOP)
+        connection = open_private_bus(mainloop=dbus.mainloop.NULL_MAIN_LOOP)
         try:
             interface = dbus.Interface(connection.get_object(name, OBJECT_PATH), interface_name)
             outcome["value"] = getattr(interface, method)(*args, timeout=5)
@@ -228,7 +229,7 @@ def test_call_failures_are_typed_and_redacted(calls_service) -> None:
 
 def test_calls_changed_signal_carries_no_content(calls_service) -> None:
     name, _calls, service = calls_service
-    connection = dbus.SessionBus(private=True)
+    connection = open_private_bus()
     received = []
     match = connection.add_signal_receiver(
         lambda *args: received.append(args),
@@ -252,7 +253,7 @@ def test_shared_client_checks_compatibility_through_messages1(calls_service) -> 
     outcome = {}
 
     def request():
-        connection = dbus.SessionBus(private=True, mainloop=dbus.mainloop.NULL_MAIN_LOOP)
+        connection = open_private_bus(mainloop=dbus.mainloop.NULL_MAIN_LOOP)
         try:
             client = BackendClient(
                 interface_factory=lambda interface: dbus.Interface(
@@ -303,7 +304,7 @@ class PhoneStatusCalls(FakeCalls):
 
 def test_phone_status_is_unicast_in_get_status_and_signalled_without_content() -> None:
     bus, name, service = _service(PhoneStatusCalls())
-    connection = dbus.SessionBus(private=True)
+    connection = open_private_bus()
     received = []
     match = connection.add_signal_receiver(
         lambda *args: received.append(args),

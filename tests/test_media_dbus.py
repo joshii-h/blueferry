@@ -25,6 +25,7 @@ from blueferry.dbus_service import MessagesService
 from blueferry.media import MediaController
 from blueferry.mpris import MPRIS_PATH, PLAYER_IFACE, ROOT_IFACE, MprisPlayer
 from blueferry.protocol import BUS_NAME, EVENTS_IFACE, MEDIA_IFACE, OBJECT_PATH
+from tests.private_bus import open_private_bus
 
 pytestmark = pytest.mark.private_dbus
 _ids = itertools.count()
@@ -66,7 +67,7 @@ def _call(name, path, interface, method, *args):
     outcome: dict = {}
 
     def run() -> None:
-        connection = dbus.SessionBus(private=True, mainloop=dbus.mainloop.NULL_MAIN_LOOP)
+        connection = open_private_bus(mainloop=dbus.mainloop.NULL_MAIN_LOOP)
         try:
             proxy = dbus.Interface(connection.get_object(name, path, introspect=False), interface)
             outcome["value"] = getattr(proxy, method)(*args, timeout=5)
@@ -153,7 +154,7 @@ def test_media1_is_inert_when_disabled(service_factory) -> None:
 def test_media1_snapshot_command_and_content_free_signal(service_factory) -> None:
     media, writer = _media()
     name, _service = service_factory(media)
-    listener = dbus.SessionBus(private=True, mainloop=dbus.mainloop.glib.DBusGMainLoop())
+    listener = open_private_bus(mainloop=dbus.mainloop.glib.DBusGMainLoop())
     received = []
     listener.add_signal_receiver(
         lambda *args: received.append(args),
@@ -299,7 +300,7 @@ def test_mpris_emits_property_changes_for_a_new_track(mpris_factory) -> None:
     _bus, name, player = mpris_factory(media)
     _play(media)
     _dispatch_until(lambda: player.owned)
-    listener = dbus.SessionBus(private=True, mainloop=dbus.mainloop.glib.DBusGMainLoop())
+    listener = open_private_bus(mainloop=dbus.mainloop.glib.DBusGMainLoop())
     changes = []
     listener.add_signal_receiver(
         lambda interface, changed, _invalidated: changes.append((str(interface), dict(changed))),

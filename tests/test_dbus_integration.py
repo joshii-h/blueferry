@@ -685,7 +685,7 @@ def test_notification_click_rules_round_trip_through_the_shared_client(tmp_path)
     outcome = {}
 
     def edit_rules() -> None:
-        connection = dbus.SessionBus(private=True, mainloop=dbus.mainloop.NULL_MAIN_LOOP)
+        connection = open_private_bus(mainloop=dbus.mainloop.NULL_MAIN_LOOP)
         client = BackendClient(interface_factory=lambda interface: dbus.Interface(
             connection.get_object(name, OBJECT_PATH), interface
         ))
@@ -827,7 +827,7 @@ def test_call_history_round_trip_and_content_free_signal(public_service) -> None
     service.operations.dependencies = replace(
         service.operations.dependencies, call_history=_History(),
     )
-    connection = dbus.SessionBus(private=True)
+    connection = open_private_bus()
     received = []
     match = connection.add_signal_receiver(
         lambda *args: received.append(args),

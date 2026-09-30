@@ -18,6 +18,7 @@ from blueferry.client import BackendClient, BackendError
 from blueferry.dbus_service import MessagesService
 from blueferry.protocol import BUS_NAME, ERROR_PREFIX, OBJECT_PATH, TETHER_IFACE
 from blueferry.tether import TetherController
+from tests.private_bus import open_private_bus
 
 pytestmark = pytest.mark.private_dbus
 _service_ids = itertools.count()
@@ -101,7 +102,7 @@ def _in_thread(name: str, work):
     outcome: dict = {}
 
     def run() -> None:
-        connection = dbus.SessionBus(private=True, mainloop=dbus.mainloop.NULL_MAIN_LOOP)
+        connection = open_private_bus(mainloop=dbus.mainloop.NULL_MAIN_LOOP)
         try:
             proxy = connection.get_object(name, OBJECT_PATH)
             outcome["value"] = work(proxy)
@@ -155,7 +156,7 @@ def test_connect_without_a_classic_link_is_a_stable_not_ready_error(tether_servi
 
 def test_tether_changed_is_content_free(tether_service) -> None:
     name, controller, backend, _classic, _service = tether_service
-    connection = dbus.SessionBus(private=True)
+    connection = open_private_bus()
     received: list[tuple] = []
     match = connection.add_signal_receiver(
         lambda *args: received.append(args),
@@ -208,7 +209,7 @@ def test_python_client_round_trip(tether_service) -> None:
     name, _controller, backend, _classic, _service = tether_service
 
     def run(_proxy):
-        connection = dbus.SessionBus(private=True, mainloop=dbus.mainloop.NULL_MAIN_LOOP)
+        connection = open_private_bus(mainloop=dbus.mainloop.NULL_MAIN_LOOP)
         try:
             client = BackendClient(
                 interface_factory=lambda iface: dbus.Interface(
@@ -233,7 +234,7 @@ def test_python_client_maps_dbus_errors(tether_service) -> None:
     classic["up"] = False
 
     def run(_proxy):
-        connection = dbus.SessionBus(private=True, mainloop=dbus.mainloop.NULL_MAIN_LOOP)
+        connection = open_private_bus(mainloop=dbus.mainloop.NULL_MAIN_LOOP)
         try:
             client = BackendClient(
                 interface_factory=lambda iface: dbus.Interface(
