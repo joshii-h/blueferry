@@ -72,7 +72,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `contact_sync.py` | Schedules PBAP pulls (MAP grace period, daily refresh, joined manual requests) and discards pulls that span a storage key or policy change. |
 | `contact_repository.py` | Contact-cache SQLite schema, replacement transaction, encryption, legacy cleanup. |
 | `vcard.py` | Linear, resource-bounded vCard block extraction. |
-| `ancs/client.py` | ANCS GATT client: subscribes to characteristics, requests attributes, emits `AncsEvent`s. |
+| `ancs/client.py` | ANCS GATT client: subscribes to characteristics, requests attributes, emits `AncsEvent`s, and sends opt-in `PerformNotificationAction` writes. |
 | `ancs/parsers.py` | Pure ANCS wire-format parsers and command builders. |
 | `ancs/constants.py` | ANCS spec constants. |
 | `ancs/events.py` | `AncsEvent`, the normalized per-app notification. |
@@ -91,7 +91,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | --- | --- |
 | `sinks/__init__.py` | Sink protocol: `handle(event)` plus optional `handle_ancs`. |
 | `sinks/sqlite.py` | Persists events to the private history store. |
-| `sinks/libnotify.py` | Desktop notifications via `org.freedesktop.Notifications`, including open and dismiss actions. |
+| `sinks/libnotify.py` | Desktop notifications via `org.freedesktop.Notifications`, including open and dismiss actions and opt-in iPhone action buttons. |
 
 ### Storage and privacy
 
@@ -418,6 +418,12 @@ A change to these rules has to be made in both places.
   policy applies exact bundle-ID allow/block rules first and delivers content
   only to an ephemeral popup sink, never retained or broadcast. Apple Messages
   keeps only the fields needed for group correlation.
+- **ANCS actions** (`BLUEFERRY_ANCS_ACTIONS`, off by default): action labels
+  are requested only for non-Messages notifications that announce an action,
+  shown only as popup buttons, and never retained, logged, or broadcast. A
+  phone action runs only after a click on its button, once per notification,
+  and only for a UID announced in the current ANCS session. There is no D-Bus
+  method for it because clients never see ANCS notifications or UIDs.
 - **Logs** exclude message bodies, notification text, and recipient
   identities at every level. Markup and terminal output are escaped at their
   display boundaries.
