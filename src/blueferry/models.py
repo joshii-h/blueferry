@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from blueferry.connectivity import is_map_connection_refused
+from blueferry.i18n import _
 from blueferry.message_links import linkify_message
 from blueferry.recipients import group_confirmation_token
 from blueferry.time_display import format_message_timestamp
@@ -27,6 +28,17 @@ def _int(value: Any, default: int = 0) -> int:
 
 def _str(value: Any, default: str = "") -> str:
     return value if isinstance(value, str) else default
+
+
+def _percent(value: Any) -> int | None:
+    """An optional 0-100 value; anything else is "unknown"."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if 0 <= value <= 100 else None
+
+
+def _optional_str(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +68,11 @@ class BackendStatus:
     calls_enabled: bool = False
     calls_state: str = "disabled"
     calls_available: bool = False
+    # Optional, from the HFP calls integration; None means unknown.
+    phone_battery_level: int | None = None
+    phone_signal_strength: int | None = None
+    phone_network_name: str | None = None
+    phone_network_status: str | None = None
     extra: Mapping[str, Any] = field(default_factory=dict, repr=False)
 
     @property
@@ -95,6 +112,10 @@ class BackendStatus:
             "calls_enabled",
             "calls_state",
             "calls_available",
+            "phone_battery_level",
+            "phone_signal_strength",
+            "phone_network_name",
+            "phone_network_status",
         }
         return cls(
             daemon=_bool(value.get("daemon")),
@@ -128,6 +149,10 @@ class BackendStatus:
             calls_enabled=_bool(value.get("calls_enabled")),
             calls_state=_str(value.get("calls_state"), "disabled"),
             calls_available=_bool(value.get("calls_available")),
+            phone_battery_level=_percent(value.get("phone_battery_level")),
+            phone_signal_strength=_percent(value.get("phone_signal_strength")),
+            phone_network_name=_optional_str(value.get("phone_network_name")),
+            phone_network_status=_optional_str(value.get("phone_network_status")),
             extra={key: item for key, item in value.items() if key not in known},
         )
 
@@ -160,6 +185,10 @@ class BackendStatus:
             "calls_enabled": self.calls_enabled,
             "calls_state": self.calls_state,
             "calls_available": self.calls_available,
+            "phone_battery_level": self.phone_battery_level,
+            "phone_signal_strength": self.phone_signal_strength,
+            "phone_network_name": self.phone_network_name,
+            "phone_network_status": self.phone_network_status,
         }
 
 
@@ -172,6 +201,40 @@ CALLS_STATE_TEXT: Mapping[str, str] = {
     "ready": "Ready.",
 }
 """Plain-text call-state explanations shared by the CLI and TUI."""
+
+
+def phone_status_fields(
+    status: BackendStatus, *, include_network: bool = True,
+) -> list[tuple[str, str]]:
+    """Label/value pairs for the phone's battery, signal, and network.
+
+    Empty when nothing is known (calls disabled, oFono absent, modem
+    unpowered). ``include_network=False`` leaves out the operator line,
+    e.g. for a compact header. Shared by the CLI and the TUI.
+    """
+    fields: list[tuple[str, str]] = []
+    if status.phone_battery_level is not None:
+        # HFP reports the battery in 20 % steps, hence "about".
+        fields.append((
+            _("Battery"),
+            _("about {percent} %").format(percent=status.phone_battery_level),
+        ))
+    if status.phone_signal_strength is not None:
+        fields.append((
+            _("Signal"),
+            _("{percent} %").format(percent=status.phone_signal_strength),
+        ))
+    if not include_network:
+        return fields
+    network = status.phone_network_name or ""
+    registration = status.phone_network_status
+    # "registered" is the normal case and "unknown" adds nothing a reader
+    # could act on; every other state is worth showing.
+    if registration not in (None, "registered", "unknown"):
+        network = f"{network} ({registration})" if network else registration
+    if network:
+        fields.append((_("Network"), network))
+    return fields
 
 
 @dataclass(frozen=True, slots=True)
