@@ -1,3 +1,4 @@
+src/blueferry/models.py
 src/blueferry/ui/app.py
 src/blueferry/ui/window.py
 src/blueferry/ui/conversations.py
