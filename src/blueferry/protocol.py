@@ -14,6 +14,9 @@ MEDIA_IFACE = f"{BUS_NAME}.Media1"
 # Optional, separately versioned Bluetooth PAN control. It is not part of the
 # messaging generation below, so clients must tolerate its absence.
 TETHER_IFACE = f"{BUS_NAME}.Tether1"
+# Desktop-presence features that are not part of messaging (the opt-in away
+# lock). Its state is reported through Messages1.GetStatus.
+PRESENCE_IFACE = f"{BUS_NAME}.Presence1"
 ERROR_PREFIX = f"{BUS_NAME}.Error"
 
 # Compatibility generation, independent of package versions. Generation 2

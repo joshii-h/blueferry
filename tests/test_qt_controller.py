@@ -1286,3 +1286,35 @@ def test_failed_tether_request_reports_and_clears_pending():
 
     assert controller.tether["pending"] is False
     assert "not connected over Bluetooth" in controller.errorText
+def test_proximity_lock_setting_is_forwarded_and_merged_into_status(monkeypatch):
+    backend = _Backend()
+    calls = []
+
+    def set_proximity_lock(enabled, grace):
+        calls.append((enabled, grace))
+        return {"proximity_lock": "idle", "proximity_lock_enabled": enabled,
+                "proximity_lock_grace_sec": grace}
+
+    backend.set_proximity_lock = set_proximity_lock
+    controller = BridgeController(
+        backend=backend,
+        setup=object(),
+        subscribe=False,
+        autostart=False,
+    )
+    monkeypatch.setattr(
+        controller,
+        "_run",
+        lambda operation, on_done=None, *_args, **_kwargs: (
+            on_done(operation()) if on_done is not None else operation()
+        ),
+    )
+    changes = []
+    controller.statusChanged.connect(lambda: changes.append(True))
+
+    controller.setProximityLock(True, 120)
+
+    assert calls == [(True, 120)]
+    assert controller.status["proximity_lock_enabled"] is True
+    assert controller.status["proximity_lock_grace_sec"] == 120
+    assert changes == [True]

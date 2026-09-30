@@ -93,6 +93,8 @@ def test_bluez_restart_resets_tethering(make_daemon) -> None:
         hold_le=lambda: None, reset_after_bluez_restart=lambda: None,
     )
     instance.profiles = SimpleNamespace(reconnect=lambda *_a, **_k: None)
+    # The proximity lock's adapter-state read has its own tests.
+    instance._read_adapter_inhibitors = lambda: None
 
     instance._on_bluez_restart()
 

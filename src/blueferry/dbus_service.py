@@ -28,6 +28,7 @@ from blueferry.protocol import (
     EVENTS_IFACE,
     MEDIA_IFACE,
     OBJECT_PATH,
+    PRESENCE_IFACE,
     TETHER_IFACE,
 )
 from blueferry.protocol import (
@@ -338,6 +339,17 @@ class MessagesService(dbus.service.Object):
             lambda: self.operations.set_contacts_only_notifications(
                 bool(enabled)
             ),
+        ))
+
+    @dbus.service.method(
+        PRESENCE_IFACE, in_signature="bu", out_signature="s", sender_keyword="sender"
+    )
+    def SetProximityLock(self, enabled: bool, grace_seconds: int, sender=None) -> str:
+        return self._sync(lambda: self._authorized(
+            sender, "settings",
+            lambda: self._json_response(self.operations.set_proximity_lock(
+                bool(enabled), int(grace_seconds)
+            )),
         ))
 
     @dbus.service.method(

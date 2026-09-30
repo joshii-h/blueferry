@@ -11,6 +11,7 @@ from blueferry.protocol import (
     MEDIA_IFACE,
     MESSAGES_IFACE,
     OBJECT_PATH,
+    PRESENCE_IFACE,
     TETHER_IFACE,
 )
 
@@ -34,7 +35,9 @@ def _exported(interface: str, kind: str) -> dict:
     }
 
 
-_INTERFACES = (MESSAGES_IFACE, CALLS_IFACE, MEDIA_IFACE, EVENTS_IFACE, TETHER_IFACE)
+_INTERFACES = (
+    MESSAGES_IFACE, CALLS_IFACE, MEDIA_IFACE, PRESENCE_IFACE, EVENTS_IFACE, TETHER_IFACE,
+)
 
 
 def test_contract_matches_exported_methods_and_signals() -> None:

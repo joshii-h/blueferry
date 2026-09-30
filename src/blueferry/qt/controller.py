@@ -1104,6 +1104,19 @@ class BridgeController(QObject):
             self._tether_timer.start()
 
         self._run(self._tether_request(request), self._tether_result, failed, busy=False)
+    @Slot(bool, int)
+    def setProximityLock(self, enabled: bool, grace_seconds: int) -> None:
+        def completed(value: object) -> None:
+            if isinstance(value, dict):
+                self._status.update(value)
+                self.statusChanged.emit()
+
+        self._run(
+            lambda: self._backend.set_proximity_lock(
+                bool(enabled), int(grace_seconds)
+            ),
+            completed,
+        )
 
     @Slot(str)
     def setStoragePolicy(self, policy: str) -> None:

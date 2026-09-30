@@ -37,6 +37,8 @@ LOCAL_ENV_KEYS = frozenset({
     "BLUEFERRY_MEDIA_MPRIS_ENABLED",
     "BLUEFERRY_TETHER_AUTOCONNECT",
     "BLUEFERRY_TETHER_BACKEND",
+    "BLUEFERRY_PROXIMITY_LOCK",
+    "BLUEFERRY_PROXIMITY_LOCK_GRACE_SEC",
 })
 CONFIG_DIR: Path = Path(
     os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")
@@ -321,6 +323,17 @@ HISTORY_MAX_PAYLOAD_BYTES: int = _env_int(
     16 * 1024 * 1024,
     2 * 1024 * 1024 * 1024,
 )
+PROXIMITY_LOCK: bool = _env_bool("BLUEFERRY_PROXIMITY_LOCK", False)
+"""Initial opt-in for locking the desktop when the iPhone goes away.
+
+Off by default. This is a lock trigger only, never an unlock or an
+authentication factor. A value saved through the D-Bus API (settings.json)
+takes precedence; see ``proximity_lock.ProximityLockSettings``.
+"""
+PROXIMITY_LOCK_GRACE_SEC: int = _env_int(
+    "BLUEFERRY_PROXIMITY_LOCK_GRACE_SEC", 60, 10, 3600
+)
+"""Seconds the iPhone must stay continuously disconnected before locking."""
 
 CALL_HISTORY_ENABLED: bool = _env_bool("BLUEFERRY_CALL_HISTORY_ENABLED", False)
 """Opt-in: pull the iPhone's recent calls over PBAP and retain them locally.

@@ -117,6 +117,9 @@ def _daemon(make_daemon, calls):
         reset_after_bluez_restart=lambda: None, maybe_autoconnect=lambda: None,
         link_alive=lambda: False, probe_link=lambda: None,
     )
+    # The asynchronous adapter-state read for the proximity lock is covered
+    # in test_proximity_lock_daemon; keep it off this fake bus.
+    value._read_adapter_inhibitors = lambda: None
     return value
 
 

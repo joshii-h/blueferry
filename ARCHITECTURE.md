@@ -28,7 +28,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | --- | --- |
 | `daemon.py` | Orchestrates lifecycle: publishes D-Bus, then starts Bluetooth, supervisors, state, and sinks; builds `BackendDependencies`. |
 | `backend_operations.py` | Toolkit- and transport-neutral application operations: validation, thread routing, and policy. |
-| `dbus_service.py` | Session D-Bus adapter (`Messages1`/`Events1`) that maps operations to wire types; claims the bus name. |
+| `dbus_service.py` | Session D-Bus adapter (`Messages1`/`Events1`/`Presence1`) that maps operations to wire types; claims the bus name. |
 | `dbus_security.py` | Caller UID validation and per-connection/daemon-wide rate limits. |
 | `protocol.py` | Stable D-Bus identifiers and the API-generation compatibility check. |
 | `event_dispatcher.py` | Builds messages from MAP/ANCS events and fans them out to persistence, desktop, and D-Bus sinks. |
@@ -59,6 +59,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `wireplumber_policy.py` | Manages one WirePlumber fragment that keeps iPhone audio on the phone (keeps the hands-free roles when calls are enabled). |
 | `media.py` | Opt-in now-playing projection, media command policy, and coalesced change listeners. |
 | `mpris.py` | Optional MPRIS2 player (`org.mpris.MediaPlayer2.blueferry_iphone`) over `media.py`. |
+| `proximity_lock.py` | Opt-in lock-only desktop lock after the iPhone's bearers stay down for a grace period; lock dispatch via ScreenSaver, then logind. |
 
 ### Bluetooth transports and supervision
 
@@ -170,6 +171,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `cli_notifications.py` | `notifications open-map` rule editing. |
 | `cli_media.py` | `blueferry media` now-playing status and commands. |
 | `cli_tether.py` | `blueferry tether [status\|on\|off]`. |
+| `cli_proximity.py` | `proximity-lock` status, dry run, enable, and disable. |
 | `tui.py` | Textual terminal client. |
 | `tui_launcher.py` | Launches the TUI with the package-private Textual bundle when present. |
 | `tui_calls.py` | Optional Textual calls panel. |
@@ -193,6 +195,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `qt/qml/NotificationOpenMapEditor.qml` | Loaded editor for notification click rules (shown with the "all" policy). |
 | `qt/qml/OnboardingSummary.qml` | Renders the onboarding stage message. |
 | `qt/qml/TetherSection.qml` | Opt-in tethering switch, loaded only when the daemon offers `Tether1`. |
+| `qt/qml/ProximityLockSettings.qml` | Away-lock toggle, grace period, and warning; loaded only for daemons that report it. |
 | `qt/qml/GroupConfirmationDialog.qml` | Group recipient confirmation before sending. |
 | `qt/qml/NewMessageDialog.qml` | New message composition. |
 | `qt/qml/CallsDialog.qml` | Optional phone-calls dialog (list, dial, answer, hang up). |
@@ -246,7 +249,10 @@ contract.
 ## D-Bus API and compatibility
 
 - `Messages1` carries commands and unicast snapshots; `Events1` carries
-  content-free live coordination. Identifiers live in `protocol.py`.
+  content-free live coordination. `Presence1` holds desktop-presence
+  controls that are not messaging (the opt-in away lock); their state is
+  reported through `Messages1.GetStatus`, and the compatibility check runs
+  through `Messages1` on the same owner. Identifiers live in `protocol.py`.
 - `Calls1` is the optional, default-off HFP call interface. It is always
   exported; with `BLUEFERRY_CALLS_ENABLED` unset its methods fail with
   `CallsDisabled`, and a missing oFono or modem yields `CallsUnavailable`.
@@ -470,6 +476,14 @@ A change to these rules has to be made in both places.
   waits for MAP/PBAP, backs off after refusals, never chases links another
   tool started, and pauses after an explicit disconnect, including a
   NetworkManager deactivation with reason `USER_DISCONNECTED`.
+- **Proximity lock** (opt-in) reads only the bearer supervisor's cached
+  BR/EDR and LE state. It arms after an observed connection, locks once after
+  a continuous grace period, and is inhibited by suspend, adapter power-off,
+  discovery, recovery, and a forgotten phone. It never unlocks: Bluetooth
+  presence is not an authentication factor. Locking is asynchronous
+  (`org.freedesktop.ScreenSaver.Lock`, then logind `Session.Lock`). It is
+  configured through `Presence1.SetProximityLock`, and `GetStatus` reports
+  only its state keys through the existing argument-free `StatusChanged`.
 - **Read receipts** go through `read_receipts`, which delays MAP write-back so
   ANCS can still fetch group metadata. Local reads take effect immediately.
 
