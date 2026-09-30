@@ -48,6 +48,10 @@ class BackendError(BlueFerryError):
     pass
 
 
+class TetherUnsupportedError(BackendError):
+    """The running daemon does not export the optional Tether1 interface."""
+
+
 class CompatibilityCache:
     """Daemon unique bus names already verified as API-compatible.
 
@@ -321,7 +325,7 @@ class BackendClient:
             return TetherStatus.from_dict(decode_mapping(value))
         except dbus.exceptions.DBusException as error:
             if error.get_dbus_name() in _MISSING_API_ERRORS:
-                raise BackendError(
+                raise TetherUnsupportedError(
                     "The running BlueFerry backend does not support tethering; "
                     "update and restart it."
                 ) from error
