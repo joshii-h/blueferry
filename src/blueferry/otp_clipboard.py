@@ -49,6 +49,7 @@ _WAYLAND_SOCKET = re.compile(r"^wayland-[0-9]+$")
 _PROBE_TIMEOUT_S = 2.0
 _KILL_AFTER_MS = 1000
 _POLL_INTERVAL_MS = 500
+_MAX_POLL_INTERVAL_MS = 10_000
 
 # The helper needs to find its display and a temporary directory, nothing
 # else from the daemon's environment.
@@ -380,7 +381,7 @@ class ClipboardWriter:
             # Without a GLib watch nobody else reaps this child, so polling
             # through Popen cannot race; it keeps the ticket state honest.
             log.debug("could not watch the clipboard helper; polling it", exc_info=True)
-            self._schedule_ms(_POLL_INTERVAL_MS, lambda: self._poll(ticket))
+            self._schedule_poll(ticket, _POLL_INTERVAL_MS)
         if self.clear_after_s:
             self._clear_id = self._schedule_ms(
                 self.clear_after_s * 1000, lambda: self._expire(ticket)
@@ -395,14 +396,26 @@ class ClipboardWriter:
             return "running"
         return "exited" if ticket.returncode == 0 else "failed"
 
-    def _poll(self, ticket: ClipboardTicket) -> bool:
-        """Fallback reaper when no child watch could be installed."""
+    def _schedule_poll(self, ticket: ClipboardTicket, delay_ms: int) -> None:
+        self._schedule_ms(delay_ms, lambda: self._poll(ticket, delay_ms))
+
+    def _poll(self, ticket: ClipboardTicket, delay_ms: int) -> bool:
+        """Fallback reaper when no child watch could be installed.
+
+        Polls with a doubling interval (up to ten seconds) only while the
+        ticket still matters: it owns the clipboard, or a release is waiting
+        for it to exit. Each poll is a one-shot timer, so a ticket that no
+        longer matters leaves no timer behind.
+        """
         if not ticket.running:
             return False
+        if ticket is not self._owner and id(ticket) not in self._stopping:
+            return False
         returncode = ticket.process.poll()
-        if returncode is None:
-            return True
-        self._record_exit(ticket, int(returncode))
+        if returncode is not None:
+            self._record_exit(ticket, int(returncode))
+            return False
+        self._schedule_poll(ticket, min(delay_ms * 2, _MAX_POLL_INTERVAL_MS))
         return False
 
     def _exited(self, ticket: ClipboardTicket, status: int) -> None:

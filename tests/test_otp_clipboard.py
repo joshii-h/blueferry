@@ -481,7 +481,8 @@ def test_without_a_child_watch_the_helper_is_polled() -> None:
     assert delay == 500
     loop.fire_timers()
     assert writer.state(ticket) == "running"
-    assert len(loop.timers) == 1  # still polling
+    [(delay, _callback)] = loop.timers.values()  # still polling, backing off
+    assert delay == 1000
 
     processes[0].exit_with = 1
     loop.fire_timers()
@@ -517,3 +518,43 @@ def test_missing_fallback_helper_has_its_own_one_time_message(caplog) -> None:
     assert writer.copy(CODE) is None
     assert "install wl-clipboard" in caplog.text
     assert CODE not in caplog.text
+
+
+def test_orphan_polling_backs_off_to_ten_seconds() -> None:
+    writer, _processes, loop = _unwatched_writer()
+    writer.copy(CODE)
+
+    delays = []
+    for _ in range(8):
+        [(delay, _callback)] = loop.timers.values()
+        delays.append(delay)
+        loop.fire_timers()
+
+    assert delays == [500, 1000, 2000, 4000, 8000, 10_000, 10_000, 10_000]
+
+
+def test_polling_stops_once_the_ticket_no_longer_matters() -> None:
+    writer, processes, loop = _unwatched_writer()
+    first = writer.copy(CODE)
+    writer.copy("135790")  # supersedes and releases the first helper
+    assert writer.state(first) == "superseded"
+
+    # The first helper is still awaited by the release: it keeps polling
+    # until it exits, then its poll timer ends.
+    processes[0].exit_with = -signal.SIGTERM
+    loop.fire_timers()
+    assert writer._stopping == {}
+
+    # Only the current owner's poll timer is left.
+    [(delay, _callback)] = loop.timers.values()
+    assert delay == 1000
+
+    # A still-running ticket that is neither the owner nor awaited by a
+    # release never re-arms a poll timer.
+    stray = writer.copy("246801")
+    writer._owner = None
+    writer._stopping.pop(id(stray), None)
+    loop.timers.clear()
+    assert stray.running
+    assert writer._poll(stray, 500) is False
+    assert loop.timers == {}
