@@ -282,7 +282,12 @@ class Daemon:
 
         def flush() -> bool:
             self._status_emit_pending = False
-            self._emit_status()
+            try:
+                self._emit_status()
+            except Exception:
+                # An idle callback must not raise into the GLib loop; the
+                # next change schedules a fresh emission.
+                log.exception("StatusChanged emission failed")
             return False
 
         try:

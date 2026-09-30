@@ -244,6 +244,26 @@ def test_status_is_still_emitted_when_deferring_fails(make_daemon) -> None:
     assert seen == ["status", "status"]
 
 
+def test_failed_deferred_status_emission_is_logged_and_rearmed(make_daemon, caplog) -> None:
+    import logging
+
+    instance = make_daemon()
+    queued: list = []
+    instance._idle_add = lambda callback: queued.append(callback) or 1
+
+    def broken():
+        raise RuntimeError("bus gone")
+
+    instance._emit_status = broken
+    instance._emit_status_soon()
+    with caplog.at_level(logging.ERROR, logger="blueferry.daemon"):
+        assert queued.pop()() is False
+    assert "StatusChanged emission failed" in caplog.text
+    # The pending flag was cleared: the next change schedules again.
+    instance._emit_status_soon()
+    assert len(queued) == 1
+
+
 def test_daemon_wires_the_controller_to_its_phone_status_handler(make_daemon) -> None:
     instance = make_daemon()
 
