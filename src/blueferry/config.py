@@ -266,13 +266,14 @@ still stripping ``a2dp_sink`` when ``KEEP_PHONE_AUDIO_ON_PHONE`` is true.
 PHONE_BATTERY_NOTIFY: bool = _env_opt_in("BLUEFERRY_PHONE_BATTERY_NOTIFY")
 """Default-off desktop warning when the iPhone's battery runs low.
 
-Only effective with ``CALLS_ENABLED``: the level comes from the HFP
-``battchg`` indicator that oFono publishes for the online hands-free modem.
+The level comes from the iPhone's LE Battery Service (1 % steps) while the
+LE link is up, otherwise from the HFP ``battchg`` indicator that oFono
+publishes for the online hands-free modem with ``CALLS_ENABLED``.
 """
 PHONE_BATTERY_LOW_PERCENT: int = _env_int(
     "BLUEFERRY_PHONE_BATTERY_LOW_PERCENT", 20, 0, 80
 )
-"""Warn at or below this level. HFP reports 0-100 % in 20 % steps only."""
+"""Warn at or below this level. HFP reports 20 % steps, the LE service 1 %."""
 NOTIFICATION_TIMEOUT_MS: int = _env_int(
     "BLUEFERRY_NOTIFICATION_TIMEOUT_MS", 8_000, 1_000, 60_000
 )

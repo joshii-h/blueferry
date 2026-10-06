@@ -21,6 +21,7 @@ Controls.ScrollView {
     readonly property var tether: card.bridge.tether || ({})
     readonly property bool connected: card.status.map === true
     readonly property bool hasPhoneStatus: typeof card.status.phone_battery_level === "number"
+        || typeof card.status.phone_battery_percent === "number"
         || typeof card.status.phone_signal_strength === "number"
 
     function connectionText() {

@@ -195,6 +195,7 @@ def test_disabled_feature_never_touches_ofono() -> None:
         "calls_enabled": False, "calls_state": "disabled", "calls_available": False,
         "phone_battery_level": None, "phone_signal_strength": None,
         "phone_network_name": None, "phone_network_status": None,
+        "phone_battery_percent": None, "phone_battery_source": None,
     }
     assert transport.pending == [] and transport.matches == [] and timers.entries == {}
     with pytest.raises(CallsDisabledError):
@@ -899,6 +900,8 @@ def test_online_modem_reads_battery_signal_and_operator() -> None:
         "phone_signal_strength": 80,
         "phone_network_name": "Sunrise",
         "phone_network_status": "registered",
+        "phone_battery_percent": 60,
+        "phone_battery_source": "hfp",
     }
     # One content-free notification per published change; subscriber
     # numbers and other Handsfree fields are never kept.
@@ -929,6 +932,8 @@ def test_property_changes_update_status_and_skip_invisible_ones() -> None:
         "phone_signal_strength": None,
         "phone_network_name": None,
         "phone_network_status": "searching",
+        "phone_battery_percent": 20,
+        "phone_battery_source": "hfp",
     }
     # A signal on another object path is not ours.
     transport.emit(HANDSFREE, "PropertyChanged", MODEM + "_other", "BatteryChargeLevel", dbus.Byte(5))

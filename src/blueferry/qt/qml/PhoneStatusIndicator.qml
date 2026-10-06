@@ -3,13 +3,18 @@ import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
-// Optional iPhone battery and signal from the HFP calls integration
-// (BLUEFERRY_CALLS_ENABLED=true with oFono). Main.qml only loads this when
-// GetStatus reports at least one value; it performs no I/O itself.
+// Optional iPhone battery and signal: the battery comes from the LE Battery
+// Service (1 % steps) or the HFP calls integration (20 % steps), signal and
+// network only from HFP (BLUEFERRY_CALLS_ENABLED=true with oFono). PhoneCard
+// only loads this when GetStatus reports at least one value; no I/O here.
 RowLayout {
     id: indicator
     required property var status
-    readonly property var batteryLevel: indicator.validPercent(indicator.status.phone_battery_level)
+    // phone_battery_percent is the most precise level; older backends only
+    // send the HFP phone_battery_level.
+    readonly property var batteryLevel: indicator.validPercent(indicator.status.phone_battery_percent) ?? indicator.validPercent(indicator.status.phone_battery_level)
+    readonly property bool batteryExact: indicator.status.phone_battery_source === "ble"
+        && indicator.validPercent(indicator.status.phone_battery_percent) !== null
     readonly property var signalStrength: indicator.validPercent(indicator.status.phone_signal_strength)
     readonly property string networkName: typeof indicator.status.phone_network_name === "string"
         ? indicator.status.phone_network_name : ""
@@ -29,7 +34,7 @@ RowLayout {
     }
 
     // Breeze ships battery-000 … battery-100 and network-mobile-0 … -100 in
-    // 10/20 % steps; HFP only reports 20 % steps, so these always exist.
+    // 10 % steps; the exact LE level is rounded to the nearest one.
     function batteryIcon(level: int): string {
         const step = Math.max(0, Math.min(100, Math.round(level / 10) * 10))
         return "battery-" + String(step).padStart(3, "0")
@@ -43,7 +48,9 @@ RowLayout {
     function summaryText(): string {
         const parts = []
         if (indicator.batteryLevel !== null)
-            parts.push(qsTr("iPhone battery about %1 %").arg(indicator.batteryLevel))
+            parts.push(indicator.batteryExact
+                ? qsTr("iPhone battery %1 %").arg(indicator.batteryLevel)
+                : qsTr("iPhone battery about %1 %").arg(indicator.batteryLevel))
         if (indicator.signalStrength !== null)
             parts.push(qsTr("Signal %1 %").arg(indicator.signalStrength))
         if (indicator.networkName !== "")

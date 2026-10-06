@@ -12,7 +12,9 @@ oFono also publishes the phone's standard HFP ``+CIND`` indicators:
 
 iPhones additionally report a finer 0-9 battery level through Apple's
 ``AT+IPHONEACCEV`` extension. Stock oFono does not decode it, and BlueFerry
-does not patch oFono, so the battery is only known in six steps.
+does not patch oFono, so the battery is only known in six steps. The LE
+Battery Service (``blueferry.battery_service``) reports 1 % steps;
+:func:`preferred_battery` picks it over HFP whenever it is known.
 
 Nothing here performs I/O. Every value comes from the phone and is
 type-checked and range-checked; anything malformed becomes "unknown".
@@ -46,6 +48,8 @@ PHONE_STATUS_KEYS = (
     "phone_signal_strength",
     "phone_network_name",
     "phone_network_status",
+    "phone_battery_percent",
+    "phone_battery_source",
 )
 UNKNOWN_PHONE_STATUS: dict[str, object] = dict.fromkeys(PHONE_STATUS_KEYS)
 
@@ -139,7 +143,20 @@ class PhoneStatus:
             "phone_signal_strength": self.signal_strength if registered else None,
             "phone_network_name": self.network_name if registered else None,
             "phone_network_status": self.network_status,
+            # Without the LE Battery Service the daemon reports HFP here;
+            # the daemon overrides both with :func:`preferred_battery`.
+            "phone_battery_percent": self.battery_percent,
+            "phone_battery_source": "hfp" if self.battery_percent is not None else None,
         }
+
+
+def preferred_battery(ble: int | None, hfp: int | None) -> tuple[int | None, str | None]:
+    """The most precise known battery level and where it came from."""
+    if ble is not None:
+        return ble, "ble"
+    if hfp is not None:
+        return hfp, "hfp"
+    return None, None
 
 
 def apply_properties(
@@ -160,7 +177,8 @@ class LowBatteryMonitor:
 
     The warning fires the first time the level is at or below ``threshold``.
     It re-arms only after the level has climbed at least one HFP step (20 %)
-    above the threshold, so a battery wobbling between two steps does not
+    above the threshold, also when the level comes from the 1 % LE Battery
+    Service, so a battery wobbling between two steps does not
     warn repeatedly. An unknown level (phone gone, oFono restarted) neither
     fires nor re-arms, so reconnecting a still-low phone stays quiet.
     """
