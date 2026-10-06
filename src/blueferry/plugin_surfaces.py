@@ -22,7 +22,7 @@ from blueferry.plugin_api.surfaces import CardItem
 from blueferry.plugin_prefs import disabled_plugins
 
 ClientFactory = Callable[[PluginManifest], PluginClient]
-# How many plugins the card asks; more than this are listed as skipped.
+# How many plugins the card asks; more are listed as one skipped line.
 MAX_CARD_PLUGINS = 8
 
 
@@ -84,6 +84,13 @@ def load_cards(
                                         reason=type(error).__name__)))
             continue
         cards.append(PluginCard(plugin.id, plugin.name, True, "", items))
+    skipped = plugins[MAX_CARD_PLUGINS:]
+    if skipped:
+        cards.append(PluginCard(
+            "", _("More plugins"), False,
+            _("Not shown: {plugins}. Disable some under Settings > Plugins.").format(
+                plugins=", ".join(plugin.name for plugin in skipped)),
+        ))
     return cards
 
 

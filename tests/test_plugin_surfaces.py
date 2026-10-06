@@ -172,3 +172,12 @@ def test_cli_cards_prints_items_and_runs_actions(monkeypatch) -> None:
     assert ran.exit_code == 0 and "next:open" in ran.output
     assert opened == ["https://example.org/"]
     assert runner.invoke(app, ["cards", "--run", "bad"]).exit_code == 2
+
+
+def test_more_card_plugins_than_shown_are_named_in_one_line() -> None:
+    many = [manifest(f"io.example.p{n}", capabilities="card;", api_version="1.2")
+            for n in range(surfaces.MAX_CARD_PLUGINS + 2)]
+    cards = surfaces.load_cards(many, client_factory=_factory({
+        plugin.id: {"GetCardItems": '{"items": []}'} for plugin in many}))
+    assert len(cards) == surfaces.MAX_CARD_PLUGINS + 1
+    assert not cards[-1].ok and cards[-1].hint.startswith("Not shown: Example, Example.")
