@@ -11,7 +11,9 @@ from tests.test_ui_client import _Bus, _UnconfiguredSetup
 
 
 def test_phone_rows_fall_back_to_the_opt_in_hint() -> None:
-    assert phone_rows({"phone_battery_percent": 42, "phone_signal_strength": 60}) == [
+    assert phone_rows({
+        "phone_battery_percent": 42, "phone_battery_source": "ble", "phone_signal_strength": 60,
+    }) == [
         ("Battery", "42 %"), ("Signal", "60 %"),
     ]
     ((label, hint),) = phone_rows({})

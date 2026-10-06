@@ -7,9 +7,13 @@ from blueferry.tether_status import TetherStatus
 
 
 def test_exact_battery_percent_wins_over_the_hfp_level_when_present() -> None:
-    status = BackendStatus.from_dict({"phone_battery_level": 60, "phone_battery_percent": 57})
+    status = BackendStatus.from_dict({
+        "phone_battery_level": 60, "phone_battery_percent": 57, "phone_battery_source": "ble",
+    })
     assert phone_status_fields(status, include_network=False) == [("Battery", "57 %")]
-    invalid = BackendStatus.from_dict({"phone_battery_level": 60, "phone_battery_percent": True})
+    invalid = BackendStatus.from_dict({
+        "phone_battery_level": 60, "phone_battery_percent": True, "phone_battery_source": "ble",
+    })
     assert phone_status_fields(invalid, include_network=False) == [("Battery", "about 60 %")]
 
 

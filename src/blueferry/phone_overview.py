@@ -1,8 +1,9 @@
 """Toolkit-free phone overview rules shared by the Qt, TUI, GTK and Quickshell clients.
 
-``blueferry.qt.phone_link`` adapts these rules to the QML keys. Every string returned here is plain text taken
-verbatim from the iPhone or the backend; each client escapes it for its own
-renderer (Rich ``Text``, GTK labels without markup, QML ``Text.PlainText``).
+``blueferry.qt.phone_link`` adapts these rules to the QML keys. Every string
+returned here is plain text taken verbatim from the iPhone or the backend;
+each client escapes it for its own renderer (Rich ``Text``, GTK labels
+without markup, QML ``Text.PlainText``).
 """
 from __future__ import annotations
 

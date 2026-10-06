@@ -29,6 +29,7 @@ import dbus
 import dbus.exceptions
 from gi.repository import GLib
 
+from blueferry import dbus_call
 from blueferry.bus import get_system_bus
 
 log = logging.getLogger(__name__)
@@ -178,8 +179,9 @@ class BatteryServiceClient:
         def failed(error) -> None:
             log.warning("battery service object sweep failed: %s", _error_name(error))
 
-        bus.get_object(_BLUEZ, "/", introspect=False).GetManagedObjects(
-            dbus_interface=_OBJECT_MANAGER,
+        dbus_call.call_async(
+            bus.get_object(_BLUEZ, "/", introspect=False),
+            _OBJECT_MANAGER, "GetManagedObjects", "",
             reply_handler=swept,
             error_handler=failed,
             timeout=DBUS_CALL_TIMEOUT_SECONDS,
@@ -270,8 +272,8 @@ class BatteryServiceClient:
             self._publish(parse_battery_level(value))
             if self._notify_owned:
                 # Leave a surviving CCC registration alone (module docstring).
-                characteristic.Get(
-                    _GATT_CHAR, "Notifying", dbus_interface=_PROPERTIES,
+                dbus_call.call_async(
+                    characteristic, _PROPERTIES, "Get", "ss", (_GATT_CHAR, "Notifying"),
                     reply_handler=lambda on: subscribed() if bool(on) else start_notify(),
                     error_handler=lambda _error: start_notify(),
                     timeout=DBUS_CALL_TIMEOUT_SECONDS,
@@ -282,8 +284,8 @@ class BatteryServiceClient:
         def start_notify() -> None:
             if not current():
                 return
-            characteristic.StartNotify(
-                dbus_interface=_GATT_CHAR,
+            dbus_call.call_async(
+                characteristic, _GATT_CHAR, "StartNotify", "",
                 reply_handler=notify_started,
                 error_handler=failed,
                 timeout=DBUS_CALL_TIMEOUT_SECONDS,
@@ -303,13 +305,17 @@ class BatteryServiceClient:
             self._retry_delay = RETRY_INITIAL_SECONDS
             log.info("iPhone battery level subscribed")
 
-        characteristic.ReadValue(
-            dbus.Dictionary({}, signature="sv"),
-            dbus_interface=_GATT_CHAR,
-            reply_handler=read_done,
-            error_handler=failed,
-            timeout=DBUS_CALL_TIMEOUT_SECONDS,
-        )
+        try:
+            dbus_call.call_async(
+                characteristic, _GATT_CHAR, "ReadValue", "a{sv}", (dbus_call.options(),),
+                reply_handler=read_done,
+                error_handler=failed,
+                timeout=DBUS_CALL_TIMEOUT_SECONDS,
+            )
+        except Exception as error:
+            # Dispatch can fail synchronously (closed bus, marshalling); the
+            # retry must still be scheduled or the client stays "subscribing".
+            failed(error)
 
     def _schedule_retry(self) -> None:
         if not self._started or self._retry_id is not None:

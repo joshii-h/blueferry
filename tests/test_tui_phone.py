@@ -29,6 +29,7 @@ class _Backend:
                 "phone_audio_route": "phone", "phone_audio_reason": "",
                 "proximity_lock": "present", "proximity_lock_enabled": False,
                 "proximity_lock_grace_sec": 20, "phone_battery_percent": 57,
+                "phone_battery_source": "ble",
                 "phone_battery_level": 60, "phone_signal_strength": 80,
             }
         return BackendStatus.from_dict({
