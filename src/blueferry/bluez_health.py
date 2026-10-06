@@ -5,9 +5,11 @@ On 2026-10-06 bluetoothd sat in uninterruptible sleep in the kernel
 waited for its full timeout, BlueFerry logged a stream of NoReply errors, and
 the user could not see why nothing connected.
 
-:class:`BluezHealth` decides "unresponsive" from consecutive NoReply/Timeout
-failures reported by other components and from a cheap asynchronous
-``org.freedesktop.DBus.Peer.Ping`` to ``org.bluez``. While unresponsive the
+:class:`BluezHealth` decides "unresponsive" only from a cheap asynchronous
+``org.freedesktop.DBus.Peer.Ping`` to ``org.bluez``: two consecutive pings,
+at least 15 s apart, without a reply. A NoReply/Timeout reported by another
+component only triggers an early ping, so one slow call under load (or right
+after resume) never flips the state. While unresponsive the
 daemon starts no dials or recoveries of its own (they would only queue more
 kernel work), publishes ``bluez_unresponsive`` in GetStatus, and logs one
 warning. A successful ping or a new ``org.bluez`` owner ends the state.
@@ -32,9 +34,8 @@ NO_REPLY_ERRORS = frozenset({
     "org.freedesktop.DBus.Error.Timeout",
     "org.freedesktop.DBus.Error.TimedOut",
 })
-# Consecutive failures (component reports and pings) before BlueZ counts as
-# unresponsive. One slow reply under load must not trigger it.
-FAILURE_THRESHOLD = 3
+# Consecutive unanswered pings, PING_INTERVAL_UNRESPONSIVE_SEC apart.
+PING_FAILURE_THRESHOLD = 2
 PING_TIMEOUT_SEC = 3.0
 PING_INTERVAL_SEC = 30
 PING_INTERVAL_UNRESPONSIVE_SEC = 15
@@ -109,6 +110,7 @@ class BluezHealth:
 
     def stop(self) -> None:
         self._generation += 1
+        self._pinging = False
         if self._timer is not None:
             try:
                 self._cancel(self._timer)
@@ -119,15 +121,18 @@ class BluezHealth:
     # ---- evidence ------------------------------------------------------------
 
     def report(self, error: object) -> None:
-        """A BlueZ call failed; only NoReply/Timeout count."""
-        if is_no_reply(error):
-            self._failed()
+        """A BlueZ call failed; NoReply/Timeout trigger an early ping."""
+        if is_no_reply(error) and not self._unresponsive and self._failures == 0:
+            self.probe()
 
     def report_success(self) -> None:
         """A BlueZ call answered: it is alive (if not stuck, at least responsive)."""
-        self._failures = 0
         if self._unresponsive:
+            self._failures = 0
             self._recovered("BlueZ answered again")
+        elif self._failures:
+            self._failures = 0
+            self._reschedule(PING_INTERVAL_SEC)
 
     def owner_changed(self, new_owner: str) -> None:
         """bluetoothd was restarted or went away: start from scratch."""
@@ -136,7 +141,9 @@ class BluezHealth:
         self._failures = 0
         if self._unresponsive and new_owner:
             self._recovered("BlueZ was restarted")
-        elif self._unresponsive:
+            return
+        self._reschedule(PING_INTERVAL_SEC)
+        if self._unresponsive:
             self._unresponsive = False
             self._reason = ""
             self._notify()
@@ -180,10 +187,13 @@ class BluezHealth:
         return True
 
     def _failed(self) -> None:
+        """One ping went unanswered."""
         self._failures += 1
-        if self._unresponsive or self._failures < FAILURE_THRESHOLD:
-            if not self._unresponsive:
-                self.probe()
+        if self._unresponsive:
+            return
+        if self._failures < PING_FAILURE_THRESHOLD:
+            # Confirm with a second ping after a pause, not right away.
+            self._reschedule(PING_INTERVAL_UNRESPONSIVE_SEC)
             return
         self._unresponsive = True
         self._reason = ""

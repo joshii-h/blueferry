@@ -574,7 +574,12 @@ class Daemon:
     def _on_bluez_health_changed(self) -> None:
         self._emit_status()
         if not self.bluez_health.unresponsive:
-            self.bearers.poke()
+            # Not re-entrantly from a ping reply or owner-change handler.
+            def resume() -> bool:
+                self.bearers.poke()
+                return False
+
+            self._idle_add(resume)
 
     def _reconnect_status(self) -> dict[str, object]:
         reconnect = self.bearers.reconnect_snapshot()
@@ -941,7 +946,6 @@ class Daemon:
             return
         self._bluez_owner_generation += 1
         generation = self._bluez_owner_generation
-        self.bluez_health.owner_changed(str(new_owner or ""))
         # Invalidate before discovery or advertising can dispatch more D-Bus
         # work. An interrupted power restoration keeps ordinary reconnects
         # paused until the recovery controller explicitly resumes them.
@@ -978,6 +982,9 @@ class Daemon:
             and generation == self._bluez_owner_generation
         ):
             self._on_bluez_restart()
+        # Last: its change callback may poke the bearers, which must already
+        # have been reset for the new bluetoothd above.
+        self.bluez_health.owner_changed(str(new_owner or ""))
 
     def _on_bluez_restart(self) -> None:
         """Reapply MAP-first ordering before accepting the new BlueZ owner."""
