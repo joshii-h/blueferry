@@ -38,6 +38,7 @@ import dbus
 import dbus.exceptions
 from gi.repository import GLib
 
+from blueferry import dbus_call
 from blueferry.ancs.constants import (
     ANCS_CHAR_UUIDS,
     CONTROL_POINT_CHAR,
@@ -1028,14 +1029,10 @@ class AncsClient:
         # until the reply or the Data Source response, so the Control Point
         # remains strictly serialized.
         try:
-            dbus.Interface(
+            dbus_call.call_async(
                 get_system_bus().get_object("org.bluez", cp_path, introspect=False),
-                "org.bluez.GattCharacteristic1",
-            ).WriteValue(
-                [dbus.Byte(value) for value in request.packet],
-                # Without introspection dbus-python cannot infer a{sv} from
-                # an empty dict and raises before sending.
-                dbus.Dictionary({}, signature="sv"),
+                dbus_call.GATT_CHARACTERISTIC, "WriteValue", "aya{sv}",
+                (dbus_call.byte_array(request.packet), dbus_call.options()),
                 reply_handler=written,
                 error_handler=failed,
                 timeout=DBUS_CALL_TIMEOUT_SECONDS,
@@ -1432,16 +1429,12 @@ class AncsClient:
             finish(result)
 
         try:
-            dbus.Interface(
+            dbus_call.call_async(
                 get_system_bus().get_object(
                     _BLUEZ_BUS_NAME, cp_path, introspect=False
                 ),
-                "org.bluez.GattCharacteristic1",
-            ).WriteValue(
-                [dbus.Byte(value) for value in packet],
-                # Without introspection dbus-python cannot infer a{sv} from
-                # an empty dict and raises before sending.
-                dbus.Dictionary({}, signature="sv"),
+                dbus_call.GATT_CHARACTERISTIC, "WriteValue", "aya{sv}",
+                (dbus_call.byte_array(packet), dbus_call.options()),
                 reply_handler=on_reply,
                 error_handler=on_error,
                 timeout=DBUS_CALL_TIMEOUT_SECONDS,
