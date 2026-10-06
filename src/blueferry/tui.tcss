@@ -638,3 +638,18 @@ ModalScreen {
     height: 1;
     padding: 0 0 0 2;
 }
+
+#phone-plugins {
+    height: auto;
+    max-height: 12;
+    background: #0d1425;
+}
+
+#send-dialog {
+    width: 72;
+}
+
+#send-targets {
+    height: auto;
+    max-height: 10;
+}
