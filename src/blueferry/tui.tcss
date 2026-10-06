@@ -598,3 +598,17 @@ ModalScreen {
     height: auto;
     max-height: 30;
 }
+
+#settings-dialog, #plugins-dialog, #plugin-config-dialog {
+    width: 92;
+}
+
+#settings-body, #plugin-config-body {
+    height: auto;
+    max-height: 30;
+}
+
+#settings-options, #plugins-installed, #plugins-store {
+    height: auto;
+    max-height: 18;
+}

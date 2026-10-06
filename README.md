@@ -247,7 +247,9 @@ blueferry tui
 
 Press `?` for the keyboard map or `Ctrl+P` for the command palette. The TUI has
 conversation search, a multiline composer, mouse support, themes, and a layout
-that adapts to narrow terminals.
+that adapts to narrow terminals. `,` opens the settings (notification policy,
+the feature switches, storage, diagnostics, restarting the service) and from
+there the plugin list and store, like the Qt settings page.
 
 ## System tray item
 

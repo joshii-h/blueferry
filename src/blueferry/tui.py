@@ -19,7 +19,11 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Input, ListItem, ListView, Static, TextArea
 
 from blueferry import config, phone_overview
-from blueferry.backend_lifecycle import BackendLifecycleError, ensure_backend_current
+from blueferry.backend_lifecycle import (
+    BackendLifecycleError,
+    ensure_backend_current,
+    restart_backend,
+)
 from blueferry.bus import get_session_bus
 from blueferry.client import BackendClient, BackendError, TetherUnsupportedError
 from blueferry.companion_tools import System
@@ -46,6 +50,7 @@ from blueferry.time_display import format_message_timestamp
 from blueferry.tui_calls import CallsScreen
 from blueferry.tui_phone import PhoneScreen, media_text, phone_text
 from blueferry.tui_photos import PhotosScreen
+from blueferry.tui_settings import SettingsScreen
 
 _REFRESH_SECONDS = 15.0
 _SIGNAL_PUMP_SECONDS = 0.2
@@ -582,6 +587,7 @@ class HelpScreen(ModalScreen[None]):
             "[bold #7dd3fc]Phone calls (optional)[/]  c\n"
             "[bold #7dd3fc]iPhone: calls, notifications[/]  o\n"
             "[bold #7dd3fc]Photos (plugin)[/]  g\n"
+            "[bold #7dd3fc]Settings · plugins[/]  ,\n"
             "[bold #7dd3fc]Play/Pause · prev · next[/]  p [ ]\n"
             "[bold #7dd3fc]Sound PC/iPhone · hotspot[/]  a t\n"
             "[bold #7dd3fc]Commands[/]  Ctrl+P\n"
@@ -625,6 +631,7 @@ class BlueFerryApp(App[None]):
         Binding("left_square_bracket", "media('previous')", "Previous track", show=False),
         Binding("a", "phone_audio", "Sound PC/iPhone", show=False),
         Binding("t", "tether", "Hotspot", show=False),
+        Binding("comma", "settings", "Settings"),
         Binding("escape", "return_to_list", "Back", show=False),
     ]
 
@@ -1183,6 +1190,13 @@ class BlueFerryApp(App[None]):
                 tools_system=self.companion_system,
             )
         )
+
+    def action_settings(self) -> None:
+        if self._shortcut_blocked() or isinstance(self.screen, SettingsScreen):
+            return
+        self.push_screen(SettingsScreen(
+            self.state.client, lambda: self.state.status, restart=restart_backend,
+        ))
 
     def action_photos(self) -> None:
         if self._shortcut_blocked() or isinstance(self.screen, PhotosScreen):
