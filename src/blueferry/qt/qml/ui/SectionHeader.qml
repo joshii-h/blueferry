@@ -24,6 +24,9 @@ RowLayout {
     Kirigami.Heading {
         id: heading
         Layout.fillWidth: true
+        // Too narrow for both: the controls win, the tab already names the page.
+        visible: header.width >= heading.implicitWidth + trailingRow.implicitWidth
+            + header.spacing * 2
         level: header.level
         textFormat: Text.PlainText
         elide: Text.ElideRight
