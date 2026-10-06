@@ -68,7 +68,7 @@ def test_photos_screen_shows_the_setup_hint_without_a_plugin(monkeypatch) -> Non
         async with app.run_test(size=(120, 40)) as pilot:
             app.push_screen(PhotosScreen())
             await _until(pilot, lambda: bool(app.screen.query("#photos-hint")))
-            await _until(pilot, lambda: "plugins immich setup" in _plain(app, "#photos-hint"))
+            await _until(pilot, lambda: "plugins install" in _plain(app, "#photos-hint"))
             assert app.screen.query_one("#photos-list", OptionList).display is False
 
     _run(scenario())

@@ -69,7 +69,7 @@ where = ["src"]
 # (src/, build directories, virtual environments, …) during collection and can hang. Scope
 # collection to the test suite — matches the package check.
 testpaths = ["tests"]
-pythonpath = ["src", "plugins/immich_photos/src"]
+pythonpath = ["src"]
 markers = [
   "private_dbus: requires an explicitly isolated dbus-run-session",
 ]

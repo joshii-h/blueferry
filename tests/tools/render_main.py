@@ -327,8 +327,8 @@ def _render_photos(bridge, window, scheme: str, out_dir: Path) -> None:
     print(path)
     bridge.setProperty("photos", {
         "present": False, "ready": False, "loaded": True,
-        "hint": "No photo plugin is installed. Set up Immich photos with: "
-        "blueferry plugins immich setup --url https://your-immich-server",
+        "hint": "No photo plugin is installed. Add Immich photos in Settings > Plugins, or run: "
+        "blueferry plugins install https://github.com/joshii-h/blueferry-plugin-immich",
         "items": [],
     })
     QTest.qWait(300)

@@ -18,7 +18,7 @@ from blueferry.plugin_api import CAPABILITY_PHOTOS
 from blueferry.plugin_api.client import Photo, PluginClient, PluginError
 from blueferry.plugin_api.manifest import Discovery, PluginManifest, discover
 
-SETUP_COMMAND = "blueferry plugins immich setup --url https://your-immich-server"
+SETUP_COMMAND = "blueferry plugins install https://github.com/joshii-h/blueferry-plugin-immich"
 DEFAULT_LIMIT = 60
 _TYPE_TEXT = {"image": _("Photo"), "video": _("Video"), "other": _("File")}
 
@@ -37,7 +37,9 @@ def find_plugin(
 
 
 def not_installed_hint() -> str:
-    return _("No photo plugin is installed. Set up Immich photos with: {command}").format(
+    return _(
+        "No photo plugin is installed. Add Immich photos in Settings > Plugins, or run: {command}"
+    ).format(
         command=SETUP_COMMAND,
     )
 
@@ -63,7 +65,8 @@ def load_recent(
     try:
         status = client.status()
         if status.state == "unconfigured":
-            return PhotosSnapshot(True, False, status.detail or SETUP_COMMAND)
+            hint = status.detail or _("Configure the plugin in Settings > Plugins.")
+            return PhotosSnapshot(True, False, hint)
         photos = client.list_recent(limit)
     except PluginError as error:
         return PhotosSnapshot(True, False, _("Photos unavailable: {reason}").format(reason=error))

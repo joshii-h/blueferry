@@ -29,7 +29,7 @@ def test_find_plugin_picks_a_photos_capability() -> None:
 
 
 def test_load_recent_covers_missing_unconfigured_failing_and_ready(tmp_path) -> None:
-    assert "blueferry plugins immich setup" in photos_view.load_recent(None).hint
+    assert "blueferry plugins install https://" in photos_view.load_recent(None).hint
     unconfigured = photos_view.load_recent(manifest(), client_factory=_factory(
         {"Status": json.dumps({"state": "unconfigured", "detail": "run setup"})}, tmp_path))
     assert unconfigured.present and not unconfigured.ready and unconfigured.hint == "run setup"
@@ -86,4 +86,4 @@ def test_photos_recent_and_open(hooks) -> None:
     assert result.exit_code == 1 and "not found" in result.output
     state["plugin"] = None
     result = CliRunner().invoke(app, ["photos", "recent"])
-    assert result.exit_code == 2 and "blueferry plugins immich setup" in result.output
+    assert result.exit_code == 2 and "blueferry plugins install" in result.output

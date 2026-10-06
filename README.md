@@ -925,11 +925,17 @@ BlueFerry can show the newest photos and videos from a self-hosted
 [Immich](https://immich.app) server. This runs as a separate plugin process
 (see [PLUGINS.md](PLUGINS.md)); the backend is not involved.
 
-1. In Immich, create an API key with `asset.read`, `asset.view` and
+The plugin lives in its own repository,
+[blueferry-plugin-immich](https://github.com/joshii-h/blueferry-plugin-immich):
+
+1. Install it from the plugin list in the settings (Plugins), or with
+   `blueferry plugins install https://github.com/joshii-h/blueferry-plugin-immich`.
+2. In Immich, create an API key with `asset.read`, `asset.view` and
    `asset.download`.
-2. Run `blueferry plugins immich setup --url https://photos.example.org` and
-   paste the key (not echoed). It is stored in the desktop keyring, or in an
-   owner-only file without one.
+3. Enter the server URL and the key in the settings (Plugins > Immich photos >
+   Settings), or run `blueferry plugins config io.weirdware.blueferry.immich_photos
+   --set url=https://photos.example.org --secret api_key`. The key is stored in
+   the desktop keyring, or in an owner-only file without one.
 
 Then use the **Photos** tab in the Qt client (click opens the original in
 the default viewer; an opened photo can be dragged into other apps), key `g`
@@ -944,6 +950,12 @@ blueferry plugins list
 Thumbnails and opened originals are cached owner-only in
 `~/.cache/blueferry/immich` (200 MB and 2 GB, least recently used first).
 Only checked with a fake server so far.
+
+Moving from the plugin that used to ship in `plugins/immich_photos`: run the
+install command above. It replaces the old manifest and D-Bus service file;
+the stored URL and keyring entry stay and are used as before. The old copy
+pip-installed next to BlueFerry can be removed with
+`pip uninstall blueferry-immich-photos` from that environment.
 
 ## Lock when the iPhone goes away
 

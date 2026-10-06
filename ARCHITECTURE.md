@@ -182,7 +182,10 @@ All paths are relative to `src/blueferry/` unless noted.
 | `cli_proximity.py` | `proximity-lock` status, dry run, enable, and disable. |
 | `plugin_api/` | Plugin contract: manifest parser and discovery, validating `PluginClient`, `PluginService`/`PhotosService` base, test harness. Imports nothing else from `blueferry`. A symlink to `plugin-api/src/blueferry/plugin_api`, which `plugin-api/pyproject.toml` also builds as the separate distribution `blueferry-plugin-api` for plugins in their own repositories. |
 | `photos_view.py`, `cli_photos.py`, `tui_photos.py`, `qt/qml/PhotosTab.qml` | Client side of the `photos` capability: plugin lookup, blocking loads for worker threads, plain-text labels; `blueferry photos`, the TUI Photos screen (`g`) and the Qt Photos tab (loaded only while shown). |
-| `plugins/immich_photos/` (repository root) | Bundled Immich plugin, laid out as its own package; imports only `plugin_api`. |
+| `plugin_manager.py` | Installs plugins from https Git URLs: pinned ref, clone, confirmation, own venv, manifest and D-Bus service file; update, remove, enable/disable. |
+| `plugin_index.py` | Plugin store: fetches, validates and caches curated index files. |
+| `plugin_settings_view.py` | Toolkit-free plugin rows, store cards and settings forms for Qt and the TUI (`qt/plugin_settings.py`, `tui_settings.py`). |
+| `features.py` | The local.env switches clients may store in settings.json (`Messages1.GetFeatures/SetFeature`). |
 | `cli_plugins.py` | `plugins list` and `plugins ALIAS …` (exec of the plugin's own CLI). |
 | `bluez_health.py` | Detects a bluetoothd that no longer answers D-Bus (NoReply streak, Peer.Ping, /proc state) and pauses BlueFerry's own Bluetooth work. |
 | `cli_reconnect.py` | `reconnect`: manual Classic reconnect that waits for the outcome. |
