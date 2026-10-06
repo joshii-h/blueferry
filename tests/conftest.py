@@ -189,10 +189,19 @@ _sync_dbus_calls: list[str] | None = None
 
 
 def sync_dbus_caller(frame) -> str | None:
-    """``module:function`` of the daemon code behind a blocking call, if any."""
+    """``module:function`` of the daemon code behind a blocking call, if any.
+
+    Finalizers are never attributed: the garbage collector runs ``__del__``
+    (``dbus.service.BusName`` releases its name there) inside whatever code
+    happens to allocate, so the frame below it is unrelated daemon code.
+    """
     while frame is not None and os.path.abspath(frame.f_code.co_filename).startswith(_DBUS_DIR):
+        if frame.f_code.co_name == "__del__":
+            return None
         frame = frame.f_back
     if frame is None or threading.current_thread() is not threading.main_thread():
+        return None
+    if frame.f_code.co_name == "__del__":
         return None
     filename = os.path.abspath(frame.f_code.co_filename)
     if not filename.startswith(_PACKAGE_DIR + os.sep):
@@ -206,11 +215,15 @@ def sync_dbus_caller(frame) -> str | None:
 
 # dbus-python itself makes blocking calls to the bus daemon: AddMatch and
 # RemoveMatch for add_signal_receiver/match.remove(), GetNameOwner when
-# get_object resolves a well-known name. Those round trips are local and
+# get_object resolves a well-known name, RequestName/ReleaseName for
+# dbus.service.BusName (the release also runs from its finalizer). Those
+# round trips are local and
 # every proxy and signal watch in the daemon depends on them; they go away
 # module by module with the Gio.DBus migration. The same methods called
 # directly from daemon code are still reported.
-_IMPLICIT_BUS_DAEMON_CALLS = frozenset({"AddMatch", "RemoveMatch", "GetNameOwner"})
+_IMPLICIT_BUS_DAEMON_CALLS = frozenset({
+    "AddMatch", "RemoveMatch", "GetNameOwner", "RequestName", "ReleaseName",
+})
 
 
 def _record_sync_dbus(original):

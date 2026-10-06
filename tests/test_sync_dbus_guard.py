@@ -48,3 +48,37 @@ def test_tests_and_worker_threads_may_block(bus, sync_dbus_guard) -> None:
     worker.start()
     worker.join()
     assert sync_dbus_guard == []
+
+
+_FINALIZER_SOURCE = """
+class Holder:
+    def __init__(self, bus):
+        self.bus = bus
+
+    def __del__(self):
+        self.bus.get_object(
+            "org.freedesktop.DBus", "/org/freedesktop/DBus", introspect=False,
+        ).GetId(dbus_interface="org.freedesktop.DBus")
+
+
+def allocate(bus):
+    holder = Holder(bus)
+    del holder  # the finalizer runs inside this daemon function
+    return True
+"""
+
+
+def test_finalizers_and_bus_name_release_are_not_attributed(bus, sync_dbus_guard) -> None:
+    import dbus.service
+
+    namespace: dict = {}
+    exec(compile(_FINALIZER_SOURCE, _DAEMON_FILE, "exec"), namespace)
+    assert namespace["allocate"](bus)
+
+    def claim_and_drop(connection):
+        name = dbus.service.BusName("io.weirdware.BlueFerry.GuardTest", connection)
+        del name  # BusName.__del__ -> ReleaseName, a blocking call
+
+    exec(compile("def claim(bus, run):\n    run(bus)\n", _DAEMON_FILE, "exec"), namespace)
+    namespace["claim"](bus, claim_and_drop)
+    assert sync_dbus_guard == []
