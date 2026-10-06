@@ -21,6 +21,12 @@ from blueferry.profile_reset import (
     REASON_MANUAL,
     ProfileResetController,
 )
+from blueferry.reconnect_view import (
+    RATE_LIMITED_TEXT,
+    reconnect_error_text,
+    reconnect_view,
+    result_text,
+)
 
 TIMEDOUT = "org.ofono.Error.Timedout"
 
@@ -345,6 +351,34 @@ def test_bluez_restart_and_stop_abort_a_pending_reset() -> None:
     assert all(callback != reconnect for _delay, callback in timers.entries.values())
     supervisor.stop()
     assert supervisor.reset_profiles() == "unavailable"
+
+
+# ---- client texts --------------------------------------------------------------
+
+def test_rate_limits_read_as_a_request_to_wait() -> None:
+    assert reconnect_error_text("io.weirdware.BlueFerry.Error.RateLimited") == RATE_LIMITED_TEXT
+    assert "too many" not in RATE_LIMITED_TEXT.casefold()
+
+    from blueferry.client import _dbus_message
+
+    error = dbus.exceptions.DBusException(
+        "too many requests", name="io.weirdware.BlueFerry.Error.RateLimited",
+    )
+    assert _dbus_message(error) == RATE_LIMITED_TEXT
+
+
+def test_audio_route_bucket_allows_twenty_switches_a_minute() -> None:
+    from blueferry.dbus_security import _RULES
+
+    assert _RULES["audio-route"][0].attempts == 20
+
+
+def test_reconnect_is_offered_for_a_stuck_profile_on_a_live_link() -> None:
+    status = {"phone_reconnect_state": "connected", "profile_reset_suggested": REASON_A2DP}
+    view = reconnect_view(status)
+    assert view.offered is True and "A2DP" in view.hint
+    assert reconnect_view({"phone_reconnect_state": "connected"}).offered is False
+    assert result_text("profile-reset") != result_text("unreachable")
 
 
 # ---- A2DP hook in PhoneAudioRoute ----------------------------------------------

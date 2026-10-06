@@ -363,7 +363,7 @@ class BridgeController(QObject):
                 self._reconnect_notice = ""
                 self._set_error(result_text(result))
             else:
-                self._reconnect_pending = result == "started"
+                self._reconnect_pending = result in ("started", "profile-reset")
                 self._reconnect_notice = result_text(result)
             self.statusChanged.emit()
             self.refresh()

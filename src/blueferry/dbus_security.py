@@ -59,7 +59,9 @@ _RULES: dict[str, tuple[RateRule, ...]] = {
     # The in-memory notification list is cheap but carries app content.
     "notifications-read": (RateRule(240, 60),),
     # Moving the phone's audio pages the phone and renegotiates AVDTP.
-    "audio-route": (RateRule(10, 60), RateRule(120, 3_600)),
+    # Users retry while bluetoothd is busy; BlueFerry's own profile reset
+    # (profile_reset.py) bounds the paging, so allow more clicks.
+    "audio-route": (RateRule(20, 60), RateRule(120, 3_600)),
     # Each tether command pages the phone and may create a NetworkManager
     # profile; toggling is interactive, so allow bursts but not a stream.
     "tether": (RateRule(10, 60), RateRule(60, 3_600)),
@@ -171,7 +173,7 @@ class CallerGuard:
                     attempts.popleft()
                 if len(attempts) >= rule.attempts:
                     raise RateLimitError(
-                        "too many requests; wait before trying again"
+                        "please wait a moment, then try again"
                     )
         for scope, selected in scoped:
             for rule in selected:
