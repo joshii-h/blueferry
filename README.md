@@ -446,6 +446,17 @@ and would keep them indefinitely. `blueferry contacts-photo NAME -o FILE`
 exports one cached photo. The GTK, terminal, and Quickshell clients don't show
 avatars yet.
 
+### Recent app notifications (opt-in)
+
+`BLUEFERRY_NOTIFICATION_HISTORY=true` keeps the last 200 non-Messages iPhone
+app notifications in the daemon's memory so the Qt client's Notifications tab
+and `blueferry notifications recent` can list them. Nothing is written to
+disk: BlueFerry's history deliberately retains only Messages records, so the
+list starts empty after every backend restart. Titles and bodies are kept only
+with `BLUEFERRY_SHOW_NOTIFICATION_CONTENT=true`, otherwise just the app and the
+time. Apps other than Messages only reach BlueFerry with the "All iPhone
+Notifications" policy. While encrypted storage is locked the list is refused.
+
 ### Clicking iPhone app notifications
 
 Clicking a message popup opens the conversation in BlueFerry. Other app

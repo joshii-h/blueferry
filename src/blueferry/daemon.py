@@ -61,6 +61,7 @@ from blueferry.history import (
     mark_event_handles_read,
 )
 from blueferry.media import MediaController
+from blueferry.notification_log import NotificationLog
 from blueferry.notification_policy import (
     ALL_NOTIFICATIONS,
     NotificationPolicyStore,
@@ -242,6 +243,11 @@ class Daemon:
             on_event=self._on_call_event,
             phone_reachable=lambda: self.bearers.bredr_connected,
             on_phone_status=self._on_phone_status,
+        )
+        # Opt-in, memory-only list of recent iPhone app notifications.
+        self.notification_log: NotificationLog | None = (
+            NotificationLog(show_content=config.SHOW_NOTIFICATION_CONTENT)
+            if config.NOTIFICATION_HISTORY else None
         )
         # Where the iPhone's media playback goes. Only offered when the
         # WirePlumber policy does not strip the A2DP sink role.
@@ -590,10 +596,16 @@ class Daemon:
                 media=self.media,
                 tether=self.tether,
                 phone_audio=self.phone_audio_route,
+                notification_log=self.notification_log,
+                notification_content=config.SHOW_NOTIFICATION_CONTENT,
                 set_proximity_lock=self._set_proximity_lock,
             ),
         )
         self.events.set_dbus_service(self._dbus_service)
+        if self.notification_log is not None:
+            self.notification_log.set_listener(
+                self._dbus_service.emit_notifications_changed
+            )
         self._publish_media()
         self._initialize_storage()
         log.info("DBus service ready: %s", BUS_NAME)
@@ -806,6 +818,8 @@ class Daemon:
         # Sinks don't need the OBEX sessions — set them up now so ANCS events
         # still reach the desktop while MAP/PBAP are degraded.
         self.events.setup()
+        if self.notification_log is not None and self.notification_log not in self.events.sinks:
+            self.events.sinks.append(self.notification_log)
         # Optional calls only observe oFono; failures there never degrade
         # messaging, and a missing oFono is retried in the background.
         self.calls.start()
@@ -1173,6 +1187,7 @@ class Daemon:
             "media_control_available": bool(self.media and self.media.available),
             "media_mpris_enabled": self.mpris is not None,
             **self.phone_audio_route.snapshot(),
+            "notification_history_enabled": self.notification_log is not None,
             **self._controller_identity(),
             **self.connectivity.snapshot(),
         }

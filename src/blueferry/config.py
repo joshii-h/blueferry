@@ -38,6 +38,7 @@ LOCAL_ENV_KEYS = frozenset({
     "BLUEFERRY_TETHER_AUTOCONNECT",
     "BLUEFERRY_TETHER_BACKEND",
     "BLUEFERRY_PROXIMITY_LOCK",
+    "BLUEFERRY_NOTIFICATION_HISTORY",
     "BLUEFERRY_PROXIMITY_LOCK_GRACE_SEC",
 })
 CONFIG_DIR: Path = Path(
@@ -323,6 +324,14 @@ HISTORY_MAX_PAYLOAD_BYTES: int = _env_int(
     16 * 1024 * 1024,
     2 * 1024 * 1024 * 1024,
 )
+NOTIFICATION_HISTORY: bool = _env_bool("BLUEFERRY_NOTIFICATION_HISTORY", False)
+"""Keep recent iPhone app notifications in memory for the clients' list.
+
+Off by default. Records live only in the running daemon (never on disk);
+titles and bodies are kept only while BLUEFERRY_SHOW_NOTIFICATION_CONTENT is
+true. Non-Messages notifications reach the daemon only with the "All iPhone
+Notifications" policy.
+"""
 PROXIMITY_LOCK: bool = _env_bool("BLUEFERRY_PROXIMITY_LOCK", False)
 """Initial opt-in for locking the desktop when the iPhone goes away.
 

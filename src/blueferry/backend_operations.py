@@ -85,6 +85,7 @@ log = logging.getLogger(__name__)
 
 _MAP_FOLDER_RE = re.compile(r"^[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*$")
 _EVENT_KIND_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+MAX_NOTIFICATION_QUERY_LIMIT = 200
 _PUBLIC_EVENT_KINDS = frozenset({"sms_received", "sms_sent", "sms_seen"})
 
 Success = Callable[[Any], None]
@@ -227,6 +228,12 @@ class PhoneAudioControl(Protocol):
     ) -> None: ...
 
 
+class NotificationLog(Protocol):
+    def snapshot(self, limit: int) -> list[dict[str, object]]: ...
+
+    def clear(self) -> None: ...
+
+
 class TetherControl(Protocol):
     def snapshot(self) -> dict[str, object]: ...
 
@@ -262,6 +269,9 @@ class BackendDependencies:
     media: MediaControl | None = None
     tether: TetherControl | None = None
     phone_audio: PhoneAudioControl | None = None
+    # Present only when BLUEFERRY_NOTIFICATION_HISTORY is set.
+    notification_log: NotificationLog | None = None
+    notification_content: bool = False
     set_proximity_lock: Callable[[bool, int], dict[str, Any]] | None = None
 
 
@@ -790,6 +800,8 @@ class BackendOperations:
             )
         clear_events()
         self._clear_call_history()
+        if self.dependencies.notification_log is not None:
+            self.dependencies.notification_log.clear()
         if self.dependencies.starred_threads is not None:
             self.dependencies.starred_threads.clear()
         if self.dependencies.group_routes is not None:
@@ -1281,6 +1293,21 @@ class BackendOperations:
                 "BLUEFERRY_MEDIA_CONTROL_ENABLED=true to opt in"
             )
         self.dependencies.media.send_command(name, on_success, on_failure)
+    def list_notifications(self, limit: int) -> dict[str, object]:
+        """Recent iPhone app notifications, newest first; fail closed."""
+        log_ = self.dependencies.notification_log
+        if log_ is None:
+            return {"enabled": False, "content": False, "notifications": []}
+        storage = self.dependencies.storage
+        if storage is not None and not storage.status.can_read:
+            raise NotReadyError(storage.status.detail or "local history is locked")
+        bounded = max(1, min(int(limit), MAX_NOTIFICATION_QUERY_LIMIT))
+        return {
+            "enabled": True,
+            "content": self.dependencies.notification_content,
+            "notifications": log_.snapshot(bounded),
+        }
+
     def set_phone_audio_route(
         self, route: str, success: Callable[[str], None], failure: Failure,
     ) -> None:

@@ -39,6 +39,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `confirmed_groups.py` | Persistent confirmed group rosters in the owner-only settings document. |
 | `group_routes.py` | Saved named-group reply rosters in the settings document, outside history retention. |
 | `starred_threads.py` | Persistent starred-conversation keys in the settings document. |
+| `notification_log.py` | Opt-in, memory-only ring of recent non-Messages ANCS notifications for `ListNotifications` (content-gated). |
 | `notification_policy.py` | Persistent desktop notification preferences, including per-app click rules. |
 | `notification_open_map.py` | Strict validation and exact-match resolution of notification click rules (bundle ID to http(s) URL or desktop-entry ID). |
 | `private_preferences.py` | Encrypts a whole preference collection under the storage policy. |
@@ -170,7 +171,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `cli_common.py` | Small CLI presentation helpers. |
 | `cli_calls.py` | Optional `blueferry calls` commands over `Calls1` and `blueferry phone-status` (battery, signal, network from `GetStatus`). |
 | `cli_otp.py` | `otp-status` and `otp-check` for one-time code auto-copy. |
-| `cli_notifications.py` | `notifications open-map` rule editing. |
+| `cli_notifications.py` | `notifications open-map` rule editing and `notifications recent`. |
 | `cli_media.py` | `blueferry media` now-playing status and commands. |
 | `cli_audio.py` | `blueferry audio [status\|pc\|phone]`. |
 | `cli_tether.py` | `blueferry tether [status\|on\|off]`. |

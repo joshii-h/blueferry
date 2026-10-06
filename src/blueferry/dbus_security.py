@@ -56,6 +56,8 @@ _RULES: dict[str, tuple[RateRule, ...]] = {
     # MPRIS, or a held volume key, cannot starve message reads or sends.
     "media-read": (RateRule(600, 60),),
     "media-command": (RateRule(60, 60), RateRule(1_200, 3_600)),
+    # The in-memory notification list is cheap but carries app content.
+    "notifications-read": (RateRule(240, 60),),
     # Moving the phone's audio pages the phone and renegotiates AVDTP.
     "audio-route": (RateRule(10, 60), RateRule(120, 3_600)),
     # Each tether command pages the phone and may create a NetworkManager
