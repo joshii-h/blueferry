@@ -33,6 +33,8 @@ Controls.ItemDelegate {
     property string density: "comfortable"
     // Keep the trailing actions visible (e.g. a starred star).
     property bool pinActions: false
+    // Explanations (phone card) wrap; list previews stay on one line.
+    property bool wrapSubtitle: false
     // objectNames of the parts: <prefix>Title, Meta, Subtitle, UnreadDot, Body.
     property string partPrefix: "row"
     readonly property bool revealed: row.pinActions || row.hovered || row.visualFocus
@@ -127,8 +129,8 @@ Controls.ItemDelegate {
                     text: row.subtitle
                     textFormat: Text.PlainText
                     elide: Text.ElideRight
-                    wrapMode: Text.NoWrap
-                    maximumLineCount: 1
+                    wrapMode: row.wrapSubtitle ? Text.Wrap : Text.NoWrap
+                    maximumLineCount: row.wrapSubtitle ? 4 : 1
                     font: row.density === "compact" ? Kirigami.Theme.smallFont : Kirigami.Theme.defaultFont
                     color: row.unread ? Kirigami.Theme.textColor : Kirigami.Theme.disabledTextColor
                 }

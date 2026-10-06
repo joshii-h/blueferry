@@ -4,7 +4,7 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
-import org.kde.kirigami.delegates as KD
+import "ui"
 
 // Phone card section "Tools": UxPlay screen mirroring, LocalSend and the
 // iPhone's camera roll over USB. These are local programs started by this
@@ -46,70 +46,57 @@ ColumnLayout {
     Layout.fillWidth: true
     spacing: 0
 
-    Kirigami.Heading {
-        Layout.fillWidth: true
-        Layout.topMargin: Kirigami.Units.largeSpacing
-        Layout.bottomMargin: Kirigami.Units.smallSpacing
-        Layout.leftMargin: Kirigami.Units.largeSpacing
-        Layout.rightMargin: Kirigami.Units.largeSpacing
-        level: 4
+    SectionHeader {
         text: qsTr("Tools")
+        level: 4
     }
 
     Repeater {
         id: rowRepeater
         model: section.rows
-        delegate: Controls.ItemDelegate {
+        delegate: ListRow {
             id: row
             required property var modelData
             readonly property bool running: section.tools.busy === row.modelData.key
             readonly property alias ejectButton: ejectButton
+            readonly property bool ejectable: row.modelData.key === "photos"
+                && section.tool("eject").enabled === true
 
             objectName: "companionTool_" + row.modelData.key
             Layout.fillWidth: true
-            horizontalPadding: Kirigami.Units.largeSpacing
-            topPadding: Kirigami.Units.smallSpacing
-            bottomPadding: Kirigami.Units.smallSpacing
-            text: row.modelData.title
-            icon.name: row.modelData.key === "mirror" && row.modelData.active
+            density: "compact"
+            wrapSubtitle: true
+            avatarSize: Kirigami.Units.iconSizes.smallMedium
+            title: row.modelData.title
+            subtitle: row.modelData.subtitle
+            iconName: row.modelData.key === "mirror" && row.modelData.active
                 ? "media-playback-stop" : section.iconFor(row.modelData.key)
             enabled: row.modelData.enabled === true && !section.busy
+            pinActions: row.running || row.ejectable
             Controls.ToolTip.text: row.modelData.subtitle
             Controls.ToolTip.visible: row.hovered && !row.modelData.installed
             Controls.ToolTip.delay: Kirigami.Units.toolTipDelay
-
-            contentItem: RowLayout {
-                spacing: Kirigami.Units.smallSpacing
-                KD.IconTitleSubtitle {
-                    Layout.fillWidth: true
-                    title: row.text
-                    subtitle: row.modelData.subtitle
-                    icon: icon.fromControlsIcon(row.icon)
-                    wrapMode: Text.Wrap
-                    elide: Text.ElideNone
-                    opacity: row.enabled ? 1 : 0.6
-                }
-                Controls.BusyIndicator {
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
-                    visible: row.running
-                    running: row.running
-                }
-                Controls.ToolButton {
-                    id: ejectButton
-                    objectName: "companionEjectButton"
-                    visible: row.modelData.key === "photos" && section.tool("eject").enabled === true
-                    enabled: !section.busy
-                    icon.name: "media-eject"
-                    text: qsTr("Eject")
-                    display: Controls.AbstractButton.IconOnly
-                    Controls.ToolTip.text: section.tool("eject").title || text
-                    Controls.ToolTip.visible: hovered
-                    Controls.ToolTip.delay: Kirigami.Units.toolTipDelay
-                    onClicked: section.bridge.runCompanionTool("eject")
-                }
-            }
             onClicked: section.bridge.runCompanionTool(row.modelData.key)
+
+            Controls.BusyIndicator {
+                Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+                visible: row.running
+                running: row.running
+            }
+            Controls.ToolButton {
+                id: ejectButton
+                objectName: "companionEjectButton"
+                visible: row.ejectable
+                enabled: !section.busy
+                icon.name: "media-eject"
+                text: qsTr("Eject")
+                display: Controls.AbstractButton.IconOnly
+                Controls.ToolTip.text: section.tool("eject").title || text
+                Controls.ToolTip.visible: hovered
+                Controls.ToolTip.delay: Kirigami.Units.toolTipDelay
+                onClicked: section.bridge.runCompanionTool("eject")
+            }
         }
     }
 
