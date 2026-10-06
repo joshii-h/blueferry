@@ -7,12 +7,15 @@ before a reviewer has to:
 
 ``sync-dbus``
     A dbus-python proxy method call (``proxy.StartNotify()``) without
-    ``reply_handler``/``error_handler``, or ``call_blocking``. Such a call
-    waits for the reply while nothing else is dispatched.
+    ``reply_handler``/``error_handler``, ``call_blocking``, or one of the
+    blocking bus helpers (``release_name``, ``list_names``,
+    ``name_has_owner``, ``get_name_owner``). Such a call waits for the reply
+    while nothing else is dispatched.
 ``blocking``
     ``time.sleep``, ``subprocess.run``/``call``/``check_call``/
-    ``check_output`` without a short ``timeout``, or ``sqlite3.connect``
-    without a short ``timeout`` (its default lock wait is five seconds).
+    ``check_output`` without a short ``timeout``, ``sqlite3.connect``
+    without a short ``timeout`` (its default lock wait is five seconds), or
+    a synchronous Gio D-Bus API (``call_sync``, ``bus_get_sync``).
 ``untyped-empty``
     A bare ``{}``/``[]`` passed to a D-Bus method, or ``dbus.Dictionary``/
     ``dbus.Array`` built without ``signature=``. With ``introspect=False``
@@ -23,8 +26,11 @@ before a reviewer has to:
 (transitively from ``blueferry.daemon``); ``untyped-empty`` applies to every
 module, because the ValueError hits clients just as hard. Deliberate
 exceptions go in ``ALLOWLIST`` with a reason; findings that predate the check
-and still need fixing are listed in ``KNOWN_DEBT``. Exit status is 1 on new
-findings or stale entries.
+and still need fixing are listed in ``KNOWN_DEBT``. An entry is keyed by
+module, function and rule, so it exempts every matching call in that whole
+function, not one line: keep exempted functions small, and re-check the
+reason when such a function grows. Exit status is 1 on new findings or
+stale entries.
 """
 from __future__ import annotations
 
@@ -45,6 +51,7 @@ SHORT_TIMEOUT_SEC = 1.0
 
 # (module, enclosing function qualname, rule) -> why it is acceptable.
 # Keep reasons specific: they are the review record for each exception.
+# An entry covers every call of that rule in the whole function.
 _WORKER = "runs on the OBEX worker thread (ObexWorker.submit), never on the loop"
 _SETUP_CLI = (
     "setup/pairing CLI path in a separate process; the daemon imports this "
@@ -65,9 +72,15 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("blueferry.bluez_setup", "register_advert", "blocking"):
         "sleeps only with settle_for_pairing=True, which only pair_setup passes",
     ("blueferry.client_activation", "_open_legacy_gtk", "sync-dbus"): _HELPER_PROCESS,
+    ("blueferry.client_activation", "forward_to_legacy_gtk", "sync-dbus"):
+        "GTK client start-up preflight on its own private bus, in the client process",
     ("blueferry.client_activation", "open_message", "sync-dbus"): _HELPER_PROCESS,
     ("blueferry.client_activation", "start_transient_service", "sync-dbus"): _HELPER_PROCESS,
     ("blueferry.contacts", "_pull_vcard_stream", "blocking"): _WORKER,
+    ("blueferry.gio_dbus", "system_bus", "blocking"):
+        "connects once on first use; GDBus caches the connection for the process",
+    ("blueferry.notification_open", "open_target", "sync-dbus"):
+        "runs in the blueferry-open-notification helper process (its main), on a private bus",
     ("blueferry.contacts", "_pull_vcard_stream", "sync-dbus"): _WORKER,
     ("blueferry.obex.map_events", "_fetch_bmessage", "blocking"): _WORKER,
     ("blueferry.obex.map_events", "_fetch_bmessage", "sync-dbus"): _WORKER,
@@ -131,7 +144,8 @@ KNOWN_DEBT: dict[tuple[str, str, str], str] = {
     ("blueferry.bearer_supervisor", "BearerSupervisor._read_bluez_connected", "sync-dbus"):
         "Device1 property reads from timers and signals",
     ("blueferry.bluetooth_recovery", "BluezRecoveryAdapter.read", "sync-dbus"):
-        "also called from GLib health checks, not only from the worker",
+        "get_name_owner + GetManagedObjects; also called from GLib health checks, "
+        "not only from the worker",
     ("blueferry.bluez_setup", "current_cod", "sync-dbus"):
         "adapter class check from the adapter-class supervisor timer",
     ("blueferry.call_history_repository", "CallHistoryRepository._open", "blocking"): _SQLITE,
@@ -142,7 +156,9 @@ KNOWN_DEBT: dict[tuple[str, str, str], str] = {
     ("blueferry.dbus_security", "CallerGuard._bus_credentials", "sync-dbus"):
         "GetConnectionCredentials once per new caller, inside method dispatch",
     ("blueferry.dbus_service", "MessagesService._open_legacy_gtk_message", "sync-dbus"):
-        "GetConnectionUnixProcessID inside method dispatch",
+        "get_name_owner, list_names and GetConnectionUnixProcessID inside method dispatch",
+    ("blueferry.event_dispatcher", "EventDispatcher._notification_server_owned", "sync-dbus"):
+        "name_has_owner for the desktop notification server; watch NameOwnerChanged instead",
     ("blueferry.history", "_open_database", "blocking"): _SQLITE,
     ("blueferry.pair_setup", "bond_status", "sync-dbus"):
         "daemon target check with a 2 s timeout; bounded but synchronous",
@@ -153,11 +169,17 @@ KNOWN_DEBT: dict[tuple[str, str, str], str] = {
     ("blueferry.sinks.libnotify", "LibnotifySink.handle_call", "sync-dbus"): _LIBNOTIFY,
     ("blueferry.sinks.libnotify", "LibnotifySink.handle_phone_battery_low", "sync-dbus"):
         _LIBNOTIFY,
+    ("blueferry.sinks.libnotify", "_notification_hints", "sync-dbus"):
+        "list_names per popup to pick the desktop-entry hint; track client names by signal",
 }
 
 _DBUS_METHOD = re.compile(r"^[A-Z][A-Za-z0-9]*$")
 _ASYNC_KWARGS = frozenset({"reply_handler", "error_handler"})
 _SUBPROCESS_BLOCKING = frozenset({"run", "call", "check_call", "check_output"})
+# dbus-python Bus helpers that wrap a blocking call to the bus daemon.
+_BUS_HELPERS = frozenset({"release_name", "list_names", "name_has_owner", "get_name_owner"})
+# Synchronous Gio D-Bus entry points (Gio.DBusConnection/DBusProxy).
+_GIO_SYNC = frozenset({"call_sync", "bus_get_sync"})
 # dbus-python type constructors and other capitalised callables that are not
 # remote method calls.
 _NOT_REMOTE = frozenset({
@@ -353,6 +375,10 @@ class _Visitor(ast.NodeVisitor):
                     self._report(node, "untyped-empty", "bare empty container in call_async args")
             elif attr == "call_blocking" and self.main_loop:
                 self._report(node, "sync-dbus", "call_blocking on the main loop")
+            elif attr in _BUS_HELPERS and self.main_loop and not (
+                isinstance(node.func.value, ast.Name) and node.func.value.id in ("self", "cls")
+            ):
+                self._report(node, "sync-dbus", f"blocking bus helper {attr}() on the main loop")
         self.generic_visit(node)
 
     def _is_remote_call(self, func: ast.Attribute) -> bool:
@@ -367,7 +393,10 @@ class _Visitor(ast.NodeVisitor):
         return not (root and root.split(".")[0] in self.imported)
 
     def _check_blocking(self, node: ast.Call, name: str | None) -> None:
-        if name == "time.sleep":
+        attr = node.func.attr if isinstance(node.func, ast.Attribute) else name
+        if attr in _GIO_SYNC:
+            self._report(node, "blocking", f"synchronous Gio D-Bus call {attr}() on the main loop")
+        elif name == "time.sleep":
             self._report(node, "blocking", "time.sleep on the main loop")
         elif name and name.startswith("subprocess.") and (
             name.split(".", 1)[1] in _SUBPROCESS_BLOCKING

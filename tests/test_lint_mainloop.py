@@ -103,3 +103,38 @@ def test_function_local_imports_do_not_pull_modules_onto_the_loop(tmp_path) -> N
         """,
     )
     assert _rules(package) == []
+
+
+def test_bus_helpers_and_gio_sync_calls_are_reported_on_the_loop(tmp_path) -> None:
+    package = _package(
+        tmp_path,
+        daemon="""
+            from gi.repository import Gio
+
+            def helpers(bus, name):
+                bus.release_name(name)
+                bus.list_names()
+                bus.name_has_owner(name)
+                bus.get_name_owner(name)
+
+            def gio(connection):
+                Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+                connection.call_sync("a", "/", "i", "M", None, None, 0, -1, None)
+
+            class Service:
+                def release_name(self):
+                    pass
+
+                def close(self):
+                    self.release_name()  # our own method, not the bus helper
+        """,
+        cli="""
+            def run(bus):
+                bus.list_names()
+        """,
+    )
+    assert _rules(package) == [
+        ("blueferry.daemon", "gio", "blocking"),
+        ("blueferry.daemon", "gio", "blocking"),
+        *[("blueferry.daemon", "helpers", "sync-dbus")] * 4,
+    ]
