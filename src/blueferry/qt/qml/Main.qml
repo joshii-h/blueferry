@@ -623,6 +623,7 @@ Kirigami.ApplicationWindow {
                                             anchors.leftMargin: Kirigami.Units.largeSpacing
                                             anchors.rightMargin: Kirigami.Units.smallSpacing
                                             text: qsTr("Conversations")
+                                            hideText: width < Kirigami.Units.gridUnit * 22
                                             FilterBar {
                                                 objectName: "threadFilter"
                                                 options: [

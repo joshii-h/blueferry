@@ -13,6 +13,9 @@ RowLayout {
     // Card sections sit closer to their rows than tab sections.
     readonly property bool cardSection: header.level >= 4
     default property alias trailing: trailingRow.data
+    // Set when the space is too narrow for title and controls: the controls
+    // win, the tab already names the page.
+    property bool hideText: false
 
     Layout.fillWidth: true
     Layout.leftMargin: Kirigami.Units.largeSpacing
@@ -24,9 +27,7 @@ RowLayout {
     Kirigami.Heading {
         id: heading
         Layout.fillWidth: true
-        // Too narrow for both: the controls win, the tab already names the page.
-        visible: header.width >= heading.implicitWidth + trailingRow.implicitWidth
-            + header.spacing * 2
+        visible: !header.hideText
         level: header.level
         textFormat: Text.PlainText
         elide: Text.ElideRight

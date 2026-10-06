@@ -180,6 +180,7 @@ QtObject {
     property string phoneName: "Joshua's iPhone"
     property var notifications: []
     property var notificationsInfo: ({})
+    function refreshNotifications() {}
     property var compatibility: ({})
     property var onboardingCompatibility: compatibility
     property bool compatibilityLoaded: true
@@ -324,6 +325,7 @@ def _render(scheme: str, out_dir: Path) -> None:
     _render_photos(bridge, window, scheme, out_dir)
     _render_settings(bridge, window, scheme, out_dir)
     _render_calls(bridge, window, scheme, out_dir)
+    _render_notifications(bridge, window, scheme, out_dir)
     window.deleteLater()
     application.processEvents()
 
@@ -431,6 +433,37 @@ def _render_calls(bridge, window, scheme: str, out_dir: Path) -> None:
     bridge.setProperty("callsState", "connecting")
     QTest.qWait(400)
     path = out_dir / f"calls-{scheme}-not-ready.png"
+    window.grabWindow().save(str(path))
+    print(path)
+
+
+def _render_notifications(bridge, window, scheme: str, out_dir: Path) -> None:
+    """Notifications tab with content, then switched off."""
+    from PySide6.QtTest import QTest
+
+    window.resize(*SIZES[0])
+    bridge.setProperty("notificationsInfo", {"enabled": True, "content": True})
+    bridge.setProperty("notifications", [
+        {"app": "WhatsApp", "time": "Today 10:41", "title": "Anna Muster",
+         "body": "Kommst du heute Abend auch zum Essen?"},
+        {"app": "SBB Mobile", "time": "Today 09:12", "title": "Verspätung",
+         "body": "IC 8 nach Bern: ca. 5 Minuten später."},
+        {"app": "Kalender", "time": "Yesterday 18:00", "title": "Zahnarzt",
+         "body": ""},
+    ])
+    window.setProperty("currentTab", 2)
+    for width, height in SIZES:
+        window.resize(width, height)
+        QTest.qWait(400)
+        path = out_dir / f"notifications-{scheme}-{width}.png"
+        window.grabWindow().save(str(path))
+        print(path)
+    bridge.setProperty("notifications", [])
+    bridge.setProperty("featureHints", {"notifications": "Set BLUEFERRY_NOTIFICATION_HISTORY=true "
+                                        "in local.env to keep a list of iPhone notifications."})
+    window.resize(*SIZES[0])
+    QTest.qWait(300)
+    path = out_dir / f"notifications-{scheme}-off.png"
     window.grabWindow().save(str(path))
     print(path)
 
