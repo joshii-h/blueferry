@@ -92,6 +92,10 @@ _CALL_ACTIONS = ("answer", "decline")
 # iPhone action.
 _ANCS_POSITIVE_ACTION = "ancs-positive"
 _ANCS_NEGATIVE_ACTION = "ancs-negative"
+# The single button of a plugin popup (PLUGINS.md, capability notify).
+_PLUGIN_ACTION = "plugin-action"
+_PLUGIN_ICON = "preferences-plugin"
+_MAX_PLUGIN_POPUPS = 32
 # Action labels are plain strings, but some notification servers interpret
 # markup in them. Drop markup-significant characters instead of escaping, so a
 # server that does not parse markup shows no literal entities.
@@ -138,8 +142,13 @@ class LibnotifySink:
         on_ancs_action=None,
         open_target=None,
         on_open_target=None,
+        on_plugin_action=None,
     ) -> None:
         self._defer_mark_read = defer_mark_read
+        # PluginPopup -> None: a click on a plugin popup's button.
+        self._on_plugin_action = on_plugin_action
+        # desktop notification id -> PluginPopup with an action button.
+        self._plugin_popups: dict[int, object] = {}
         # (call_id, "answer" | "decline") from an incoming-call popup button.
         self._on_call_action = on_call_action
         # notification_id <-> call_id for ringing-call popups.
@@ -216,6 +225,7 @@ class LibnotifySink:
         getattr(self, "_call_notifications", {}).clear()
         getattr(self, "_call_popups", {}).clear()
         getattr(self, "_ancs_actions", {}).clear()
+        getattr(self, "_plugin_popups", {}).clear()
 
     def _policy(self) -> str:
         provider = getattr(self, "_notification_policy", None)
@@ -605,6 +615,73 @@ class LibnotifySink:
         except dbus.exceptions.DBusException as error:
             log.error("libnotify Notify (battery) failed: %s", error.get_dbus_name())
 
+    # ---- plugin popups (capability notify) --------------------------------
+
+    def handle_plugin_notification(self, popup) -> None:
+        """A verified Notify1 popup from a plugin, under the user's policy.
+
+        Like the battery warning it shows under ``messages`` and ``all``;
+        ``none`` silences it. Without SHOW_NOTIFICATION_CONTENT only the
+        plugin's name appears. Text is plain: escaped for the server.
+        """
+        if self._policy() == NO_NOTIFICATIONS:
+            return
+        note = popup.note
+        if config.SHOW_NOTIFICATION_CONTENT:
+            title = note.title or popup.plugin_name
+            body = note.body
+        else:
+            title = popup.plugin_name
+            body = "New notification"
+        if len(body) > _BODY_LIMIT:
+            body = body[:_BODY_LIMIT - 1] + "…"
+        title = escape(terminal_text(title).replace("\n", " "))
+        body = escape(terminal_text(body))
+        actions: list[str] = []
+        callback = getattr(self, "_on_plugin_action", None)
+        if note.has_action and callback is not None:
+            label = _LABEL_MARKUP_RE.sub("", _LABEL_TAG_RE.sub("", note.action_label))
+            actions = [_PLUGIN_ACTION, label or "Open"]
+
+        def shown(nid) -> None:
+            if not actions:
+                return
+            popups = self._plugin_popups
+            popups[int(nid)] = popup
+            while len(popups) > _MAX_PLUGIN_POPUPS:
+                popups.pop(next(iter(popups)))
+
+        def failed(error) -> None:
+            name = getattr(error, "get_dbus_name", lambda: None)()
+            log.error("libnotify Notify (plugin) failed: %s", name or type(error).__name__)
+
+        try:
+            self._notif.Notify(
+                _APP_NAME,
+                dbus.UInt32(0),
+                note.icon or _PLUGIN_ICON,
+                title,
+                body,
+                dbus.Array(actions, signature="s"),
+                dbus.Dictionary({"urgency": dbus.Byte(1)}, signature="sv"),
+                dbus.Int32(_MESSAGE_EXPIRE_MS),
+                reply_handler=shown,
+                error_handler=failed,
+            )
+        except dbus.exceptions.DBusException as error:
+            failed(error)
+
+    def _invoke_plugin_action(self, nid: int) -> None:
+        # Single-use, like ANCS actions.
+        popup = getattr(self, "_plugin_popups", {}).pop(nid, None)
+        callback = getattr(self, "_on_plugin_action", None)
+        if popup is None or callback is None:
+            return
+        try:
+            callback(popup)
+        except Exception:
+            log.exception("plugin popup action callback raised")
+
     # ---- missed calls (PBAP call history) --------------------------------
 
     def handle_missed_calls(
@@ -723,6 +800,9 @@ class LibnotifySink:
         if str(action) in (_ANCS_POSITIVE_ACTION, _ANCS_NEGATIVE_ACTION):
             self._invoke_ancs_action(nid_i, str(action))
             return
+        if str(action) == _PLUGIN_ACTION:
+            self._invoke_plugin_action(nid_i)
+            return
         if str(action) != "default":
             return
         handle = getattr(self, "_open_messages", {}).get(nid_i)
@@ -768,6 +848,8 @@ class LibnotifySink:
             getattr(self, "_call_popups", {}).pop(call_id, None)
         # Closing an ANCS popup, for any reason, never runs an iPhone action.
         getattr(self, "_ancs_actions", {}).pop(nid_i, None)
+        # Nor does closing a plugin popup run the plugin's action.
+        getattr(self, "_plugin_popups", {}).pop(nid_i, None)
         message_path = self._pending.pop(nid_i, None)
 
         # Always remove the per-message subscription, no matter the reason

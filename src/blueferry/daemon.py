@@ -31,7 +31,7 @@ from blueferry.bluetooth_recovery import (
 )
 from blueferry.bluez_health import PING_TIMEOUT_SEC, BluezHealth, IntrospectNoReplyFilter
 from blueferry.build_info import build_id, installed_build_sha, running_build_sha
-from blueferry.bus import get_system_bus, main_loop
+from blueferry.bus import get_session_bus, get_system_bus, main_loop
 from blueferry.call_history import (
     CallRecord,
     MissedCallNotice,
@@ -78,6 +78,7 @@ from blueferry.obex.sessions import SessionManager
 from blueferry.obex.worker import ObexWorker
 from blueferry.pair_setup import bond_status
 from blueferry.phone_audio_route import PhoneAudioRoute
+from blueferry.plugin_notify import PluginPopup, PluginPopups
 from blueferry.profile_reset import ProfileResetController, auto_reset_enabled
 from blueferry.profile_supervisor import ProfileSessions, ProfileSupervisor
 from blueferry.protocol import BUS_NAME
@@ -184,7 +185,11 @@ class Daemon:
             perform_ancs_action=(
                 self._perform_ancs_action if config.ancs_actions_active() else None
             ),
+            plugin_action=self._plugin_popup_action,
         )
+        # Popups from plugins with the notify capability; watched once the
+        # sinks exist. Inert while no such plugin is installed and enabled.
+        self.plugin_popups: PluginPopups | None = None
         self.listener: MapEventListener | None = None
         self.mns_watch: MnsWatch | None = None
         # One MAP reconnect per MNS outage; seeing MNS again rearms it.
@@ -939,6 +944,7 @@ class Daemon:
         self.events.setup()
         if self.notification_log is not None and self.notification_log not in self.events.sinks:
             self.events.sinks.append(self.notification_log)
+        self._start_plugin_popups()
         # Optional calls only observe oFono; failures there never degrade
         # messaging, and a missing oFono is retried in the background.
         self.calls.start()
@@ -955,6 +961,23 @@ class Daemon:
             log.warning("    No MAP/PBAP session yet; retry is automatic.")
         # The "ready" line in the happy path is emitted by
         # _post_sessions_setup, so we don't duplicate it here.
+
+    def _start_plugin_popups(self) -> None:
+        """Watch Notify1 popups from plugins (PLUGINS.md, capability notify)."""
+        if self.plugin_popups is not None:
+            return
+        try:
+            self.plugin_popups = PluginPopups(
+                get_session_bus(), show=self.events.plugin_notification,
+            )
+        except Exception:
+            log.warning("plugin popups are unavailable without a session bus")
+            return
+        self.plugin_popups.start()
+
+    def _plugin_popup_action(self, popup: PluginPopup) -> None:
+        if self.plugin_popups is not None:
+            self.plugin_popups.invoke(popup)
 
     def _watch_bluez_owner(self) -> None:
         """Supervise bluetoothd even when compatibility mode disables ANCS."""
@@ -1500,6 +1523,8 @@ class Daemon:
         if self.media is not None:
             self.media.close()
         self.solicitation.stop()
+        if self.plugin_popups is not None:
+            self.plugin_popups.stop()
         self.events.stop()
         self._clear_photo_files()
         if self._sleep_match is not None:

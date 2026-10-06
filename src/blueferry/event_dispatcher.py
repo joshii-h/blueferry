@@ -77,6 +77,7 @@ class EventDispatcher:
         on_call_action: Callable[[str, str], None] | None = None,
         contact_photo: Callable[[str | None], str | None] | None = None,
         perform_ancs_action=None,
+        plugin_action=None,
         notification_sink_factory: Callable[..., Sink] = LibnotifySink,
         otp_autocopy: Callable[[], bool] | None = None,
         otp_sink_factory: Callable[..., Sink] = _default_otp_sink,
@@ -96,6 +97,8 @@ class EventDispatcher:
         self.on_call_action = on_call_action
         self.contact_photo = contact_photo
         self.perform_ancs_action = perform_ancs_action
+        # Click on a plugin popup's button (plugin_notify.PluginPopups.invoke).
+        self.plugin_action = plugin_action
         self._notification_sink_factory = notification_sink_factory
         self._otp_autocopy = otp_autocopy
         self._otp_sink_factory = otp_sink_factory
@@ -216,6 +219,8 @@ class EventDispatcher:
         if self.notification_open_target is not None:
             options["open_target"] = self.notification_open_target
             options["on_open_target"] = self._open_target
+        if self.plugin_action is not None:
+            options["on_plugin_action"] = self.plugin_action
         try:
             sink = self._notification_sink_factory(
                 defer_mark_read=self.defer_mark_read,
@@ -376,6 +381,17 @@ class EventDispatcher:
                 handler(percent)
             except Exception:
                 log.exception("sink %s failed on a phone battery warning", sink.name)
+
+    def plugin_notification(self, popup) -> None:
+        """A verified plugin popup (capability notify) for desktop sinks."""
+        for sink in self.sinks:
+            handler = getattr(sink, "handle_plugin_notification", None)
+            if handler is None:
+                continue
+            try:
+                handler(popup)
+            except Exception:
+                log.exception("sink %s failed on a plugin popup", sink.name)
 
     def sent(self, recipient: str, body: str, transfer_path: str) -> None:
         event = sms_sent_event(
