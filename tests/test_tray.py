@@ -119,6 +119,10 @@ _SMOKE = textwrap.dedent("""
     assert tray.hotspot_action.isChecked() and tray.hotspot_action.isVisible()
     texts = [action.text() for action in tray.menu.actions() if not action.isSeparator()]
     assert texts[0] == "Open BlueFerry" and texts[-1] == "Quit", texts
+    # Companion tools are only probed when the menu opens; nothing ran yet.
+    assert set(tray.tool_actions) == {"mirror", "send", "photos", "eject", "pair"}
+    assert not tray.tool_actions["pair"].isVisible()
+    assert tray.companion.state()["probed"] is False
 
     tray.apply_status(json.dumps({"api_version": 0}))
     assert "needs an update" in tray.tray.toolTip()
@@ -153,3 +157,29 @@ def test_tray_smoke_offscreen(use_private_bus: bool) -> None:
         env=env, capture_output=True, text=True, timeout=60, check=False,
     )
     assert "SMOKE-OK" in result.stdout, result.stdout + result.stderr
+
+
+def test_tool_entries_grey_out_missing_tools_and_show_eject_only_when_mounted() -> None:
+    from blueferry.companion_tools import PhotoProbe, photos_states
+    from blueferry.companion_tools import ToolState as Tool
+
+    photos, eject = photos_states(PhotoProbe(installed=True, device=True, mounted=True))
+    tools = [
+        Tool("mirror", True, True, "Mirror iPhone screen", ""),
+        Tool("send", False, False, "Send a file (LocalSend)", ""),
+        photos, eject,
+    ]
+    entries = {entry.key: entry for entry in presenter.tool_entries(tools)}
+    assert entries["mirror"].enabled and entries["mirror"].visible
+    assert entries["send"].visible and not entries["send"].enabled
+    assert entries["send"].text == "Send a file (LocalSend) (not installed)"
+    assert entries["eject"].visible and entries["eject"].enabled
+    assert not entries["pair"].visible
+
+    busy = {entry.key: entry for entry in presenter.tool_entries(
+        tools, busy="photos", needs_pairing=True)}
+    assert not any(entry.enabled for entry in busy.values())
+    assert busy["photos"].text.endswith("…") and busy["pair"].visible
+
+    _photos, unmounted = photos_states(PhotoProbe(installed=True, device=True))
+    assert not presenter.tool_entries([unmounted])[0].visible

@@ -3,7 +3,8 @@
 Under Plasma ``QSystemTrayIcon`` becomes a StatusNotifierItem. The icon is a
 phone with the number of unread messages painted over it, the tooltip shows
 the connection plus battery, signal and network, and the menu opens the Qt
-client, moves the iPhone's sound and switches the Personal Hotspot.
+client, moves the iPhone's sound, switches the Personal Hotspot and starts
+the companion tools (screen mirroring, LocalSend, iPhone photos over USB).
 
 The tray is a thin client of the existing session-bus API. Every call is
 asynchronous and sent with auto-start disabled: it follows a running daemon
@@ -47,6 +48,7 @@ from blueferry.protocol import (
     backend_compatibility_error,
 )
 from blueferry.qt import tray_presenter as presenter
+from blueferry.qt.companion import CompanionTools
 from blueferry.tether_status import TetherStatus
 
 QT_CLIENT = next(client for client in CLIENTS if client.key == "qt")
@@ -113,6 +115,7 @@ class TrayController(QObject):
         *,
         parent: QObject | None = None,
         launch: Callable[[], bool] | None = None,
+        companion: CompanionTools | None = None,
     ) -> None:
         super().__init__(parent)
         self._bus = bus if bus is not None else QDBusConnection.sessionBus()
@@ -135,6 +138,15 @@ class TrayController(QObject):
         self.hotspot_action = QAction(self.menu)
         self.hotspot_action.setCheckable(True)
         self.hotspot_action.triggered.connect(self._hotspot_triggered)
+        # UxPlay, LocalSend and iPhone photos: started here, no daemon involved.
+        self.companion = companion or CompanionTools(parent=self)
+        self.companion.changed.connect(self.render_tools)
+        self.companion.reported.connect(self._tool_reported)
+        self.tool_actions: dict[str, QAction] = {}
+        for key in ("mirror", "send", "photos", "eject", "pair"):
+            action = QAction(self.menu)
+            action.triggered.connect(lambda _checked=False, key=key: self.companion.run(key))
+            self.tool_actions[key] = action
         self.quit_action = QAction(_("Quit"), self.menu)
         self.quit_action.triggered.connect(QApplication.quit)
         self.menu.addAction(self.open_action)
@@ -142,7 +154,12 @@ class TrayController(QObject):
         self.menu.addAction(self.audio_action)
         self.menu.addAction(self.hotspot_action)
         self.menu.addSeparator()
+        for action in self.tool_actions.values():
+            self.menu.addAction(action)
+        self.menu.addSeparator()
         self.menu.addAction(self.quit_action)
+        # Tools and USB devices change without a signal: look when opened.
+        self.menu.aboutToShow.connect(self.companion.refresh)
         self.tray.setContextMenu(self.menu)
         self.tray.activated.connect(self._activated)
 
@@ -316,6 +333,29 @@ class TrayController(QObject):
             action.setVisible(toggle.visible)
             action.setEnabled(toggle.enabled)
             action.setChecked(toggle.checked)
+        self.render_tools()
+
+    def render_tools(self) -> None:
+        entries = presenter.tool_entries(
+            self.companion.snapshot.tools, busy=self.companion.busy,
+            needs_pairing=self.companion.needs_pairing,
+        )
+        shown = {entry.key for entry in entries}
+        for entry in entries:
+            action = self.tool_actions[entry.key]
+            action.setText(entry.text)
+            action.setVisible(entry.visible)
+            action.setEnabled(entry.enabled)
+        for key, action in self.tool_actions.items():
+            if key not in shown:
+                action.setVisible(False)
+
+    def _tool_reported(self, ok: bool, message: str) -> None:
+        self.tray.showMessage(
+            "BlueFerry", message,
+            QSystemTrayIcon.MessageIcon.Information if ok else QSystemTrayIcon.MessageIcon.Warning,
+            8000,
+        )
 
     # ---- actions --------------------------------------------------------
 

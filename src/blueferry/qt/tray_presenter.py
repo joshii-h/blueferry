@@ -10,6 +10,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from blueferry.companion_tools import ToolState
 from blueferry.i18n import _, ngettext
 from blueferry.models import BackendStatus, Thread, phone_status_fields
 from blueferry.qt.phone_link import phone_audio
@@ -94,3 +95,37 @@ def hotspot_toggle(tether: TetherStatus | None) -> TrayToggle:
 
 def audio_route_for(checked: bool) -> str:
     return "pc" if checked else "phone"
+
+
+@dataclass(frozen=True, slots=True)
+class TrayEntry:
+    """One companion tool entry in the tray menu."""
+
+    key: str
+    visible: bool
+    enabled: bool
+    text: str
+
+
+def tool_entries(
+    tools: Iterable[ToolState], *, busy: str = "", needs_pairing: bool = False,
+) -> list[TrayEntry]:
+    """Mirror, LocalSend, iPhone photos, eject and (when needed) pairing.
+
+    Missing tools stay listed but disabled, like in the phone card; eject
+    only shows while the photos are mounted.
+    """
+    entries: list[TrayEntry] = []
+    for tool in tools:
+        if tool.key == "eject":
+            entries.append(TrayEntry(tool.key, tool.enabled, tool.enabled and not busy, tool.title))
+            continue
+        text = tool.title if tool.installed else _("{tool} (not installed)").format(tool=tool.title)
+        if busy == tool.key:
+            text = _("{tool} …").format(tool=tool.title)
+        entries.append(TrayEntry(tool.key, True, tool.enabled and not busy, text))
+    entries.append(TrayEntry(
+        "pair", needs_pairing, needs_pairing and not busy,
+        _("Ask the iPhone to trust this computer"),
+    ))
+    return entries
