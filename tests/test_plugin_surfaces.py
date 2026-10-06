@@ -68,8 +68,8 @@ def test_a_plugin_raising_anything_never_escapes() -> None:
 
 def test_invoke_checks_open_uri_and_explains_failures(tmp_path) -> None:
     cache = tmp_path / "blueferry"
-    (cache / "cal").mkdir(parents=True)
-    ics = cache / "cal" / "a.ics"
+    (cache / CALENDAR.id).mkdir(parents=True)
+    ics = cache / CALENDAR.id / "a.ics"
     ics.write_text("x")
     make = _factory({CALENDAR.id: {"InvokeAction": lambda item, action, args: json.dumps(
         {"ok": True, "message": f"{item}/{action}",

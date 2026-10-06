@@ -38,7 +38,8 @@ MAX_URI = 2048
 NOTIFY_ITEM_ID = "notify"
 ACTION_KINDS = ("button", "primary")
 
-_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
+# No ":": the clients address actions as PLUGIN:ITEM:ACTION.
+_ID = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 # Freedesktop icon names: no paths, no URLs.
 _ICON = re.compile(r"^[A-Za-z0-9_.+-]{1,64}$")
 
@@ -66,7 +67,7 @@ def icon_name(value: object) -> str:
 
 def _require_id(value: str, what: str) -> str:
     if not valid_id(value):
-        raise ValueError(f"{what} must match [A-Za-z0-9_.:-]{{1,64}}: {value!r}")
+        raise ValueError(f"{what} must match [A-Za-z0-9_.-]{{1,64}}: {value!r}")
     return value
 
 

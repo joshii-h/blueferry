@@ -33,6 +33,7 @@ def _manifest(caps: str = "card;share;notify;", version: str = "1.2"):
 def cache(tmp_path):
     root = tmp_path / "cache" / "blueferry"
     (root / "plugin").mkdir(parents=True)
+    (root / "io.example.surfaces").mkdir()
     return root
 
 
@@ -56,7 +57,7 @@ class _Everything(CardService, ShareService, NotifyService):
     def invoke_action(self, item_id, action_id, args):
         self.clicked.append((item_id, action_id, args))
         if action_id == "open" and self.cache is not None:
-            target = self.cache / "plugin" / "event.ics"
+            target = self.cache / "io.example.surfaces" / "event.ics"
             target.write_text("x")
             return sf.ActionResult(True, "Opened", target.as_uri())
         if action_id == "web":
@@ -103,10 +104,15 @@ def test_fake_host_round_trip_for_card_share_and_notify(cache, tmp_path) -> None
     assert [action.kind for action in items[0].actions] == ["primary", "button"]
 
     opened = host.invoke("next", "open", {"when": "now"})
-    assert opened.ok and opened.open_uri == (cache / "plugin" / "event.ics").resolve().as_uri()
+    assert opened.ok and opened.open_uri == (
+        cache / "io.example.surfaces" / "event.ics").resolve().as_uri()
     assert service.clicked[-1] == ("next", "open", {"when": "now"})
     assert host.invoke("next", "web").open_uri == "https://example.org/x"
     assert host.invoke("next", "evil").open_uri is None
+    # Another plugin's cache directory is off limits.
+    other = cache / "plugin" / "x.pdf"
+    other.write_text("x")
+    assert host.client.checked_open_uri(other.as_uri()) is None
 
     payload = tmp_path / "photo.jpg"
     payload.write_bytes(b"x")
@@ -277,3 +283,16 @@ def test_a_combined_service_answers_on_plugin1_on_the_private_bus(cache) -> None
         service.remove_from_connection()
         del name
         bus.release_name(plugin.bus_name)
+
+
+def test_files_and_clicks_never_reach_a_plugin_run_by_another_user(cache, tmp_path) -> None:
+    payload = tmp_path / "a.txt"
+    payload.write_text("x")
+    transport = ScriptedTransport({"SendFiles": '{"ok": true}', "InvokeAction": '{"ok": true}'},
+                                  uid=os.getuid() + 1)
+    client = PluginClient(_manifest(), transport=transport, cache_root=lambda: cache)
+    with pytest.raises(PluginError, match="different user"):
+        client.send_files("t", [str(payload)])
+    with pytest.raises(PluginError, match="different user"):
+        client.invoke_action("a", "b")
+    assert transport.calls == []

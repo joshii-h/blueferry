@@ -166,7 +166,14 @@ class PluginClient:
         )
 
     def _call(self, interface: str, method: str, signature: str, args: tuple,
-              timeout: float) -> str:
+              timeout: float, *, precheck: bool = False) -> str:
+        if precheck:
+            # Before handing over files or a click: refuse a running plugin
+            # owned by somebody else. Without an owner yet, the call below
+            # activates ours and the check after it applies.
+            owner = self._transport.owner_uid(self.manifest.bus_name)
+            if owner is not None and owner != self._uid:
+                raise PluginError("the plugin runs as a different user; ignoring it")
         reply = self._transport.call(
             self.manifest.bus_name, interface, method, signature, args, timeout,
         )
@@ -255,8 +262,9 @@ class PluginClient:
     # ---- surfaces (ApiVersion 1.2) ------------------------------------------------
 
     def _surface(self, parse: Callable[[object], Any], interface: str, method: str,
-                 signature: str, args: tuple, timeout: float) -> Any:
-        reply = self._call(interface, method, signature, args, timeout)
+                 signature: str, args: tuple, timeout: float, *,
+                 precheck: bool = False) -> Any:
+        reply = self._call(interface, method, signature, args, timeout, precheck=precheck)
         try:
             return parse(reply)
         except surfaces.SurfaceError as error:
@@ -289,7 +297,7 @@ class PluginClient:
             raise PluginError("invalid action arguments") from None
         result = self._surface(
             surfaces.parse_action_result, PLUGIN_INTERFACE, METHOD_INVOKE_ACTION, "sss",
-            (item_id, action_id, payload), ACTION_TIMEOUT_SEC,
+            (item_id, action_id, payload), ACTION_TIMEOUT_SEC, precheck=True,
         )
         uri = self.checked_open_uri(result.open_uri) if result.open_uri else None
         return surfaces.ActionResult(result.ok, result.message, uri)
@@ -310,11 +318,16 @@ class PluginClient:
             raise PluginError(str(error)) from None
         return self._surface(
             surfaces.parse_send_result, PLUGIN_INTERFACE, METHOD_SEND_FILES, "sas",
-            (target_id, files), SHARE_TIMEOUT_SEC,
+            (target_id, files), SHARE_TIMEOUT_SEC, precheck=True,
         )
 
     def checked_open_uri(self, uri: object) -> str | None:
-        return surfaces.checked_open_uri(uri, self._cache_roots(), uid=self._uid)
+        """Only http(s), or a file of this plugin's own cache directory."""
+        roots = [
+            root / name for root in self._cache_roots()
+            for name in (self.manifest.id, self.manifest.alias) if name
+        ]
+        return surfaces.checked_open_uri(uri, roots, uid=self._uid)
 
     # ---- photos capability ---------------------------------------------------
 
@@ -380,6 +393,14 @@ class PluginClient:
         if not stat.S_ISREG(info.st_mode) or info.st_uid != self._uid:
             return None
         return resolved
+
+
+def plugin_cache_roots(plugin_id: str, alias: str = "") -> tuple[Path, ...]:
+    """A plugin's own cache directories: ``<cache root>/<id>`` and, with an
+    alias, ``<cache root>/<alias>`` (e.g. ``~/.cache/blueferry/immich``)."""
+    return tuple(
+        root / name for root in default_cache_roots() for name in (plugin_id, alias) if name
+    )
 
 
 def default_cache_roots() -> tuple[Path, ...]:
