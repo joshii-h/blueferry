@@ -57,6 +57,17 @@ style dependencies fail this check even when CLI/TUI startup still succeeds.
   The autouse `glib_source_guard` in `tests/conftest.py` fails any test that
   leaves a GLib timer or idle source armed, because it would fire later on an
   orphaned object inside an unrelated test.
+- The autouse `sync_dbus_guard` in `tests/conftest.py` fails a test in which
+  code from a daemon module made a blocking dbus-python call on the main
+  thread. It wraps `Connection.call_blocking`, so it sees real connections
+  only, in practice private-bus tests. Test code and worker threads may block;
+  the `ALLOWLIST`/`KNOWN_DEBT` of `tools/lint_mainloop.py` apply, and
+  dbus-python's own `AddMatch`/`RemoveMatch`/`GetNameOwner` bookkeeping is
+  exempt. Fix a report with `dbus_call.call_async` or `gio_dbus.GioBus`.
+- Modules on `gio_dbus.GioBus` are unit-tested with a fake that builds the
+  same `GLib.Variant` from the declared signature, so a type mismatch fails
+  in the fast suite; `tests/test_gio_dbus.py` checks `GioDBus` itself against
+  a real GDBus service on the private bus.
 - Private-bus tests open their own connections with
   `tests.private_bus.open_private_bus`, which disables libdbus's
   exit-on-disconnect. Otherwise a closed connection that a failing test keeps

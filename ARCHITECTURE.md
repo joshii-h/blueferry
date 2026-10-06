@@ -30,6 +30,8 @@ All paths are relative to `src/blueferry/` unless noted.
 | `backend_operations.py` | Toolkit- and transport-neutral application operations: validation, thread routing, and policy. |
 | `dbus_service.py` | Session D-Bus adapter (`Messages1`/`Events1`/`Presence1`) that maps operations to wire types; claims the bus name. |
 | `dbus_security.py` | Caller UID validation and per-connection/daemon-wide rate limits. |
+| `dbus_call.py` | Asynchronous dbus-python calls with an explicit input signature (`call_async`), plus typed `ay`/`a{sv}` builders. |
+| `gio_dbus.py` | `GioBus` seam over `Gio.DBusConnection`: typed asynchronous `call` and `subscribe`, D-Bus-named `DBusCallError`. Target for the GDBus migration. |
 | `protocol.py` | Stable D-Bus identifiers and the API-generation compatibility check. |
 | `event_dispatcher.py` | Builds messages from MAP/ANCS events and fans them out to persistence, desktop, and D-Bus sinks. |
 | `events.py` | Normalized MAP event dataclasses (`SmsEvent`) and address/timestamp normalization. |
@@ -254,6 +256,52 @@ contract.
   (`contact_repository`). The opt-in call history follows the same split
   (`call_history`, `call_history_repository`, `call_history_sync`) and exists
   in the daemon only when `BLUEFERRY_CALL_HISTORY_ENABLED` is set.
+
+## D-Bus calls inside the daemon
+
+Everything in the daemon shares one GLib main loop, so a call that waits for
+a reply stalls BlueZ signals, timers, and every client meanwhile.
+
+- Calls from loop code are asynchronous. New code uses `gio_dbus.GioBus`:
+  arguments are a `GLib.Variant` built from an explicit type string, the
+  reply type is declared and checked by GDBus, and failures arrive as
+  `DBusCallError` with the usual D-Bus error name. Inject the `GioBus`
+  (constructor argument) so tests can fake it; `phone_audio_route.py` is the
+  reference.
+- Existing dbus-python code that is not migrated yet uses
+  `dbus_call.call_async`, which always passes the input signature. Never pass
+  a bare `{}`/`[]` to a proxy fetched with `introspect=False`: dbus-python
+  cannot type it and raises `ValueError` before sending.
+- Blocking work (`time.sleep`, `subprocess.run`, OBEX transfers, slow SQLite
+  opens) runs on the OBEX worker or a helper process, never on the loop.
+- `tools/lint_mainloop.py` enforces this for modules the daemon imports
+  (run in CI and by `tests/test_lint_mainloop.py`). Deliberate exceptions go
+  in its `ALLOWLIST` with a reason; pre-existing violations are tracked in
+  `KNOWN_DEBT` and leave it only with their fix.
+
+### GDBus migration order
+
+One module per change, behaviour-identical, tests green; no big bang. Start
+with small clients whose calls are already asynchronous (mechanical port),
+then the `KNOWN_DEBT` entries that block today:
+
+1. `obex/mns_watch.py`, `calls/ofono.py`, `sinks/otp_clipboard.py`, then
+   `tether.py`/`tether_backends.py` (already asynchronous through the same
+   `AsyncBus` seam `PhoneAudioRoute` used, so the port is mechanical).
+2. `sinks/libnotify.py`: `Notify` becomes asynchronous; the popup tracker
+   records the id in the reply handler.
+3. `bearer_supervisor.py` (`_read_bluez_connected`, `_prefer_bluez`) and
+   `bluez_setup.current_cod`.
+4. `ams/client.py`, then `ancs/client.py`: ANCS needs its subscribe path
+   (`StartNotify`/`StopNotify`/`GetManagedObjects`) turned into an
+   asynchronous state machine like AMS first.
+5. `dbus_security.CallerGuard` and `dbus_service`: caller credentials become
+   an asynchronous lookup before dispatch; this touches the service adapter
+   and goes last among loop code.
+
+Worker-thread OBEX code and the setup CLI may stay on dbus-python; they never
+run on the loop. Signal watches (`add_signal_receiver`) still make a blocking
+`AddMatch` per watch in dbus-python; GDBus subscriptions do not.
 
 ## D-Bus API and compatibility
 
