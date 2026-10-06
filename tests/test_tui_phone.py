@@ -17,6 +17,7 @@ class _Backend:
         self.enabled = enabled
         self.requests: list[tuple] = []
         self.tether = TetherStatus(state="off")
+        self.mirror = True
 
     def status(self) -> BackendStatus:
         extra = {
@@ -31,6 +32,7 @@ class _Backend:
                 "proximity_lock_grace_sec": 20, "phone_battery_percent": 57,
                 "phone_battery_source": "ble",
                 "phone_battery_level": 60, "phone_signal_strength": 80,
+                "mirror_iphone_removals": self.mirror,
             }
         return BackendStatus.from_dict({
             "daemon": True, "map": True, "calls_enabled": self.enabled, **extra,
@@ -65,6 +67,11 @@ class _Backend:
     def tether_disconnect(self) -> TetherStatus:
         self.requests.append(("tether", False))
         return TetherStatus(state="disconnecting")
+
+    def set_mirror_notification_removals(self, enabled: bool) -> bool:
+        self.requests.append(("mirror", enabled))
+        self.mirror = enabled
+        return enabled
 
     def set_proximity_lock(self, enabled: bool, grace_seconds: int) -> dict:
         self.requests.append(("lock", enabled, grace_seconds))
@@ -142,6 +149,9 @@ def test_phone_screen_lists_calls_and_notifications_as_plain_text() -> None:
             assert "Lock when the iPhone goes away" in _plain(app, "#phone-switches")
             await pilot.press("l")
             await _until(pilot, lambda: ("lock", True, 20) in backend.requests)
+            assert "[x] ON   Sync notifications with iPhone" in _plain(app, "#phone-switches")
+            await pilot.press("x")
+            await _until(pilot, lambda: ("mirror", False) in backend.requests)
             await pilot.press("escape")
             await _until(pilot, lambda: not isinstance(app.screen, PhoneScreen))
 
@@ -226,3 +236,16 @@ def test_phone_screen_runs_tools_with_keys_on_a_fake_system(tmp_path) -> None:
             assert len(fake.commands) == 1
 
     _run(scenario())
+
+
+def test_mirror_switch_text_and_older_backends() -> None:
+    from blueferry.tui_phone import mirror_switch, switches_text
+
+    assert mirror_switch({}) == (False, False, "Not offered by the running BlueFerry service.")
+    assert mirror_switch({"mirror_iphone_removals": False})[:2] == (False, True)
+    text = switches_text({"mirror_iphone_removals": True}, None)
+    assert "[x] ON   Sync notifications with iPhone" in text.plain
+    older = switches_text({}, None)
+    line = next(span for span in older.spans
+                if older.plain[span.start:span.end].startswith("[x]"))
+    assert line.style == "dim"

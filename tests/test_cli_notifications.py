@@ -103,3 +103,29 @@ def test_missing_desktop_entry_is_saved_with_a_warning(backend, monkeypatch) -> 
     assert result.exit_code == 0
     assert "not installed" in result.output
     assert backend.rules == {"com.slack": "com.slack.Slack.desktop"}
+
+
+def _mirror(*args):
+    return CliRunner().invoke(app, ["notifications", "mirror", *args])
+
+
+def test_mirror_command_sets_and_reports_the_setting(backend) -> None:
+    from types import SimpleNamespace
+
+    state = {"mirror_iphone_removals": True}
+    backend.status = lambda: SimpleNamespace(extra=dict(state))
+
+    def set_mirror(enabled):
+        backend.calls.append(("mirror", enabled))
+        state["mirror_iphone_removals"] = enabled
+        return enabled
+
+    backend.set_mirror_notification_removals = set_mirror
+    result = _mirror()
+    assert result.exit_code == 0 and result.output.startswith("On:")
+    result = _mirror("off")
+    assert result.exit_code == 0 and result.output.startswith("Off:")
+    assert backend.calls[-1] == ("mirror", False)
+    assert _mirror("maybe").exit_code == 2
+    state.clear()  # an older backend without the key
+    assert _mirror("status").exit_code == 2

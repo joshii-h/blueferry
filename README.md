@@ -475,8 +475,15 @@ list starts empty after every backend restart. Titles and bodies are kept only
 with `BLUEFERRY_SHOW_NOTIFICATION_CONTENT=true`, otherwise just the app and the
 time. Apps other than Messages only reach BlueFerry with the "All iPhone
 Notifications" policy. While encrypted storage is locked the list is refused.
-It is a recent history, not a mirror of the iPhone's Notification Center:
-notifications dismissed on the iPhone stay in the list by design.
+By default the list follows the iPhone: a notification you remove there (or
+"Clear All") also leaves the list, and its desktop popup closes. After a
+reconnect, entries the iPhone no longer reports disappear after a short
+settle window. This matches entries across a reconnect by ANCS UID, which
+assumes iOS keeps a notification's UID while it exists (not yet verified on
+hardware). Turn it off with the card's "Sync notifications with iPhone"
+switch, the tray menu, `x` in the terminal client's overview or
+`blueferry notifications mirror off`; the list is then a plain recent
+history and keeps what you dismissed on the iPhone.
 
 ### Clicking iPhone app notifications
 

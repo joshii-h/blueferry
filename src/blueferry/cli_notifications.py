@@ -88,6 +88,36 @@ def notifications_recent(
         typer.echo(line)
 
 
+MIRROR_ON_TEXT = "On: notifications removed on the iPhone also leave BlueFerry's list."
+MIRROR_OFF_TEXT = "Off: BlueFerry keeps notifications removed on the iPhone (recent history)."
+
+
+@notifications_app.command("mirror")
+def notifications_mirror(
+    action: str = typer.Argument("status", help="on, off, or status"),
+) -> None:
+    """Remove notifications here when they are removed on the iPhone."""
+    from blueferry.client import BackendError
+
+    selected = action.strip().casefold()
+    if selected not in ("on", "off", "status"):
+        typer.echo(f"Unknown action {action!r}; use on, off, or status.", err=True)
+        raise typer.Exit(code=2)
+    try:
+        if selected == "status":
+            value = _client().status().extra.get("mirror_iphone_removals")
+            if value is None:
+                typer.echo("The running BlueFerry service does not offer this.", err=True)
+                raise typer.Exit(code=2)
+            enabled = value is True
+        else:
+            enabled = _client().set_mirror_notification_removals(selected == "on")
+    except BackendError as error:
+        typer.echo(terminal_text(error), err=True)
+        raise typer.Exit(code=2) from None
+    typer.echo(MIRROR_ON_TEXT if enabled else MIRROR_OFF_TEXT)
+
+
 @open_map_app.command("list")
 def open_map_list() -> None:
     """Show every notification click rule."""

@@ -148,6 +148,9 @@ class TrayController(QObject):
         self.hotspot_action = QAction(self.menu)
         self.hotspot_action.setCheckable(True)
         self.hotspot_action.triggered.connect(self._hotspot_triggered)
+        self.mirror_action = QAction(self.menu)
+        self.mirror_action.setCheckable(True)
+        self.mirror_action.triggered.connect(self._mirror_triggered)
         # UxPlay, LocalSend and iPhone photos: started here, no daemon involved.
         self.companion = companion or CompanionTools(parent=self)
         self.companion.changed.connect(self.render_tools)
@@ -163,6 +166,7 @@ class TrayController(QObject):
         self.menu.addSeparator()
         self.menu.addAction(self.audio_action)
         self.menu.addAction(self.hotspot_action)
+        self.menu.addAction(self.mirror_action)
         self.menu.addSeparator()
         for action in self.tool_actions.values():
             self.menu.addAction(action)
@@ -369,6 +373,7 @@ class TrayController(QObject):
         for action, toggle in (
             (self.audio_action, presenter.audio_toggle(self.status_raw)),
             (self.hotspot_action, presenter.hotspot_toggle(self.tether)),
+            (self.mirror_action, presenter.mirror_toggle(self.status_raw)),
         ):
             action.setText(toggle.text)
             action.setVisible(toggle.visible)
@@ -424,6 +429,9 @@ class TrayController(QObject):
 
     def _hotspot_triggered(self, checked: bool) -> None:
         self._action(TETHER_IFACE, "Connect" if checked else "Disconnect", [])
+
+    def _mirror_triggered(self, checked: bool) -> None:
+        self._action(MESSAGES_IFACE, "SetMirrorNotificationRemovals", [bool(checked)])
 
     def _action(self, interface: str, method: str, args: list) -> None:
         def failed(_name: str) -> None:

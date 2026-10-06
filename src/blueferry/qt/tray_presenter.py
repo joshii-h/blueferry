@@ -93,6 +93,15 @@ def hotspot_toggle(tether: TetherStatus | None) -> TrayToggle:
     )
 
 
+def mirror_toggle(status: Mapping[str, Any] | None) -> TrayToggle:
+    """"Sync notifications with iPhone"; hidden for backends without it."""
+    text = _("Sync notifications with iPhone")
+    value = None if status is None else status.get("mirror_iphone_removals")
+    if value is None:
+        return TrayToggle(False, False, False, text)
+    return TrayToggle(True, True, value is True, text)
+
+
 def audio_route_for(checked: bool) -> str:
     return "pc" if checked else "phone"
 

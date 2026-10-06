@@ -178,6 +178,25 @@ Controls.ScrollView {
         }
 
         SubtitleSwitch {
+            id: mirrorRemovalsSwitch
+            objectName: "mirrorRemovalsSwitch"
+            Layout.fillWidth: true
+            text: qsTr("Sync notifications with iPhone")
+            subtitle: card.status.mirror_iphone_removals === undefined
+                ? qsTr("Not offered by the running BlueFerry service.")
+                : checked
+                    ? qsTr("Notifications removed on the iPhone also disappear here.")
+                    : qsTr("The list keeps notifications removed on the iPhone.")
+            checked: card.status.mirror_iphone_removals === true
+            enabled: card.status.daemon === true && card.status.mirror_iphone_removals !== undefined
+                && !card.bridge.busy
+            onToggled: {
+                card.bridge.setMirrorNotificationRemovals(checked)
+                checked = Qt.binding(function() { return card.status.mirror_iphone_removals === true })
+            }
+        }
+
+        SubtitleSwitch {
             id: proximitySwitch
             objectName: "proximitySwitch"
             Layout.fillWidth: true

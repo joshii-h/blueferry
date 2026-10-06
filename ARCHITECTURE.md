@@ -41,8 +41,8 @@ All paths are relative to `src/blueferry/` unless noted.
 | `confirmed_groups.py` | Persistent confirmed group rosters in the owner-only settings document. |
 | `group_routes.py` | Saved named-group reply rosters in the settings document, outside history retention. |
 | `starred_threads.py` | Persistent starred-conversation keys in the settings document. |
-| `notification_log.py` | Opt-in, memory-only ring of recent non-Messages ANCS notifications for `ListNotifications` (content-gated). |
-| `notification_policy.py` | Persistent desktop notification preferences, including per-app click rules. |
+| `notification_log.py` | Opt-in, memory-only ring of recent non-Messages ANCS notifications for `ListNotifications` (content-gated); follows iPhone removals per ANCS session when `mirror_iphone_removals` is on. |
+| `notification_policy.py` | Persistent desktop notification preferences, including per-app click rules and `mirror_iphone_removals`. |
 | `notification_open_map.py` | Strict validation and exact-match resolution of notification click rules (bundle ID to http(s) URL or desktop-entry ID). |
 | `private_preferences.py` | Encrypts a whole preference collection under the storage policy. |
 | `settings_store.py` | Small atomic store shared by daemon-owned preferences. |

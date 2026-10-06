@@ -1244,6 +1244,17 @@ class BridgeController(QObject):
             completed,
         )
 
+    @Slot(bool)
+    def setMirrorNotificationRemovals(self, enabled: bool) -> None:
+        """Whether removals on the iPhone also leave BlueFerry's list."""
+        def completed(value: object) -> None:
+            self._status["mirror_iphone_removals"] = bool(value)
+            self.statusChanged.emit()
+
+        self._run(
+            lambda: self._backend.set_mirror_notification_removals(bool(enabled)), completed,
+        )
+
     @Slot(str)
     def setStoragePolicy(self, policy: str) -> None:
         if policy == "encrypted":

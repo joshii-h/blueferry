@@ -39,6 +39,8 @@ class PhoneClient(Protocol):
 
     def set_proximity_lock(self, enabled: bool, grace_seconds: int) -> dict: ...
 
+    def set_mirror_notification_removals(self, enabled: bool) -> bool: ...
+
 
 def _plain(value: object) -> str:
     return terminal_text(value).replace("\n", " ")
@@ -59,6 +61,16 @@ def media_text(view: Mapping[str, Any]) -> Text:
     return Text(f"{icon}  {_plain(view.get('title'))}   [ p  [ ] ]")
 
 
+def mirror_switch(status: Mapping[str, Any]) -> tuple[bool, bool, str]:
+    """(on, available, hint) of "Sync notifications with iPhone"."""
+    value = status.get("mirror_iphone_removals")
+    if value is None:
+        return False, False, "Not offered by the running BlueFerry service."
+    if value is True:
+        return True, True, "Notifications removed on the iPhone also disappear here."
+    return False, True, "The list keeps notifications removed on the iPhone."
+
+
 def switches_text(
     status: Mapping[str, Any], tether: TetherStatus | None,
 ) -> Text:
@@ -69,6 +81,7 @@ def switches_text(
         ("a", "Sound on this computer", audio["on_pc"], audio["available"], audio["hint"]),
         ("t", "Personal Hotspot", hotspot["active"], hotspot["available"], hotspot["hint"]),
         ("l", "Lock when the iPhone goes away", lock["enabled"], lock["available"], lock["hint"]),
+        ("x", "Sync notifications with iPhone", *mirror_switch(status)),
     ]
     text = Text()
     for key, label, on_, usable, hint in lines:
@@ -146,6 +159,7 @@ class PhoneScreen(ModalScreen[None]):
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("escape,o", "close", "Close", show=False),
         Binding("l", "toggle_lock", "Lock when away", show=False),
+        Binding("x", "toggle_mirror", "Sync notifications", show=False),
         *[
             Binding(key, f"tool('{action}')", show=False)
             for action, key in TOOL_KEYS.items()
@@ -229,6 +243,30 @@ class PhoneScreen(ModalScreen[None]):
             self.notify(lock["hint"], severity="warning")
             return
         self._set_lock(not lock["enabled"], int(lock["grace"]))
+
+    def action_toggle_mirror(self) -> None:
+        enabled, available, hint = mirror_switch(self._status().to_dict())
+        if not available:
+            self.notify(hint, severity="warning")
+            return
+        self._set_mirror(not enabled)
+
+    @work(thread=True, group="phone-action", exit_on_error=False)
+    def _set_mirror(self, enabled: bool) -> None:
+        try:
+            self._client.set_mirror_notification_removals(enabled)
+        except BackendError as error:
+            self.app.call_from_thread(
+                self.notify, _plain(error), severity="error", markup=False,
+            )
+            return
+        self.app.call_from_thread(
+            self.notify,
+            "Notifications follow the iPhone" if enabled else "Notifications kept as history",
+        )
+        refresh = getattr(self.app, "action_refresh", None)
+        if refresh is not None:
+            self.app.call_from_thread(refresh)
 
     @work(thread=True, group="phone-action", exit_on_error=False)
     def _set_lock(self, enabled: bool, grace: int) -> None:

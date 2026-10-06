@@ -731,6 +731,7 @@ def settings_window(qml_engine):
             function answerPairingConfirmation(approved) { record("answerPairingConfirmation", [approved]); }
             function setStoragePolicy(policy) { record("setStoragePolicy", [policy]); }
             function setProximityLock(enabled, grace) { record("setProximityLock", [enabled, grace]); }
+            function setMirrorNotificationRemovals(enabled) { record("setMirrorNotificationRemovals", [enabled]); }
             function forgetDevice(mac) { record("forgetDevice", [mac]); }
             function activateBluetooth() { record("activateBluetooth", []); }
             function filePairingIssue() { record("filePairingIssue", []); }
@@ -2839,3 +2840,19 @@ def test_phone_card_tools_grey_out_missing_tools_and_run_actions(qml_engine, set
     bridge.setProperty("companionTools", dict(_COMPANION_TOOLS, message="Ejected."))
     QGuiApplication.processEvents()
     assert message.property("visible") is True
+
+
+def test_phone_card_mirror_switch_follows_the_backend(qml_engine, settings_window):
+    window, bridge = settings_window
+    switch = _settings_object(window, "mirrorRemovalsSwitch")
+    assert switch.property("enabled") is False  # older backend: no key
+    bridge.setProperty("status", {"daemon": True, "mirror_iphone_removals": True})
+    QGuiApplication.processEvents()
+    assert switch.property("enabled") is True and switch.property("checked") is True
+    assert "disappear here" in switch.property("subtitle")
+    QMetaObject.invokeMethod(switch, "toggle")
+    QMetaObject.invokeMethod(switch, "toggled")
+    assert _evaluate(qml_engine, "testBridge.calls")[-1] == {
+        "method": "setMirrorNotificationRemovals", "args": [False],
+    }
+    assert switch.property("checked") is True  # follows the daemon, not the click

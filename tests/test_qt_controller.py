@@ -1321,6 +1321,22 @@ def test_proximity_lock_setting_is_forwarded_and_merged_into_status(monkeypatch)
     assert changes == [True]
 
 
+def test_mirror_removals_switch_is_forwarded_and_merged_into_status(monkeypatch):
+    backend = _Backend()
+    calls = []
+    backend.set_mirror_notification_removals = lambda enabled: calls.append(enabled) or enabled
+    controller = BridgeController(
+        backend=backend, setup=object(), subscribe=False, autostart=False,
+    )
+    monkeypatch.setattr(
+        controller, "_run",
+        lambda operation, on_done=None, *_args, **_kwargs: on_done(operation()),
+    )
+    controller.setMirrorNotificationRemovals(False)
+    assert calls == [False]
+    assert controller.status["mirror_iphone_removals"] is False
+
+
 # ---- phone overview (card and tabs) -------------------------------------
 
 

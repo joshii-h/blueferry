@@ -190,3 +190,11 @@ def test_tool_entries_grey_out_missing_tools_and_show_eject_only_when_mounted() 
 
     _photos, unmounted = photos_states(PhotoProbe(installed=True, device=True))
     assert not presenter.tool_entries([unmounted])[0].visible
+
+
+def test_mirror_toggle_follows_the_status_key() -> None:
+    assert not presenter.mirror_toggle(None).visible
+    assert not presenter.mirror_toggle({}).visible  # older backend
+    on = presenter.mirror_toggle({"mirror_iphone_removals": True})
+    assert (on.visible, on.enabled, on.checked) == (True, True, True)
+    assert presenter.mirror_toggle({"mirror_iphone_removals": False}).checked is False
