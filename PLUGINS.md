@@ -39,9 +39,9 @@ Desktop-entry syntax, group `[BlueFerry Plugin]`:
 | `Id` | yes | Reverse-DNS id, e.g. `io.weirdware.blueferry.immich_photos`. |
 | `Name` | yes | Display name (plain text, ≤ 80 characters). |
 | `Version` | yes | The plugin's own version. |
-| `ApiVersion` | yes | Plugin contract version it implements: `MAJOR` or `MAJOR.MINOR` (currently `1.1`). Clients ignore unknown major versions; the minor part is informational. |
+| `ApiVersion` | yes | Plugin contract version it implements: `MAJOR` or `MAJOR.MINOR` (currently `1.2`). Clients ignore unknown major versions, and a manifest that needs a newer minor than the running BlueFerry knows (`1.3` on a 1.2 BlueFerry) is ignored with a message. |
 | `MinBlueFerry` | yes | Oldest BlueFerry release the plugin works with. |
-| `Capabilities` | yes | `;`-separated list. Known: `photos`; reserved: `conversations`. Unknown entries are dropped; a manifest with none left is ignored. |
+| `Capabilities` | yes | `;`-separated list. Known: `photos`, `card`, `share`, `notify` (1.2); reserved: `conversations`. Unknown entries are dropped; a manifest with none left is ignored. |
 | `Homepage`, `Source` | at least one | `https://` URLs. |
 | `Exec` | yes | Command line that serves the plugin on the bus (used for its D-Bus service file). |
 | `Cli` | no | Command line for the plugin's own CLI; `blueferry plugins <alias> …` forwards to it. |
@@ -103,6 +103,87 @@ other manifest error.
 | `ListRecent(u limit)` | `→ s` | JSON array, newest first, at most 200: `{id, taken_at, type, thumbnail, original?}`. `type` is `image`, `video` or `other`; `thumbnail`/`original` are local paths or empty. |
 | `FetchOriginal(s id)` | `→ s` | Download (or reuse) the original and return its local path. |
 | `Changed()` | signal | Content-free: something changed, call `ListRecent` again. |
+
+### Generic UI surfaces (ApiVersion 1.2)
+
+Plugins never ship UI code. With these capabilities they describe what to
+show, and BlueFerry renders it in the Qt client, the terminal client, the
+tray and the CLI. All members live on **`Plugin1`** at the plugin's object
+path; the manifest's capabilities decide which ones BlueFerry calls.
+`blueferry.plugin_api` exports the names (`SURFACES_INTERFACE`,
+`METHOD_GET_CARD_ITEMS`, `METHOD_INVOKE_ACTION`, `METHOD_SHARE_TARGETS`,
+`METHOD_SEND_FILES`, `SIGNAL_CARD_CHANGED`, `SIGNAL_NOTIFY`).
+
+Every string is untrusted and shown as one line of plain text, cut to
+title 80, subtitle 160 and label 40 characters. Ids match
+`[A-Za-z0-9_.:-]{1,64}`, icons are freedesktop icon names (no paths).
+
+| Member | Capability | Signature | Meaning |
+| --- | --- | --- | --- |
+| `GetCardItems()` | `card` | `→ s` | JSON `{"items": [{"id", "icon", "title", "subtitle"?, "actions": [{"id", "label", "icon"?, "kind": "button"\|"primary"}]}]}`; at most 8 items with 3 actions each, more are dropped. |
+| `CardChanged()` | `card` | signal | Content-free: BlueFerry calls `GetCardItems` again (coalesced). |
+| `InvokeAction(s item_id, s action_id, s args_json)` | `card`, `notify` | `→ s` | JSON `{"ok", "message"?, "open_uri"?}`. `args_json` is a JSON object (at most 4 KiB, `{}` today). For a popup button `item_id` is `"notify"`. |
+| `ShareTargets()` | `share` | `→ s` | JSON `{"targets": [{"id", "label", "icon"}]}`, at most 16. |
+| `SendFiles(s target_id, as paths)` | `share` | `→ s` | JSON `{"ok", "message"?, "job"?}`. Absolute paths of existing regular files, 1 to 64. Return quickly; report a long transfer as a card item (progress in the subtitle) and `CardChanged()`. |
+| `Notify(s title, s body, s icon, s action_label, s action_id)` | `notify` | signal | A desktop popup; empty `action_label`/`action_id` means no button. |
+
+Where it shows up:
+
+- **Card**: the phone card's "From Plugins" section (Qt), the phone screen
+  (`o`) of the terminal client, `blueferry cards [--run PLUGIN:ITEM:ACTION]`.
+  A click on an item runs its `primary` action; the others are buttons. A
+  plugin that crashes, times out or sends broken JSON shows a dimmed line
+  with the reason instead of its items.
+- **Share**: "Send to…" in the card's Tools (Qt), the tray menu, the
+  terminal phone screen (`s`) and
+  `blueferry send FILE… [--to PLUGIN[:TARGET]] [--list]` (`PLUGIN` is the id
+  or alias; without `--to` the only target is used).
+- **Notify**: the BlueFerry daemon shows the popup through its own
+  notification sink, so the user's policy applies: `none` silences
+  plugins, `messages` and `all` show them, and without
+  `BLUEFERRY_SHOW_NOTIFICATION_CONTENT` only the plugin's name appears.
+  The daemon reads manifests (it still runs no plugin code), accepts the
+  signal only from the owner of an enabled `notify` plugin's bus name
+  running as the same user, and shows at most six popups a minute per
+  plugin. A click on the button calls `InvokeAction("notify", action_id,
+  "{}")`. The signal itself is visible on the user's session bus; keep
+  personal data out of it where you can.
+- **`open_uri`** is opened only when it is `http(s)://` or a `file://`
+  URI of a file or folder owned by the user below `$XDG_CACHE_HOME/blueferry/`
+  or `~/.cache/blueferry/`; anything else is dropped.
+
+Clients call these members from worker threads with timeouts (15 s for
+`GetCardItems` and `ShareTargets`, 60 s for `InvokeAction` and
+`SendFiles`), and the base service runs the hooks on its worker thread.
+
+```python
+from blueferry.plugin_api.service import CardService, NotifyService, ShareService
+from blueferry.plugin_api.surfaces import Action, ActionResult, CardItem, SendResult, ShareTarget
+
+class Calendar(CardService, NotifyService):
+    def card_items(self):                       # worker thread
+        return [CardItem("next", "Dentist", icon="view-calendar", subtitle="in 20 min",
+                         actions=[Action("open", "Open", kind="primary")])]
+
+    def invoke_action(self, item_id, action_id, args):   # worker thread
+        return ActionResult(True, open_uri="https://calendar.example/e/1")
+
+    def remind(self):                           # any thread
+        self.emit_notify("Dentist", "in 20 minutes", "view-calendar", "Open", "open")
+        self.emit_card_changed()
+
+class Drop(ShareService):
+    def share_targets(self):
+        return [ShareTarget("ablage", "Ablage", "folder-cloud")]
+
+    def send_files(self, target_id, paths):
+        return SendResult(True, f"Uploading {len(paths)} files", job="upload-1")
+```
+
+`blueferry.plugin_api.testing.FakeHost` plays BlueFerry's side in tests,
+with the same validation: `host.card_items()`, `host.invoke(item, action)`,
+`host.share_targets()`, `host.send(target, paths)`, `host.card_changes`,
+`host.notifications` and `host.click(notification)`.
 
 Errors are D-Bus errors under `io.weirdware.BlueFerry.Plugin.Error.*`
 (`Failed`, `RateLimited`). Messages are short and contain no personal data.
@@ -170,8 +251,9 @@ run on the worker thread.
 
 Tests use `blueferry.plugin_api.testing`: `inline_service()` runs worker and
 main-loop hand-offs inline, `ServiceTransport` lets a real `PluginClient`
-call the service in-process through the full validation, and
-`ScriptedTransport` replays canned replies.
+call the service in-process through the full validation,
+`ScriptedTransport` replays canned replies, and `FakeHost` drives the 1.2
+surfaces (see above).
 
 ### Plugin from its own repository
 
