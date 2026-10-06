@@ -49,3 +49,4 @@ src/blueferry/qt/qml/PluginStoreCard.qml
 src/blueferry/plugin_settings_view.py
 src/blueferry/qt/plugin_settings.py
 src/blueferry/plugin_surfaces.py
+src/blueferry/qt/qml/ui/ListRow.qml
