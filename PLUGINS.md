@@ -116,7 +116,8 @@ path; the manifest's capabilities decide which ones BlueFerry calls.
 
 Every string is untrusted and shown as one line of plain text, cut to
 title 80, subtitle 160 and label 40 characters. Ids match
-`[A-Za-z0-9_.:-]{1,64}`, icons are freedesktop icon names (no paths).
+`[A-Za-z0-9_.-]{1,64}` (no `:`; clients write `PLUGIN:ITEM:ACTION`), icons
+are freedesktop icon names (no paths).
 
 | Member | Capability | Signature | Meaning |
 | --- | --- | --- | --- |
@@ -137,24 +138,31 @@ Where it shows up:
 - **Share**: "Send to…" in the card's Tools (Qt), the tray menu, the
   terminal phone screen (`s`) and
   `blueferry send FILE… [--to PLUGIN[:TARGET]] [--list]` (`PLUGIN` is the id
-  or alias; without `--to` the only target is used).
+  or alias; without `--to` the only target is used). Whether "Send to…"
+  appears comes from the manifests; `ShareTargets` (which starts the plugin)
+  is called only when the user opens it.
 - **Notify**: the BlueFerry daemon shows the popup through its own
   notification sink, so the user's policy applies: `none` silences
   plugins, `messages` and `all` show them, and without
   `BLUEFERRY_SHOW_NOTIFICATION_CONTENT` only the plugin's name appears.
   The daemon reads manifests (it still runs no plugin code), accepts the
   signal only from the owner of an enabled `notify` plugin's bus name
-  running as the same user, and shows at most six popups a minute per
-  plugin. A click on the button calls `InvokeAction("notify", action_id,
+  running as the same user (an unverified sender gets at most twelve
+  lookups a minute), and shows at most six popups a minute per plugin. A click on the button calls `InvokeAction("notify", action_id,
   "{}")`. The signal itself is visible on the user's session bus; keep
   personal data out of it where you can.
 - **`open_uri`** is opened only when it is `http(s)://` or a `file://`
-  URI of a file or folder owned by the user below `$XDG_CACHE_HOME/blueferry/`
-  or `~/.cache/blueferry/`; anything else is dropped.
+  URI of a file or folder owned by the user in the plugin's own cache
+  directory: `<cache>/<Id>/` or, with an `Alias`, `<cache>/<Alias>/`, where
+  `<cache>` is `$XDG_CACHE_HOME/blueferry` or `~/.cache/blueferry`. Anything
+  else is dropped.
 
 Clients call these members from worker threads with timeouts (15 s for
 `GetCardItems` and `ShareTargets`, 60 s for `InvokeAction` and
 `SendFiles`), and the base service runs the hooks on its worker thread.
+Before `InvokeAction` and `SendFiles` a client refuses a running plugin
+owned by another user. The card asks at most eight plugins; more are
+named in one dimmed line.
 
 ```python
 from blueferry.plugin_api.service import CardService, NotifyService, ShareService
