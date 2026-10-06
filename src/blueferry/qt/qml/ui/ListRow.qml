@@ -33,12 +33,13 @@ Controls.ItemDelegate {
     property string density: "comfortable"
     // Keep the trailing actions visible (e.g. a starred star).
     property bool pinActions: false
+    // objectNames of the parts: <prefix>Title, Meta, Subtitle, UnreadDot, Body.
+    property string partPrefix: "row"
     readonly property bool revealed: row.pinActions || row.hovered || row.visualFocus
         || row.activeFocus || actionRow.activeFocus
     default property alias actions: actionRow.data
 
-    readonly property int avatarSize: row.density === "compact"
-        ? Kirigami.Units.iconSizes.smallMedium : Kirigami.Units.iconSizes.medium
+    property int avatarSize: Kirigami.Units.iconSizes.medium
 
     width: ListView.view ? ListView.view.width - ListView.view.leftMargin - ListView.view.rightMargin
                          : implicitWidth
@@ -98,7 +99,7 @@ Controls.ItemDelegate {
                 Layout.fillWidth: true
                 spacing: Kirigami.Units.smallSpacing
                 Controls.Label {
-                    objectName: "rowTitle"
+                    objectName: row.partPrefix + "Title"
                     Layout.fillWidth: true
                     text: row.title
                     textFormat: Text.PlainText
@@ -108,7 +109,7 @@ Controls.ItemDelegate {
                     maximumLineCount: 1
                 }
                 Controls.Label {
-                    objectName: "rowMeta"
+                    objectName: row.partPrefix + "Meta"
                     visible: text !== ""
                     text: row.meta
                     textFormat: Text.PlainText
@@ -121,7 +122,7 @@ Controls.ItemDelegate {
                 visible: row.subtitle !== "" || row.unread
                 spacing: Kirigami.Units.smallSpacing
                 Controls.Label {
-                    objectName: "rowSubtitle"
+                    objectName: row.partPrefix + "Subtitle"
                     Layout.fillWidth: true
                     text: row.subtitle
                     textFormat: Text.PlainText
@@ -132,7 +133,7 @@ Controls.ItemDelegate {
                     color: row.unread ? Kirigami.Theme.textColor : Kirigami.Theme.disabledTextColor
                 }
                 Rectangle {
-                    objectName: "rowUnreadDot"
+                    objectName: row.partPrefix + "UnreadDot"
                     implicitWidth: Kirigami.Units.smallSpacing * 2
                     implicitHeight: implicitWidth
                     radius: width / 2
@@ -142,7 +143,7 @@ Controls.ItemDelegate {
                 }
             }
             Controls.Label {
-                objectName: "rowBody"
+                objectName: row.partPrefix + "Body"
                 Layout.fillWidth: true
                 visible: text !== ""
                 text: row.body
@@ -157,10 +158,8 @@ Controls.ItemDelegate {
         RowLayout {
             id: actionRow
             spacing: 0
-            // Always in the layout for keyboard and screen-reader users;
-            // drawn only when pointed at, focused or pinned.
-            opacity: row.revealed ? 1 : 0
-            visible: children.length > 0
+            // Shown when pointed at, focused (keyboard) or pinned.
+            visible: row.revealed && children.length > 0
         }
     }
 
