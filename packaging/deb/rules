@@ -56,3 +56,5 @@ override_dh_auto_install:
 		debian/tmp/usr/share/applications/io.weirdware.BlueFerry.Qt.desktop
 	install -Dm644 data/io.weirdware.BlueFerry.Qt.metainfo.xml \
 		debian/tmp/usr/share/metainfo/io.weirdware.BlueFerry.Qt.metainfo.xml
+	install -Dm644 data/autostart/blueferry-tray.desktop \
+		debian/tmp/etc/xdg/autostart/blueferry-tray.desktop

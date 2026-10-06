@@ -126,6 +126,8 @@ install -Dm0644 data/io.weirdware.BlueFerry.Qt.desktop \
     %{buildroot}%{_datadir}/applications/io.weirdware.BlueFerry.Qt.desktop
 install -Dm0644 data/io.weirdware.BlueFerry.Qt.metainfo.xml \
     %{buildroot}%{_metainfodir}/io.weirdware.BlueFerry.Qt.metainfo.xml
+install -Dm0644 data/autostart/blueferry-tray.desktop \
+    %{buildroot}%{_sysconfdir}/xdg/autostart/blueferry-tray.desktop
 
 %check
 dbus-run-session --config-file=tests/dbus-test.conf -- sh -ec '
@@ -136,6 +138,7 @@ dbus-run-session --config-file=tests/dbus-test.conf -- sh -ec '
 '
 desktop-file-validate data/io.weirdware.BlueFerry.Gtk.desktop
 desktop-file-validate data/io.weirdware.BlueFerry.Qt.desktop
+desktop-file-validate data/autostart/blueferry-tray.desktop
 appstreamcli validate --no-net data/io.weirdware.BlueFerry.Gtk.metainfo.xml
 appstreamcli validate --no-net data/io.weirdware.BlueFerry.Qt.metainfo.xml
 
@@ -196,6 +199,8 @@ fi
 %files -n blueferry-qt
 %license LICENSE
 %{_bindir}/blueferry-qt
+%{_bindir}/blueferry-tray
+%config(noreplace) %{_sysconfdir}/xdg/autostart/blueferry-tray.desktop
 %{python3_sitelib}/blueferry/qt
 %{_datadir}/applications/io.weirdware.BlueFerry.Qt.desktop
 %{_metainfodir}/io.weirdware.BlueFerry.Qt.metainfo.xml
