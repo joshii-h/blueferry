@@ -27,6 +27,7 @@ from blueferry.conversation_state import (
     ReplyDisposition,
     fetch_conversation_snapshot,
 )
+from blueferry.doctor_report import DoctorReport, run_doctor
 from blueferry.i18n import _
 from blueferry.models import BackendStatus, CallsSnapshot
 from blueferry.onboarding import OnboardingState, effective_compatibility
@@ -35,6 +36,7 @@ from blueferry.protocol import BUS_NAME, EVENTS_IFACE, OBJECT_PATH, TETHER_IFACE
 from blueferry.qt import phone_link
 from blueferry.qt.avatars import avatar_url
 from blueferry.qt.companion import CompanionTools
+from blueferry.qt.plugin_settings import PluginSettings
 from blueferry.qt.tasks import Task
 from blueferry.quirks_report import issue_report, issue_url
 from blueferry.reconnect_view import UNREACHABLE_TEXT, reconnect_view, result_text
@@ -83,6 +85,9 @@ class BridgeController(QObject):
     photosChanged = Signal()
     phoneIdentityChanged = Signal()
     companionToolsChanged = Signal()
+    featuresChanged = Signal()
+    doctorChanged = Signal()
+    pluginSettingsChanged = Signal()
 
     def __init__(
         self,
@@ -93,6 +98,8 @@ class BridgeController(QObject):
         autostart: bool = True,
         parent: QObject | None = None,
         companion: CompanionTools | None = None,
+        plugin_settings: PluginSettings | None = None,
+        doctor: Callable[[], DoctorReport] = run_doctor,
     ) -> None:
         super().__init__(parent)
         self._backend = backend or BackendClient()
@@ -187,6 +194,18 @@ class BridgeController(QObject):
         # UxPlay, LocalSend and iPhone photos: client-side, no daemon involved.
         self._companion = companion or CompanionTools(parent=self)
         self._companion.changed.connect(self.companionToolsChanged)
+        # Settings: local.env switches (Messages1.GetFeatures), the doctor
+        # report and plugin management. The latter two run local programs on
+        # their own pools so the D-Bus worker stays free.
+        self._features: dict = {"loaded": False, "available": False, "items": {},
+                                "notice": "", "error": ""}
+        self._doctor_runner = doctor
+        self._doctor: dict = {"running": False, "ran": False, "ok": False,
+                              "warnings": False, "text": ""}
+        self._local_pool = QThreadPool(self)
+        self._local_pool.setMaxThreadCount(1)
+        self._plugin_settings = plugin_settings or PluginSettings(parent=self)
+        self._plugin_settings.changed.connect(self.pluginSettingsChanged)
         self.devicesChanged.connect(self.phoneIdentityChanged)
         self.configuredChanged.connect(self.phoneIdentityChanged)
         self._bus = QDBusConnection.sessionBus() if subscribe else None
@@ -392,6 +411,132 @@ class BridgeController(QObject):
             if mac and device.get("mac") == mac and device.get("name"):
                 return str(device["name"])
         return "iPhone"
+
+    # ---- settings: feature switches, doctor, plugins -------------------------
+
+    @Property("QVariantMap", notify=featuresChanged)
+    def features(self):
+        return self._features
+
+    @Slot()
+    def loadFeatures(self) -> None:
+        def done(value: object) -> None:
+            items = value if isinstance(value, dict) else {}
+            self._features = {**self._features, "loaded": True, "available": True,
+                              "items": items, "error": ""}
+            self.featuresChanged.emit()
+
+        def failed(message: str) -> None:
+            # Older daemons have no GetFeatures; the UI falls back to hints.
+            self._features = {**self._features, "loaded": True, "available": False,
+                              "items": {}, "error": message}
+            self.featuresChanged.emit()
+
+        self._run(lambda: self._backend.features(), done, failed, busy=False)
+
+    @Slot(str, bool)
+    def setFeature(self, name: str, enabled: bool) -> None:
+        def done(value: object) -> None:
+            notice = {
+                "restart-required": _("Restart the BlueFerry service to apply the change."),
+                "environment": _(
+                    "Saved, but the service's environment sets this variable and wins."
+                ),
+            }.get(str(value), "")
+            self._features = {**self._features, "notice": notice}
+            self.featuresChanged.emit()
+            self.loadFeatures()
+
+        self._run(lambda: self._backend.set_feature(str(name), bool(enabled)), done)
+
+    @Property("QVariantMap", notify=doctorChanged)
+    def doctor(self):
+        return self._doctor
+
+    @Slot()
+    def runDoctor(self) -> None:
+        if self._doctor["running"]:
+            return
+        self._doctor = {**self._doctor, "running": True}
+        self.doctorChanged.emit()
+        task = Task(self._doctor_runner)
+        self._tasks.add(task)
+
+        def done(report: object) -> None:
+            if isinstance(report, DoctorReport):
+                self._doctor = {"running": False, "ran": True, "ok": report.ok,
+                                "warnings": report.warnings, "text": report.text}
+            self.doctorChanged.emit()
+
+        def failed(message: str) -> None:
+            self._doctor = {"running": False, "ran": True, "ok": False,
+                            "warnings": False, "text": message}
+            self.doctorChanged.emit()
+
+        task.signals.done.connect(done)
+        task.signals.failed.connect(failed)
+        task.signals.finished.connect(lambda: self._tasks.discard(task))
+        self._local_pool.start(task)
+
+    @Property("QVariantMap", notify=pluginSettingsChanged)
+    def pluginSettings(self):
+        return self._plugin_settings.state()
+
+    @Slot()
+    def loadPlugins(self) -> None:
+        self._plugin_settings.load()
+
+    @Slot(str, bool)
+    def setPluginEnabled(self, plugin_id: str, enabled: bool) -> None:
+        self._plugin_settings.set_enabled(str(plugin_id), bool(enabled))
+
+    @Slot(str, str)
+    def preparePluginInstall(self, url: str, ref: str) -> None:
+        self._plugin_settings.prepare_install(str(url), str(ref))
+
+    @Slot(str)
+    def installStorePlugin(self, plugin_id: str) -> None:
+        self._plugin_settings.install_from_store(str(plugin_id))
+
+    @Slot(str)
+    def preparePluginUpdate(self, plugin_id: str) -> None:
+        self._plugin_settings.prepare_update(str(plugin_id))
+
+    @Slot()
+    def confirmPluginInstall(self) -> None:
+        self._plugin_settings.confirm_install()
+
+    @Slot()
+    def cancelPluginInstall(self) -> None:
+        self._plugin_settings.cancel_install()
+
+    @Slot(str)
+    def removePlugin(self, plugin_id: str) -> None:
+        self._plugin_settings.remove(str(plugin_id))
+
+    @Slot(str)
+    def loadPluginConfig(self, plugin_id: str) -> None:
+        self._plugin_settings.load_config(str(plugin_id))
+
+    @Slot(str, "QVariantMap")
+    def savePluginConfig(self, plugin_id: str, values: dict) -> None:
+        self._plugin_settings.save_config(str(plugin_id), dict(values or {}))
+
+    @Slot()
+    def closePluginConfig(self) -> None:
+        self._plugin_settings.close_config()
+
+    @Slot(bool)
+    def loadPluginStore(self, refresh: bool) -> None:
+        self._plugin_settings.load_store(bool(refresh))
+
+    @Slot("QVariantList")
+    def setPluginIndexes(self, urls: list) -> None:
+        self._plugin_settings.set_indexes([str(url) for url in urls or []])
+
+    @Slot()
+    def clearPluginMessage(self) -> None:
+        self._plugin_settings.clear_message()
 
     @Property("QVariantMap", notify=companionToolsChanged)
     def companionTools(self):
@@ -1187,10 +1332,12 @@ class BridgeController(QObject):
 
     @Slot()
     def restartBackend(self) -> None:
-        self._run(
-            restart_backend,
-            lambda _value: QTimer.singleShot(800, self.refresh),
-        )
+        def restarted(_value: object) -> None:
+            self._features = {**self._features, "notice": ""}
+            QTimer.singleShot(800, self.refresh)
+            QTimer.singleShot(1200, self.loadFeatures)
+
+        self._run(restart_backend, restarted)
 
     @Slot()
     def clearHistory(self) -> None:

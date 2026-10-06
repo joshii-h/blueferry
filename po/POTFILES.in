@@ -8,7 +8,7 @@ src/blueferry/ui/status.py
 src/blueferry/ui/status_presenter.py
 src/blueferry/qt/controller.py
 src/blueferry/qt/qml/Main.qml
-src/blueferry/qt/qml/PhoneSettingsPage.qml
+src/blueferry/qt/qml/SettingsPage.qml
 src/blueferry/qt/qml/PhoneSettingsDialogs.qml
 src/blueferry/qt/qml/MessageBubble.qml
 src/blueferry/qt/qml/OnboardingSummary.qml
@@ -37,3 +37,15 @@ src/blueferry/qt/qml/CompanionToolsSection.qml
 src/blueferry/reconnect_view.py
 src/blueferry/photos_view.py
 src/blueferry/qt/qml/PhotosTab.qml
+src/blueferry/qt/qml/SettingsPhone.qml
+src/blueferry/qt/qml/SettingsNotifications.qml
+src/blueferry/qt/qml/SettingsCallsAudio.qml
+src/blueferry/qt/qml/SettingsNetwork.qml
+src/blueferry/qt/qml/SettingsSecurity.qml
+src/blueferry/qt/qml/SettingsPlugins.qml
+src/blueferry/qt/qml/SettingsAbout.qml
+src/blueferry/qt/qml/FeatureSwitch.qml
+src/blueferry/qt/qml/PluginConfigForm.qml
+src/blueferry/qt/qml/PluginStoreCard.qml
+src/blueferry/plugin_settings_view.py
+src/blueferry/qt/plugin_settings.py

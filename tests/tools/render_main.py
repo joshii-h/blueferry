@@ -74,6 +74,68 @@ STATUS = {
     "mirror_iphone_removals": True,
 }
 
+def _feature(value, source="default", restart=False, variable=""):
+    return {"value": value, "running": value != restart, "source": source,
+            "variable": variable, "restart_required": restart}
+
+
+FEATURES = {"loaded": True, "available": True, "notice": "", "items": {
+    "calls_enabled": _feature(True, "local.env", variable="BLUEFERRY_CALLS_ENABLED"),
+    "call_history_enabled": _feature(True, "settings", True, "BLUEFERRY_CALL_HISTORY_ENABLED"),
+    "missed_call_notifications": _feature(True),
+    "phone_battery_notify": _feature(False),
+    "keep_phone_audio_on_phone": _feature(False, "local.env"),
+    "media_control_enabled": _feature(True, "local.env"),
+    "media_mpris_enabled": _feature(False),
+    "contact_photos": _feature(True, "environment", variable="BLUEFERRY_CONTACT_PHOTOS"),
+    "show_notification_content": _feature(True), "ancs_actions": _feature(False),
+    "mark_read_on_dismiss": _feature(True), "otp_autocopy": _feature(True, "settings"),
+    "notification_history": _feature(False), "tether_autoconnect": _feature(False),
+}}
+IMMICH_URL = "https://github.com/joshii-h/blueferry-plugin-immich"
+PLUGINS = {
+    "loaded": True, "busy": "", "message": "", "messageOk": True, "ignored": [],
+    "plugins": [{
+        "id": "io.weirdware.blueferry.immich_photos", "name": "Immich photos",
+        "version": "0.2.0", "alias": "immich", "capabilities": ["Photos"],
+        "source": IMMICH_URL, "ref": "v0.2.0", "managed": True, "enabled": True,
+        "state": "ok", "stateText": "Ready", "detail": "", "hasConfig": True,
+    }],
+    "pending": {}, "config": {
+        "id": "io.weirdware.blueferry.immich_photos", "name": "Immich photos",
+        "loaded": True, "errors": {"camera_model": "is too long"}, "fields": [
+            {"key": "url", "label": "Server URL", "type": "url", "required": True,
+             "help": "For example https://photos.example.org", "choices": [],
+             "minimum": 0, "maximum": 0, "value": "https://photos.joshuahirsig.xyz",
+             "stored": False},
+            {"key": "api_key", "label": "API key", "type": "secret", "required": True,
+             "help": "Needs asset.read, asset.view and asset.download.", "choices": [],
+             "minimum": 0, "maximum": 0, "value": "", "stored": True},
+            {"key": "camera_model", "label": "Camera model", "type": "string",
+             "required": False, "help": "Only photos from this camera, e.g. iPhone 16 Pro.",
+             "choices": [], "minimum": 0, "maximum": 0, "value": "", "stored": False},
+        ]},
+    "store": {"loaded": True, "problems": [], "items": [
+        {"id": "io.weirdware.blueferry.immich_photos", "name": "Immich photos",
+         "description": "Recent photos and videos from your own Immich server.",
+         "icon": "folder-pictures", "emoji": "", "badges": ["Photos"], "repo": IMMICH_URL,
+         "ref": "v0.2.0", "installedRef": "v0.2.0", "screenshot": "", "state": "installed",
+         "stateText": "Installed \u2713", "installable": False},
+        {"id": "io.weirdware.blueferry.calendar", "name": "Calendar",
+         "description": "Upcoming events next to your messages.", "icon": "view-calendar",
+         "emoji": "", "badges": ["Calendar"], "repo": IMMICH_URL, "ref": "",
+         "installedRef": "", "screenshot": "", "state": "soon", "stateText": "Coming soon",
+         "installable": False},
+        {"id": "io.weirdware.blueferry.webdav", "name": "WebDAV files",
+         "description": "Send files from the iPhone to a WebDAV share.", "icon": "folder-cloud",
+         "emoji": "", "badges": ["Files"], "repo": IMMICH_URL, "ref": "v0.1.0",
+         "installedRef": "", "screenshot": "", "state": "install", "stateText": "Install",
+         "installable": True},
+    ]},
+    "indexes": ["https://raw.githubusercontent.com/joshii-h/blueferry-plugins-index/main/plugins-index.json"],
+    "defaultIndex": "https://raw.githubusercontent.com/joshii-h/blueferry-plugins-index/main/plugins-index.json",
+}
+
 BRIDGE_QML = """
 import QtQuick
 QtObject {
@@ -130,6 +192,36 @@ QtObject {
          subtitle: "The camera roll is open. Eject it before unplugging."},
         {key: "eject", installed: true, enabled: true, active: false, title: "Eject iPhone photos",
          subtitle: "Unmount the camera roll."}]})
+    property var features: (%(features)s)
+    property var doctor: ({running: false, ran: true, ok: true, warnings: true,
+        text: "INFO doctor: Target MAC configured\nWARNING doctor: Adapter CoD = 0x6c010c"})
+    property var pluginSettings: (%(plugins)s)
+    function loadFeatures() {}
+    function setFeature(name, enabled) {}
+    function runDoctor() {}
+    function restartBackend() {}
+    function syncContacts() {}
+    function loadPlugins() {}
+    function loadPluginStore(refresh) {}
+    function setPluginEnabled(id, enabled) {}
+    function preparePluginInstall(url, ref) {}
+    function installStorePlugin(id) {}
+    function preparePluginUpdate(id) {}
+    function confirmPluginInstall() {}
+    function cancelPluginInstall() {}
+    function removePlugin(id) {}
+    function loadPluginConfig(id) {}
+    function savePluginConfig(id, values) {}
+    function closePluginConfig() {}
+    function setPluginIndexes(urls) {}
+    function clearPluginMessage() {}
+    function setNotificationPolicy(policy) {}
+    function setContactsOnlyNotifications(enabled) {}
+    function setMirrorNotificationRemovals(enabled) {}
+    function setPhoneAudioRoute(route) {}
+    function setProximityLock(enabled, grace) {}
+    property var notificationOpenMap: []
+    function loadNotificationOpenMap() {}
     function refreshCompanionTools() {}
     function runCompanionTool(action) {}
     function clearCompanionMessage() {}
@@ -160,7 +252,10 @@ def _render(scheme: str, out_dir: Path) -> None:
     engine.warnings.connect(
         lambda errors: [print("QML:", e.toString(), file=sys.stderr) for e in errors]
     )
-    source = BRIDGE_QML % {"status": json.dumps(STATUS), "threads": json.dumps(THREADS)}
+    source = BRIDGE_QML % {
+        "status": json.dumps(STATUS), "threads": json.dumps(THREADS),
+        "features": json.dumps(FEATURES), "plugins": json.dumps(PLUGINS),
+    }
     bridge_component = QQmlComponent(engine)
     bridge_component.setData(source.encode(), QUrl())
     bridge = bridge_component.create()
@@ -196,6 +291,7 @@ def _render(scheme: str, out_dir: Path) -> None:
     window.grabWindow().save(str(path))
     print(path)
     _render_photos(bridge, window, scheme, out_dir)
+    _render_settings(bridge, window, scheme, out_dir)
     window.deleteLater()
     application.processEvents()
 
@@ -237,6 +333,39 @@ def _render_photos(bridge, window, scheme: str, out_dir: Path) -> None:
     })
     QTest.qWait(300)
     path = out_dir / f"main-{scheme}-photos-missing.png"
+    window.grabWindow().save(str(path))
+    print(path)
+
+
+def _render_settings(bridge, window, scheme: str, out_dir: Path) -> None:
+    """Every settings category wide, plus the narrow list and drill-down."""
+    from PySide6.QtCore import QObject
+    from PySide6.QtTest import QTest
+
+    bridge.setProperty("status", dict(STATUS, storage_policy="encrypted", storage_state="ready",
+                                      notification_policy="all"))
+    window.resize(*SIZES[0])
+    window.setProperty("currentTab", 0)
+    window.metaObject().invokeMethod(window, "openPhoneSettings")
+    QTest.qWait(400)
+    page = window.findChild(QObject, "phoneSettingsPage")
+    for category in ("phone", "notifications", "calls", "network", "security",
+                     "plugins", "about"):
+        page.setProperty("category", category)
+        QTest.qWait(400)
+        path = out_dir / f"settings-{scheme}-{category}.png"
+        window.grabWindow().save(str(path))
+        print(path)
+    window.resize(*SIZES[-1])
+    page.setProperty("drilled", False)
+    QTest.qWait(400)
+    path = out_dir / f"settings-{scheme}-narrow-list.png"
+    window.grabWindow().save(str(path))
+    print(path)
+    page.setProperty("category", "plugins")
+    page.setProperty("drilled", True)
+    QTest.qWait(400)
+    path = out_dir / f"settings-{scheme}-narrow-plugins.png"
     window.grabWindow().save(str(path))
     print(path)
 

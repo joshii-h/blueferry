@@ -26,7 +26,7 @@ from PySide6.QtCore import (
     Slot,
 )
 from PySide6.QtGui import QColor, QDesktopServices, QGuiApplication
-from PySide6.QtQml import QQmlComponent, QQmlEngine
+from PySide6.QtQml import QQmlComponent, QQmlEngine, qmlEngine
 from PySide6.QtQuick import QQuickWindow
 from PySide6.QtTest import QTest
 
@@ -715,6 +715,9 @@ def settings_window(qml_engine):
             property int companionRefreshes: 0
             property var photos: ({})
             property var reconnect: ({})
+            property var features: ({})
+            property var doctor: ({})
+            property var pluginSettings: ({})
             signal pairingConfirmationRequested(string passkey)
             signal messageOpenRequested(string handle)
             signal messageSendSucceeded(string recipient, string body)
@@ -757,6 +760,26 @@ def settings_window(qml_engine):
             function refreshCompanionTools() { companionRefreshes += 1; }
             function runCompanionTool(action) { record("runCompanionTool", [action]); }
             function clearCompanionMessage() { companionTools = Object.assign({}, companionTools, {message: ""}); }
+            property int featureLoads: 0
+            function loadFeatures() { featureLoads += 1; }
+            function setFeature(name, enabled) { record("setFeature", [name, enabled]); }
+            function runDoctor() { record("runDoctor", []); }
+            function restartBackend() { record("restartBackend", []); }
+            function syncContacts() { record("syncContacts", []); }
+            function loadPlugins() { record("loadPlugins", []); }
+            function loadPluginStore(refresh) { record("loadPluginStore", [refresh]); }
+            function setPluginEnabled(id, enabled) { record("setPluginEnabled", [id, enabled]); }
+            function preparePluginInstall(url, ref) { record("preparePluginInstall", [url, ref]); }
+            function installStorePlugin(id) { record("installStorePlugin", [id]); }
+            function preparePluginUpdate(id) { record("preparePluginUpdate", [id]); }
+            function confirmPluginInstall() { record("confirmPluginInstall", []); }
+            function cancelPluginInstall() { record("cancelPluginInstall", []); }
+            function removePlugin(id) { record("removePlugin", [id]); }
+            function loadPluginConfig(id) { record("loadPluginConfig", [id]); }
+            function savePluginConfig(id, values) { record("savePluginConfig", [id, values]); }
+            function closePluginConfig() { record("closePluginConfig", []); }
+            function setPluginIndexes(urls) { record("setPluginIndexes", [urls]); }
+            function clearPluginMessage() { record("clearPluginMessage", []); }
         }
     ''', QUrl())
     assert not component.isError(), [error.toString() for error in component.errors()]
@@ -792,8 +815,49 @@ def _evaluate(engine, script):
     return result.toVariant()
 
 
-def _settings_object(window, name):
+SETTINGS_CATEGORIES = ("phone", "notifications", "calls", "network", "security", "plugins", "about")
+
+
+_FIND_JS = """(function find(item, name) {
+    const children = item.children || [];
+    for (let index = 0; index < children.length; ++index) {
+        const child = children[index];
+        if (child.objectName === name) return child;
+        const found = find(child, name);
+        if (found) return found;
+    }
+    return null;
+})"""
+
+
+def _visual_find(root, name):
+    """Search the visual tree in QML: Repeater delegates are not QObject
+    children, and walking it from Python trips over unwrappable types."""
+    engine = qmlEngine(root)
+    finder = engine.evaluate(_FIND_JS)
+    found = finder.call([engine.newQObject(root), name])
+    return found.toQObject() if found.isQObject() else None
+
+
+def _find(window, name):
     obj = window.findChild(QObject, name)
+    page = window.findChild(QObject, "phoneSettingsPage")
+    if obj is None and page is not None:
+        obj = _visual_find(page, name)
+    return obj
+
+
+def _settings_object(window, name):
+    """Find a control on the settings page, opening the category that holds it."""
+    obj = _find(window, name)
+    page = window.findChild(QObject, "phoneSettingsPage")
+    if obj is None and page is not None:
+        for category in SETTINGS_CATEGORIES:
+            page.setProperty("category", category)
+            QGuiApplication.processEvents()
+            obj = _find(window, name)
+            if obj is not None:
+                break
     assert obj is not None, name
     return obj
 
@@ -848,14 +912,16 @@ def test_qt_pairing_checkbox_reaches_the_helper(
         bridge._compatibility = {**bridge._compatibility, "powered": True}
         bridge.compatibilityChanged.emit()
         assert checkbox.property("checked") is explicit
+        # Opening the settings page also asks for the feature switches.
+        before = len(operations)
         _click_control(window, _settings_object(window, "pairPhoneButton"))
         if replace:
             dialog = _settings_object(window, "replaceTargetDialog")
             assert dialog.property("visible")
             qml_engine.globalObject().setProperty("pairingDialog", qml_engine.newQObject(dialog))
             _evaluate(qml_engine, "pairingDialog.customFooterActions[0].trigger()")
-        assert len(operations) == 1
-        operations[0]()
+        assert len(operations) == before + 1
+        operations[-1]()
         assert len(calls) == 1
         mac, options = calls[0]
         assert mac == "NEW"
@@ -2917,3 +2983,121 @@ def test_phone_card_mirror_switch_follows_the_backend(qml_engine, settings_windo
         "method": "setMirrorNotificationRemovals", "args": [False],
     }
     assert switch.property("checked") is True  # follows the daemon, not the click
+
+
+def _open_category(qml_engine, window, category):
+    _evaluate(qml_engine, "testWindow.openPhoneSettings()")
+    QGuiApplication.processEvents()
+    page = window.findChild(QObject, "phoneSettingsPage")
+    QMetaObject.invokeMethod(page, "open", Q_ARG("QVariant", category))
+    QGuiApplication.processEvents()
+    return page
+
+
+def test_settings_categories_switch_features_and_ask_for_a_restart(qml_engine, settings_window):
+    window, bridge = settings_window
+    bridge.setProperty("status", {"daemon": True})
+    bridge.setProperty("features", {"loaded": True, "available": True, "items": {
+        "calls_enabled": {"value": False, "running": False, "source": "default",
+                          "variable": "BLUEFERRY_CALLS_ENABLED", "restart_required": False},
+        "contact_photos": {"value": True, "running": False, "source": "environment",
+                           "variable": "BLUEFERRY_CONTACT_PHOTOS", "restart_required": False},
+    }})
+    page = _open_category(qml_engine, window, "calls")
+    assert bridge.property("featureLoads") >= 1
+    switch = _settings_object(window, "feature_calls_enabled")
+    assert switch.property("enabled") is True and switch.property("checked") is False
+    QMetaObject.invokeMethod(switch, "toggle")
+    QMetaObject.invokeMethod(switch, "toggled")
+    assert _evaluate(qml_engine, "testBridge.calls")[-1] == {
+        "method": "setFeature", "args": ["calls_enabled", True],
+    }
+    unknown = _settings_object(window, "feature_media_control_enabled")
+    assert unknown.property("enabled") is False
+    assert "BLUEFERRY_MEDIA_CONTROL_ENABLED" in unknown.property("subtitle")
+    page.setProperty("category", "phone")
+    QGuiApplication.processEvents()
+    pinned = _settings_object(window, "feature_contact_photos")
+    assert pinned.property("enabled") is False and "environment" in pinned.property("subtitle")
+    notice = _settings_object(window, "restartNotice")
+    assert notice.property("visible") is False
+    bridge.setProperty("features", {"loaded": True, "available": True, "items": {
+        "calls_enabled": {"value": True, "running": False, "source": "settings",
+                          "variable": "BLUEFERRY_CALLS_ENABLED", "restart_required": True},
+    }})
+    QGuiApplication.processEvents()
+    assert notice.property("visible") is True
+    _evaluate(qml_engine, "testWindow.closePhoneSettings()")
+
+
+def test_settings_drill_down_in_a_narrow_window(qml_engine, settings_window):
+    window, _bridge = settings_window
+    page = _open_category(qml_engine, window, "phone")
+    page.setProperty("drilled", False)
+    window.resize(440, window.height())
+    QGuiApplication.processEvents()
+    assert page.property("narrow") is True
+    categories = window.findChild(QObject, "settingsCategories")
+    detail = window.findChild(QObject, "settingsDetail")
+    assert categories.property("visible") is True and detail.property("visible") is False
+    QMetaObject.invokeMethod(page, "open", Q_ARG("QVariant", "about"))
+    QGuiApplication.processEvents()
+    assert categories.property("visible") is False and detail.property("visible") is True
+    assert _settings_object(window, "aboutButton") is not None
+    _evaluate(qml_engine, "testWindow.closePhoneSettings()")
+
+
+def test_settings_plugins_list_store_form_and_confirmation(qml_engine, settings_window):
+    window, bridge = settings_window
+    bridge.setProperty("status", {"daemon": True})
+    bridge.setProperty("pluginSettings", {
+        "loaded": True, "busy": "", "message": "", "messageOk": True,
+        "plugins": [{"id": "io.example.demo", "name": "<b>Demo</b>", "version": "0.1.0",
+                     "capabilities": ["Photos"], "source": "https://git.example.org/demo",
+                     "ref": "v0.1.0", "managed": True, "enabled": True, "state": "ok",
+                     "stateText": "Ready", "detail": "", "hasConfig": True}],
+        "ignored": [], "pending": {}, "config": {},
+        "store": {"loaded": True, "problems": [], "items": [
+            {"id": "io.example.cal", "name": "Calendar", "description": "Soon.",
+             "icon": "view-calendar", "emoji": "", "badges": ["Calendar"],
+             "repo": "https://git.example.org/cal", "ref": "", "installedRef": "",
+             "screenshot": "", "state": "soon", "stateText": "Coming soon",
+             "installable": False},
+            {"id": "io.example.new", "name": "New", "description": "New one.",
+             "icon": "folder-pictures", "emoji": "", "badges": ["Photos"],
+             "repo": "https://git.example.org/new", "ref": "v1.0.0", "installedRef": "",
+             "screenshot": "", "state": "install", "stateText": "Install",
+             "installable": True}]},
+        "indexes": ["https://example.org/index.json"], "defaultIndex": "https://example.org/index.json",
+    })
+    _open_category(qml_engine, window, "plugins")
+    assert ("loadPlugins", []) in [(c["method"], c["args"]) for c in _evaluate(qml_engine, "testBridge.calls")]
+    card = _settings_object(window, "plugin_io.example.demo")
+    heading = _visual_find(card, "pluginName")
+    assert heading.property("text") == "<b>Demo</b>  0.1.0"
+    engine = qmlEngine(heading)
+    engine.globalObject().setProperty("pluginHeading", engine.newQObject(heading))
+    assert _evaluate(engine, "pluginHeading.textFormat === 0") is True
+    soon = _settings_object(window, "storeCard_io.example.cal")
+    soon_button = _visual_find(soon, "storeAction")
+    assert soon_button.property("enabled") is False
+    fresh = _settings_object(window, "storeCard_io.example.new")
+    button = _visual_find(fresh, "storeAction")
+    QMetaObject.invokeMethod(button, "clicked")
+    assert _evaluate(qml_engine, "testBridge.calls")[-1] == {
+        "method": "installStorePlugin", "args": ["io.example.new"],
+    }
+    state = bridge.property("pluginSettings")
+    state = {**state, "pending": {"kind": "install", "id": "io.example.new", "name": "New",
+                                  "rows": [{"label": "Source", "value": "https://git.example.org/new"}]},
+             "config": {"id": "io.example.demo", "name": "Demo", "loaded": True, "errors": {},
+                        "fields": [{"key": "api_key", "label": "API key", "type": "secret",
+                                    "required": True, "help": "", "choices": [],
+                                    "minimum": 0, "maximum": 1, "value": "", "stored": True}]}}
+    bridge.setProperty("pluginSettings", state)
+    QGuiApplication.processEvents()
+    dialog = _settings_object(window, "pluginInstallDialog")
+    assert dialog.property("opened") or dialog.property("visible")
+    secret = _settings_object(window, "configField_api_key")
+    assert secret.property("text") == "" and "leave empty" in secret.property("placeholderText")
+    _evaluate(qml_engine, "testWindow.closePhoneSettings()")

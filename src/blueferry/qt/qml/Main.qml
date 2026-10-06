@@ -1055,7 +1055,7 @@ Kirigami.ApplicationWindow {
     Component {
         id: iphonePageComponent
 
-        PhoneSettingsPage {
+        SettingsPage {
             bridge: root.bridge
             onCloseRequested: root.closePhoneSettings()
             onClearHistoryRequested: clearDialog.open()
