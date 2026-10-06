@@ -41,6 +41,7 @@ from blueferry.plugin_api.manifest import (
     discover,
     parse_manifest,
 )
+from blueferry.plugin_prefs import config_path, disabled_from
 
 GIT_TIMEOUT_SEC = 120.0
 PIP_TIMEOUT_SEC = 900.0
@@ -84,11 +85,6 @@ def data_dir() -> Path:
         os.path.expanduser("~"), ".local", "share",
     )
     return Path(home)
-
-
-def config_path() -> Path:
-    home = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
-    return Path(home) / "blueferry" / "plugins.json"
 
 
 def check_url(url: str) -> str:
@@ -228,8 +224,7 @@ class PluginManager:
         _write_json(self.settings_path, current, private=True)
 
     def disabled(self) -> frozenset[str]:
-        value = self.settings().get("disabled")
-        return frozenset(str(item) for item in value) if isinstance(value, list) else frozenset()
+        return disabled_from(self.settings())
 
     def set_enabled(self, plugin_id: str, enabled: bool) -> None:
         disabled = set(self.disabled())

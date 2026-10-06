@@ -1,8 +1,10 @@
 """Plugin side of the contract: export Plugin1 (and a capability) on D-Bus.
 
 A plugin is its own process with its own session-bus name. Subclass
-:class:`PluginService` (or :class:`PhotosService`), implement the hooks and
-call :func:`run`. Slow work (network, disk) runs on a worker thread; replies
+:class:`PluginService` (or :class:`PhotosService`, and for the ApiVersion 1.2
+surfaces :class:`CardService`, :class:`ShareService`, :class:`NotifyService`,
+which combine by multiple inheritance and export everything on Plugin1),
+implement the hooks and call :func:`run`. Slow work (network, disk) runs on a worker thread; replies
 go back through the GLib main loop, so the plugin keeps answering Status()
 while a download runs. The service exits after ``idle_seconds`` without
 calls; D-Bus activation starts it again on the next call.
@@ -28,6 +30,7 @@ from . import (
     OBJECT_PATH,
     PHOTOS_INTERFACE,
     PLUGIN_INTERFACE,
+    surfaces,
 )
 from .config import ConfigError, masked, parse_update, validate
 from .manifest import PluginManifest
@@ -258,6 +261,151 @@ class PhotosService(PluginService):
     @dbus.service.signal(PHOTOS_INTERFACE, signature="")
     def Changed(self) -> None:
         """Something changed; clients call ListRecent again. No content."""
+
+
+def _action_args(text: str) -> dict[str, object]:
+    if len(text.encode("utf-8", "surrogatepass")) > surfaces.MAX_ARGS_BYTES:
+        raise PluginCallError("action arguments are too large")
+    try:
+        value = json.loads(text or "{}")
+    except ValueError:
+        raise PluginCallError("action arguments are not JSON") from None
+    if not isinstance(value, dict):
+        raise PluginCallError("action arguments must be a JSON object")
+    return value
+
+
+class _ActionMixin(PluginService):
+    """Plugin1.InvokeAction, shared by the card and the popup button."""
+
+    def invoke_action(
+        self, item_id: str, action_id: str, args: dict[str, object],
+    ) -> surfaces.ActionResult | dict[str, object]:
+        """Blocking; worker thread. A click on a card or popup button.
+
+        ``item_id`` is the card item's id, or ``"notify"`` for the action
+        button of a popup sent with :meth:`NotifyService.emit_notify`.
+        """
+        raise PluginCallError("this plugin has no actions")
+
+    def _invoke(self, item_id: str, action_id: str, args_text: str) -> str:
+        if not surfaces.valid_id(item_id) or not surfaces.valid_id(action_id):
+            raise PluginCallError("not an action id")
+        args = _action_args(args_text)
+        return surfaces.result_json(self.invoke_action(item_id, action_id, args))
+
+    @dbus.service.method(
+        PLUGIN_INTERFACE, in_signature="sss", out_signature="s",
+        async_callbacks=("reply", "error"), sender_keyword="sender",
+    )
+    def InvokeAction(self, item_id, action_id, args, reply, error, sender=None) -> None:
+        self.admit(sender)
+        item, action, text = str(item_id), str(action_id), str(args)
+        self.run_async(lambda: self._invoke(item, action, text), reply, error)
+
+
+class CardService(_ActionMixin):
+    """Capability ``card``: items for the phone card's "From Plugins" section.
+
+    Override :meth:`card_items` and :meth:`invoke_action`; call
+    :meth:`emit_card_changed` (from any thread) when the items change.
+    """
+
+    def card_items(self) -> list[surfaces.CardItem] | list[dict[str, object]]:
+        """Blocking; worker thread. At most 8 items, 3 actions each."""
+        return []
+
+    def emit_card_changed(self) -> None:
+        """Ask BlueFerry to fetch the items again; safe from any thread."""
+        self._to_main(self.CardChanged)
+
+    @dbus.service.method(
+        PLUGIN_INTERFACE, in_signature="", out_signature="s",
+        async_callbacks=("reply", "error"), sender_keyword="sender",
+    )
+    def GetCardItems(self, reply, error, sender=None) -> None:
+        self.admit(sender)
+        self.run_async(lambda: surfaces.card_items_json(self.card_items()), reply, error)
+
+    @dbus.service.signal(PLUGIN_INTERFACE, signature="")
+    def CardChanged(self) -> None:
+        """The card items changed; BlueFerry calls GetCardItems. No content."""
+
+
+class ShareService(PluginService):
+    """Capability ``share``: destinations for BlueFerry's "Send to…"."""
+
+    def share_targets(self) -> list[surfaces.ShareTarget] | list[dict[str, object]]:
+        """Blocking; worker thread."""
+        return []
+
+    def send_files(
+        self, target_id: str, paths: list[str],
+    ) -> surfaces.SendResult | dict[str, object]:
+        """Blocking; worker thread. Start the transfer and return quickly;
+        report a long one as a card item (and ``emit_card_changed``)."""
+        raise PluginCallError("this plugin cannot send files")
+
+    @dbus.service.method(
+        PLUGIN_INTERFACE, in_signature="", out_signature="s",
+        async_callbacks=("reply", "error"), sender_keyword="sender",
+    )
+    def ShareTargets(self, reply, error, sender=None) -> None:
+        self.admit(sender)
+        self.run_async(lambda: surfaces.share_targets_json(self.share_targets()), reply, error)
+
+    @dbus.service.method(
+        PLUGIN_INTERFACE, in_signature="sas", out_signature="s",
+        async_callbacks=("reply", "error"), sender_keyword="sender",
+    )
+    def SendFiles(self, target_id, paths, reply, error, sender=None) -> None:
+        self.admit(sender)
+        target = str(target_id)
+        files = [str(path) for path in list(paths)[: surfaces.MAX_SHARE_FILES + 1]]
+
+        def work() -> str:
+            if not surfaces.valid_id(target):
+                raise PluginCallError("not a share target")
+            if not files or len(files) > surfaces.MAX_SHARE_FILES:
+                raise PluginCallError("send between 1 and 64 files")
+            return surfaces.result_json(self.send_files(target, files))
+
+        self.run_async(work, reply, error)
+
+
+class NotifyService(_ActionMixin):
+    """Capability ``notify``: popups shown through BlueFerry's notification policy."""
+
+    def emit_notify(
+        self, title: str, body: str, icon: str = "", action_label: str = "",
+        action_id: str = "",
+    ) -> None:
+        """Show a popup; a click on the button calls ``invoke_action("notify",
+        action_id, {})``. Safe from any thread. Keep personal data out of it
+        when you can: the signal is visible to the user's session bus."""
+        note = surfaces.parse_notification(title, body, icon, action_label, action_id)
+        if note is None:
+            return
+        self._to_main(lambda: self.Notify(
+            note.title, note.body, note.icon, note.action_label, note.action_id,
+        ))
+
+    @dbus.service.signal(PLUGIN_INTERFACE, signature="sssss")
+    def Notify(self, title, body, icon, action_label, action_id) -> None:
+        """A popup request; BlueFerry applies its notification policy."""
+
+
+def emit_card_changed(service: CardService) -> None:
+    """Module-level form of :meth:`CardService.emit_card_changed`."""
+    service.emit_card_changed()
+
+
+def emit_notify(
+    service: NotifyService, title: str, body: str, icon: str = "",
+    action_label: str = "", action_id: str = "",
+) -> None:
+    """Module-level form of :meth:`NotifyService.emit_notify`."""
+    service.emit_notify(title, body, icon, action_label, action_id)
 
 
 def run(

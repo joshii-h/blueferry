@@ -24,6 +24,8 @@ from blueferry.cli_photos import photos_app
 from blueferry.cli_plugins import PLUGINS_CONTEXT, plugins
 from blueferry.cli_proximity import proximity_app
 from blueferry.cli_reconnect import reconnect
+from blueferry.cli_surfaces import cards as plugin_cards
+from blueferry.cli_surfaces import send as send_files
 from blueferry.cli_tether import tether
 from blueferry.cli_tools import tools
 
@@ -647,6 +649,8 @@ app.command("reconnect")(reconnect)
 app.add_typer(features_app, name="features")
 app.command("plugins", context_settings=PLUGINS_CONTEXT)(plugins)
 app.add_typer(photos_app, name="photos")
+app.command("send")(send_files)
+app.command("cards")(plugin_cards)
 
 
 @app.command()

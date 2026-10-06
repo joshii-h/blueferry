@@ -957,6 +957,34 @@ the stored URL and keyring entry stay and are used as before. The old copy
 pip-installed next to BlueFerry can be removed with
 `pip uninstall blueferry-immich-photos` from that environment.
 
+## Plugin cards, "Send to…" and plugin popups
+
+Plugins with the `card`, `share` or `notify` capability (plugin API 1.2, see
+[PLUGINS.md](PLUGINS.md)) need no UI of their own:
+
+- **From Plugins** in the phone card (Qt) and on the phone screen (`o`) of
+  the terminal client lists what they offer, for example the next calendar
+  entry or a running transfer, with up to three actions each. A plugin that
+  fails shows a dimmed line instead.
+- **Send to…** in the card's Tools, in the tray menu, on the terminal phone
+  screen (`s`) and on the command line hands files to a plugin target such
+  as "iPhone (LocalSend)":
+
+  ```bash
+  blueferry send --list
+  blueferry send photo.jpg report.pdf --to localsend
+  blueferry cards                         # the From Plugins section
+  blueferry cards --run io.example.calendar:next:open
+  ```
+
+- **Popups** from `notify` plugins appear through BlueFerry's notification
+  setting: off with "none", only the plugin name without
+  `BLUEFERRY_SHOW_NOTIFICATION_CONTENT`, at most six a minute per plugin.
+
+Plugin text is always plain text, and a plugin may only ask BlueFerry to
+open web links or files in its own cache. Only checked with fake plugins so
+far.
+
 ## Lock when the iPhone goes away
 
 BlueFerry can lock your desktop session after the paired iPhone has been

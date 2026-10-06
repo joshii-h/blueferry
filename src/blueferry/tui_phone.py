@@ -18,10 +18,12 @@ from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Static
+from textual.widgets import Button, OptionList, Static
 
-from blueferry import companion_tools
+from blueferry import companion_tools, tui_plugins
 from blueferry import phone_overview as overview
+from blueferry import plugin_surfaces as surfaces
+from blueferry import tui_design as design
 from blueferry.client import BackendError
 from blueferry.models import BackendStatus, CallHistoryEntry, phone_status_fields
 from blueferry.reconnect_view import reconnect_view, result_text
@@ -136,17 +138,17 @@ def calls_text(status: Mapping[str, Any], entries: list[CallHistoryEntry] | None
         return Text("Loading…", style="dim")
     rows = overview.call_groups(entries[:_MAX_ROWS])
     if not rows:
-        return Text("No recent calls", style="dim")
+        return design.empty("No recent calls")
     text = Text()
     day = None
     for row in rows:
         if row["day"] != day:
             day = row["day"]
-            text.append(f"{_plain(day)}\n", style="bold #7dd3fc")
+            text.append(f"{_plain(day)}\n", style=f"bold {design.ACCENT}")
         count = f" ({row['count']})" if row["count"] > 1 else ""
         text.append(
             f"  {row['clock']:>8}  {row['direction']:<9} {_plain(row['caller'])}{count}\n",
-            style="bold #fda4af" if row["missed"] else "",
+            style=f"bold {design.MISSED}" if row["missed"] else "",
         )
     text.append("Press c to call back from the list.", style="dim")
     return text
@@ -161,7 +163,7 @@ def notifications_text(status: Mapping[str, Any], snapshot: object) -> Text:
     records = snapshot.get("notifications") if isinstance(snapshot, Mapping) else None
     rows = overview.notification_rows(records)[:_MAX_ROWS]
     if not rows:
-        return Text("No notifications yet", style="dim")
+        return design.empty("No notifications yet")
     text = Text()
     for row in rows:
         text.append(f"{_plain(row['app'])}  {_plain(row['time'])}\n", style="bold")
@@ -177,6 +179,8 @@ class PhoneScreen(ModalScreen[None]):
         Binding("l", "toggle_lock", "Lock when away", show=False),
         Binding("x", "toggle_mirror", "Sync notifications", show=False),
         Binding(RECONNECT_KEY, "reconnect", "Reconnect iPhone", show=False),
+        Binding("s", "send_to", "Send to…", show=False),
+        Binding("r", "refresh", "Refresh", show=False),
         *[
             Binding(key, f"tool('{action}')", show=False)
             for action, key in TOOL_KEYS.items()
@@ -190,8 +194,16 @@ class PhoneScreen(ModalScreen[None]):
         tether: Callable[[], TetherStatus | None],
         *,
         tools_system: companion_tools.System | None = None,
+        load_cards: Callable[[], list[surfaces.PluginCard]] = surfaces.load_cards,
+        invoke: Callable[..., surfaces.Outcome] | None = None,
+        send_screen: Callable[..., ModalScreen] = tui_plugins.SendToScreen,
     ) -> None:
         super().__init__()
+        self._load_cards = load_cards
+        self._invoke = invoke or (lambda plugin_id, item_id, action_id: surfaces.invoke(
+            surfaces.find_plugin(plugin_id, "card"), item_id, action_id))
+        self._send_screen = send_screen
+        self._cards: list[surfaces.PluginCard] | None = None
         self._tools_system = tools_system or companion_tools.default_system()
         self._tools: companion_tools.Snapshot | None = None
         self._tool_busy = ""
@@ -204,16 +216,23 @@ class PhoneScreen(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="phone-dialog", classes="dialog"):
-            yield Static("iPhone", classes="dialog-title")
+            yield Static("Phone", classes="dialog-title")
             with VerticalScroll(id="phone-body"):
-                yield Static("Switches", classes="field-label")
+                yield Static(design.section(design.QUICK_SETTINGS), classes="section-title")
                 yield Static("", id="phone-switches", classes="dialog-copy")
-                yield Static("Tools", classes="field-label")
+                yield Static(design.section(design.FROM_PLUGINS), id="phone-plugins-title",
+                             classes="section-title")
+                yield OptionList(id="phone-plugins")
+                yield Static(design.section(design.TOOLS), classes="section-title")
                 yield Static("", id="phone-tools", classes="dialog-copy")
-                yield Static("Recent calls", classes="field-label")
+                yield Static(design.section(design.RECENT_CALLS), classes="section-title")
                 yield Static("", id="phone-calls", classes="dialog-copy")
-                yield Static("Notifications", classes="field-label")
+                yield Static(design.section(design.NOTIFICATIONS), classes="section-title")
                 yield Static("", id="phone-notifications", classes="dialog-copy")
+            yield Static(design.key_hints(
+                ("Enter", "plugin action"), ("s", "send to"), ("r", "refresh"),
+                ("letters", "switch or start"), ("Esc", "close"),
+            ), classes="key-hints")
             with Horizontal(classes="dialog-actions"):
                 yield Button("Close", id="phone-close")
 
@@ -221,6 +240,68 @@ class PhoneScreen(ModalScreen[None]):
         self.render_phone()
         self.reload()
         self.probe_tools()
+        self.load_plugins()
+
+    # ---- From Plugins (capability card) and Send to… (share) ----------------
+
+    @work(thread=True, exclusive=True, group="phone-plugins", exit_on_error=False)
+    def load_plugins(self) -> None:
+        try:
+            cards = self._load_cards()
+        except Exception as error:  # a plugin must never end the terminal client
+            cards = [surfaces.PluginCard("", "Plugins", False, _plain(type(error).__name__))]
+        self.app.call_from_thread(self._plugins_loaded, cards)
+
+    def _plugins_loaded(self, cards: list[surfaces.PluginCard]) -> None:
+        self._cards = cards
+        if self.is_attached:
+            self.render_plugins()
+
+    def render_plugins(self) -> None:
+        options = self.query_one("#phone-plugins", OptionList)
+        shown = self._cards is None or bool(self._cards)
+        options.display = shown
+        self.query_one("#phone-plugins-title", Static).display = shown
+        options.clear_options()
+        options.add_options(tui_plugins.card_options(self._cards))
+
+    def action_refresh(self) -> None:
+        """r: everything on this screen, and the app's status like before."""
+        refresh = getattr(self.app, "action_refresh", None)
+        if refresh is not None:
+            refresh()
+        self.reload()
+        self.probe_tools()
+        self.load_plugins()
+
+    @on(OptionList.OptionSelected, "#phone-plugins")
+    def plugin_action(self, event: OptionList.OptionSelected) -> None:
+        option_id = event.option.id or ""
+        actions = tui_plugins.card_actions(self._cards)
+        if not option_id.startswith("action:"):
+            return
+        index = int(option_id[7:])
+        if 0 <= index < len(actions):
+            self._run_plugin_action(*actions[index])
+
+    @work(thread=True, group="phone-plugin-action", exit_on_error=False)
+    def _run_plugin_action(self, plugin_id: str, item_id: str, action_id: str) -> None:
+        outcome = self._invoke(plugin_id, item_id, action_id)
+        self.app.call_from_thread(self._plugin_action_done, outcome)
+
+    def _plugin_action_done(self, outcome: surfaces.Outcome) -> None:
+        if outcome.message:
+            self.notify(_plain(outcome.message),
+                        severity="information" if outcome.ok else "warning", markup=False)
+        if outcome.ok and outcome.open_uri:
+            try:
+                self._tools_system.open_uri(outcome.open_uri)
+            except Exception as error:  # no viewer must not end the TUI
+                self.notify(f"Could not open: {_plain(error)}", severity="error", markup=False)
+        self.load_plugins()
+
+    def action_send_to(self) -> None:
+        self.app.push_screen(self._send_screen(on_sent=self.load_plugins))
 
     def render_phone(self) -> None:
         status = self._status().to_dict()

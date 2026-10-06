@@ -2852,13 +2852,13 @@ def test_conversation_list_shows_one_preview_line_and_chat_fills_its_pane(
     def value(child, expression):
         return _delegate_value(qml_engine, window, "threadList", child, expression)
 
-    assert value("threadPreview", "item.text") == (
+    assert value("threadSubtitle", "item.text") == (
         "DPD Paketbestätigung Gegen 9.33 Uhr bin ich angekommen."
     )
-    assert value("threadPreview", "item.lineCount") == 1
-    assert value("threadTime", "item.text") == "Today 09:41"
+    assert value("threadSubtitle", "item.lineCount") == 1
+    assert value("threadMeta", "item.text") == "Today 09:41"
     # Two text lines plus padding, never the whole message.
-    lines = value("threadName", "item.height") + value("threadPreview", "item.height")
+    lines = value("threadTitle", "item.height") + value("threadSubtitle", "item.height")
     assert value("threadDelegate", "delegate.height") < lines * 2
 
     pane = _settings_object(window, "chatPane")

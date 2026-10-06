@@ -19,6 +19,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Input, ListItem, ListView, Static, TextArea
 
 from blueferry import config, phone_overview
+from blueferry import tui_design as design
 from blueferry.backend_lifecycle import (
     BackendLifecycleError,
     ensure_backend_current,
@@ -583,6 +584,7 @@ class HelpScreen(ModalScreen[None]):
             "[bold #7dd3fc]Send[/]  Enter\n"
             "[bold #7dd3fc]New line[/]  Shift+Enter\n"
             "[bold #7dd3fc]Search[/]  /\n"
+            "[bold #7dd3fc]Filter All · Unread · Starred[/]  f\n"
             "[bold #7dd3fc]New message[/]  n\n"
             "[bold #7dd3fc]Star conversation[/]  s\n"
             "[bold #7dd3fc]Delete conversation[/]  Delete\n"
@@ -624,6 +626,7 @@ class BlueFerryApp(App[None]):
         Binding("k,up", "previous_thread", "Previous", show=False),
         Binding("enter", "open_thread", "Open", show=False),
         Binding("s", "toggle_star", "Star"),
+        Binding("f", "filter_threads", "Filter", show=False),
         Binding("delete", "delete_thread", "Delete"),
         Binding("c", "calls", "Calls", show=False),
         Binding("o", "phone", "iPhone"),
@@ -656,6 +659,8 @@ class BlueFerryApp(App[None]):
         self._announced_calls: set[str] = set()
         self.now_playing: dict = {}
         self.tether: TetherStatus | None = None
+        # Conversation filter, cycled with f: all, unread or starred.
+        self.thread_filter = "all"
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="masthead"):
@@ -673,8 +678,9 @@ class BlueFerryApp(App[None]):
         with Horizontal(id="workspace"):
             with Vertical(id="sidebar"):
                 with Horizontal(id="sidebar-heading"):
-                    yield Static("Conversations", id="sidebar-title")
+                    yield Static(design.CONVERSATIONS, id="sidebar-title")
                     yield Button("+", id="new-message", tooltip="New message")
+                yield Static(design.filter_bar(design.THREAD_FILTERS, "all"), id="sidebar-filter")
                 yield Input(placeholder="Search conversations  /", id="thread-search")
                 yield ListView(id="thread-list")
             with Vertical(id="conversation"):
@@ -881,12 +887,26 @@ class BlueFerryApp(App[None]):
         self._update_notice()
         self._save_group_participants_worker(thread_key, list(recipients))
 
+    def action_filter_threads(self) -> None:
+        """All → Unread → Starred, like the Qt FilterBar."""
+        if self._shortcut_blocked():
+            return
+        self.thread_filter = design.next_filter(design.THREAD_FILTERS, self.thread_filter)
+        self.query_one("#sidebar-filter", Static).update(
+            design.filter_bar(design.THREAD_FILTERS, self.thread_filter))
+        self.run_worker(self._populate_threads(), exclusive=True, group="thread-filter")
+
     def _filtered_threads(self) -> list[Thread]:
         query = self.query_one("#thread-search", Input).value.strip().casefold()
+        threads = self.state.threads
+        if self.thread_filter == "unread":
+            threads = [thread for thread in threads if thread.unread_count > 0]
+        elif self.thread_filter == "starred":
+            threads = [thread for thread in threads if thread.starred]
         if not query:
-            return self.state.threads
+            return threads
         selected: list[Thread] = []
-        for thread in self.state.threads:
+        for thread in threads:
             preview = thread.messages[-1].body if thread.messages else ""
             addresses = []
             for key in thread.extra.get("aliases", []):

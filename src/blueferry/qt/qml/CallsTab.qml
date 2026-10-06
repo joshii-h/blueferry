@@ -4,6 +4,7 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import "ui"
 
 // Calls tab: running calls as cards, a dial pad for the optional HFP
 // integration, and the optional recent-calls list. The pad and the list stay
@@ -81,81 +82,57 @@ GridLayout {
         // Running calls: only while one exists.
         Repeater {
             model: callsTab.phoneCalls
-            delegate: Kirigami.AbstractCard {
+            delegate: CardFrame {
                 id: activeCall
                 required property var modelData
                 objectName: "activeCallCard"
                 Layout.fillWidth: true
-                contentItem: ColumnLayout {
-                    spacing: Kirigami.Units.smallSpacing
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: Kirigami.Units.largeSpacing
-                        ContactAvatar {
-                            bridge: callsTab.bridge
-                            address: activeCall.modelData.number || ""
-                            Layout.preferredWidth: Kirigami.Units.iconSizes.large
-                            Layout.preferredHeight: Kirigami.Units.iconSizes.large
-                        }
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            spacing: 0
-                            Kirigami.Heading {
-                                Layout.fillWidth: true
-                                level: 3
-                                text: activeCall.modelData.display_peer
-                                textFormat: Text.PlainText
-                                elide: Text.ElideRight
-                            }
-                            Controls.Label {
-                                objectName: "activeCallState"
-                                Layout.fillWidth: true
-                                textFormat: Text.PlainText
-                                opacity: 0.7
-                                text: activeCall.modelData.ringing === true ? qsTr("Incoming call…")
-                                    : activeCall.modelData.state === "held" ? qsTr("On hold")
-                                    : activeCall.modelData.state === "dialing"
-                                        || activeCall.modelData.state === "alerting"
-                                        ? qsTr("Calling…")
-                                        : callsTab.duration(activeCall.modelData.first_seen)
-                            }
-                        }
+                title: activeCall.modelData.display_peer
+                subtitleItem.objectName: "activeCallState"
+                subtitle: activeCall.modelData.ringing === true ? qsTr("Incoming call…")
+                    : activeCall.modelData.state === "held" ? qsTr("On hold")
+                    : activeCall.modelData.state === "dialing"
+                        || activeCall.modelData.state === "alerting"
+                        ? qsTr("Calling…")
+                        : callsTab.duration(activeCall.modelData.first_seen)
+                leading: Component {
+                    ContactAvatar {
+                        bridge: callsTab.bridge
+                        address: activeCall.modelData.number || ""
                     }
-                    Flow {
-                        Layout.fillWidth: true
-                        spacing: Kirigami.Units.smallSpacing
-                        Controls.Button {
-                            visible: activeCall.modelData.ringing === true
-                            text: qsTr("Answer")
-                            icon.name: "call-start"
-                            enabled: !callsTab.bridge.busy
-                            onClicked: callsTab.bridge.answerCall(activeCall.modelData.call_id)
-                        }
-                        Controls.Button {
-                            visible: activeCall.modelData.ringing !== true
-                            text: activeCall.modelData.state === "held" ? qsTr("Resume") : qsTr("Hold")
-                            icon.name: activeCall.modelData.state === "held"
-                                ? "media-playback-start" : "media-playback-pause"
-                            enabled: !callsTab.bridge.busy
-                            onClicked: callsTab.bridge.swapCalls()
-                        }
-                        Controls.Button {
-                            objectName: "activeCallHangup"
-                            text: activeCall.modelData.ringing === true ? qsTr("Decline") : qsTr("Hang Up")
-                            icon.name: "call-stop"
-                            enabled: !callsTab.bridge.busy
-                            palette.button: Kirigami.Theme.negativeBackgroundColor
-                            onClicked: callsTab.bridge.hangupCall(activeCall.modelData.call_id)
-                        }
+                }
+                actions: [
+                    Controls.Button {
+                        visible: activeCall.modelData.ringing === true
+                        text: qsTr("Answer")
+                        icon.name: "call-start"
+                        enabled: !callsTab.bridge.busy
+                        onClicked: callsTab.bridge.answerCall(activeCall.modelData.call_id)
+                    },
+                    Controls.Button {
+                        visible: activeCall.modelData.ringing !== true
+                        text: activeCall.modelData.state === "held" ? qsTr("Resume") : qsTr("Hold")
+                        icon.name: activeCall.modelData.state === "held"
+                            ? "media-playback-start" : "media-playback-pause"
+                        enabled: !callsTab.bridge.busy
+                        onClicked: callsTab.bridge.swapCalls()
+                    },
+                    Controls.Button {
+                        objectName: "activeCallHangup"
+                        text: activeCall.modelData.ringing === true ? qsTr("Decline") : qsTr("Hang Up")
+                        icon.name: "call-stop"
+                        enabled: !callsTab.bridge.busy
+                        palette.button: Kirigami.Theme.negativeBackgroundColor
+                        onClicked: callsTab.bridge.hangupCall(activeCall.modelData.call_id)
                     }
-                    Controls.Switch {
-                        text: qsTr("Sound on this computer")
-                        checked: callsTab.audio.onPc === true
-                        enabled: callsTab.audio.available === true && callsTab.audio.pending !== true
-                        onToggled: {
-                            callsTab.bridge.setPhoneAudioRoute(checked ? "pc" : "phone")
-                            checked = Qt.binding(function() { return callsTab.audio.onPc === true })
-                        }
+                ]
+                Controls.Switch {
+                    text: qsTr("Sound on this computer")
+                    checked: callsTab.audio.onPc === true
+                    enabled: callsTab.audio.available === true && callsTab.audio.pending !== true
+                    onToggled: {
+                        callsTab.bridge.setPhoneAudioRoute(checked ? "pc" : "phone")
+                        checked = Qt.binding(function() { return callsTab.audio.onPc === true })
                     }
                 }
             }
@@ -218,24 +195,16 @@ GridLayout {
                 clip: true
                 model: (callsTab.bridge.contactResults || [])
                     .filter(result => String(result.address).indexOf("@") < 0)
-                delegate: Controls.ItemDelegate {
+                delegate: ListRow {
                     id: suggestion
                     required property var modelData
-                    width: ListView.view.width
-                    contentItem: ColumnLayout {
-                        spacing: 0
-                        Controls.Label {
-                            Layout.fillWidth: true
-                            text: suggestion.modelData.name
-                            textFormat: Text.PlainText
-                            elide: Text.ElideRight
-                        }
-                        Controls.Label {
-                            Layout.fillWidth: true
-                            text: "+" + suggestion.modelData.address
-                            textFormat: Text.PlainText
-                            font: Kirigami.Theme.smallFont
-                            opacity: 0.7
+                    density: "compact"
+                    title: suggestion.modelData.name
+                    subtitle: "+" + suggestion.modelData.address
+                    leading: Component {
+                        ContactAvatar {
+                            bridge: callsTab.bridge
+                            address: suggestion.modelData.address
                         }
                     }
                     onClicked: {
@@ -355,16 +324,18 @@ GridLayout {
             }
         }
 
-        Kirigami.PlaceholderMessage {
-            objectName: "callHistoryHint"
+        Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.margins: Kirigami.Units.largeSpacing
             visible: callsTab.bridge.callHistoryEnabled !== true
-            enabled: false
-            icon.name: "call-start"
-            text: qsTr("Recent Calls Are Off")
-            explanation: callsTab.hints.callHistory || ""
+            EmptyState {
+                anchors.centerIn: parent
+                objectName: "callHistoryHint"
+                dimmed: true
+                icon.name: "call-start"
+                text: qsTr("Recent Calls Are Off")
+                explanation: callsTab.hints.callHistory || ""
+            }
         }
     }
 }

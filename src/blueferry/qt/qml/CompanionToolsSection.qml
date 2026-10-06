@@ -2,9 +2,10 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls as Controls
+import QtQuick.Dialogs as Dialogs
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
-import org.kde.kirigami.delegates as KD
+import "ui"
 
 // Phone card section "Tools": UxPlay screen mirroring, LocalSend and the
 // iPhone's camera roll over USB. These are local programs started by this
@@ -18,6 +19,16 @@ ColumnLayout {
     readonly property var tools: section.bridge.companionTools || ({})
     readonly property var rows: (section.tools.tools || []).filter(tool => tool.key !== "eject")
     readonly property bool busy: (section.tools.busy || "") !== ""
+    // "Send to…" targets from plugins with the share capability.
+    readonly property var surfaces: section.bridge.pluginSurfaces || ({})
+    readonly property var shareTargets: section.surfaces.targets || []
+    property string sendKey: ""
+
+    // Asking for targets starts the share plugins: only when the menu opens.
+    function loadTargets() {
+        if (typeof section.bridge.loadShareTargets === "function")
+            section.bridge.loadShareTargets()
+    }
 
     function tool(key) {
         return (section.tools.tools || []).find(entry => entry.key === key) || ({})
@@ -46,71 +57,113 @@ ColumnLayout {
     Layout.fillWidth: true
     spacing: 0
 
-    Kirigami.Heading {
-        Layout.fillWidth: true
-        Layout.topMargin: Kirigami.Units.largeSpacing
-        Layout.bottomMargin: Kirigami.Units.smallSpacing
-        Layout.leftMargin: Kirigami.Units.largeSpacing
-        Layout.rightMargin: Kirigami.Units.largeSpacing
-        level: 4
+    SectionHeader {
         text: qsTr("Tools")
+        level: 4
     }
 
     Repeater {
         id: rowRepeater
         model: section.rows
-        delegate: Controls.ItemDelegate {
+        delegate: ListRow {
             id: row
             required property var modelData
             readonly property bool running: section.tools.busy === row.modelData.key
             readonly property alias ejectButton: ejectButton
+            readonly property bool ejectable: row.modelData.key === "photos"
+                && section.tool("eject").enabled === true
 
             objectName: "companionTool_" + row.modelData.key
             Layout.fillWidth: true
-            horizontalPadding: Kirigami.Units.largeSpacing
-            topPadding: Kirigami.Units.smallSpacing
-            bottomPadding: Kirigami.Units.smallSpacing
-            text: row.modelData.title
-            icon.name: row.modelData.key === "mirror" && row.modelData.active
+            density: "compact"
+            wrapSubtitle: true
+            avatarSize: Kirigami.Units.iconSizes.smallMedium
+            title: row.modelData.title
+            subtitle: row.modelData.subtitle
+            iconName: row.modelData.key === "mirror" && row.modelData.active
                 ? "media-playback-stop" : section.iconFor(row.modelData.key)
             enabled: row.modelData.enabled === true && !section.busy
+            pinActions: row.running || row.ejectable
             Controls.ToolTip.text: row.modelData.subtitle
             Controls.ToolTip.visible: row.hovered && !row.modelData.installed
             Controls.ToolTip.delay: Kirigami.Units.toolTipDelay
+            onClicked: section.bridge.runCompanionTool(row.modelData.key)
 
-            contentItem: RowLayout {
-                spacing: Kirigami.Units.smallSpacing
-                KD.IconTitleSubtitle {
-                    Layout.fillWidth: true
-                    title: row.text
-                    subtitle: row.modelData.subtitle
-                    icon: icon.fromControlsIcon(row.icon)
-                    wrapMode: Text.Wrap
-                    elide: Text.ElideNone
-                    opacity: row.enabled ? 1 : 0.6
-                }
-                Controls.BusyIndicator {
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
-                    visible: row.running
-                    running: row.running
-                }
-                Controls.ToolButton {
-                    id: ejectButton
-                    objectName: "companionEjectButton"
-                    visible: row.modelData.key === "photos" && section.tool("eject").enabled === true
-                    enabled: !section.busy
-                    icon.name: "media-eject"
-                    text: qsTr("Eject")
-                    display: Controls.AbstractButton.IconOnly
-                    Controls.ToolTip.text: section.tool("eject").title || text
-                    Controls.ToolTip.visible: hovered
-                    Controls.ToolTip.delay: Kirigami.Units.toolTipDelay
-                    onClicked: section.bridge.runCompanionTool("eject")
+            Controls.BusyIndicator {
+                Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+                visible: row.running
+                running: row.running
+            }
+            Controls.ToolButton {
+                id: ejectButton
+                objectName: "companionEjectButton"
+                visible: row.ejectable
+                enabled: !section.busy
+                icon.name: "media-eject"
+                text: qsTr("Eject")
+                display: Controls.AbstractButton.IconOnly
+                Controls.ToolTip.text: section.tool("eject").title || text
+                Controls.ToolTip.visible: hovered
+                Controls.ToolTip.delay: Kirigami.Units.toolTipDelay
+                onClicked: section.bridge.runCompanionTool("eject")
+            }
+        }
+    }
+
+    ListRow {
+        id: sendRow
+        objectName: "sendToRow"
+        Layout.fillWidth: true
+        visible: section.surfaces.shareAvailable === true || section.shareTargets.length > 0
+        density: "compact"
+        wrapSubtitle: true
+        avatarSize: Kirigami.Units.iconSizes.smallMedium
+        iconName: "document-send"
+        title: qsTr("Send to…")
+        subtitle: section.shareTargets.length > 0
+            ? section.shareTargets.map(target => target.label).join(", ")
+            : qsTr("Send files to a plugin target")
+        enabled: (section.surfaces.busy || "") === ""
+        onClicked: sendMenu.popup(sendRow, 0, sendRow.height)
+
+        Controls.Menu {
+            id: sendMenu
+            objectName: "sendToMenu"
+            onAboutToShow: section.loadTargets()
+            Controls.MenuItem {
+                text: qsTr("Looking for targets…")
+                enabled: false
+                visible: section.surfaces.targetsLoading === true && section.shareTargets.length === 0
+                height: visible ? implicitHeight : 0
+            }
+            Controls.MenuItem {
+                text: qsTr("No targets right now")
+                enabled: false
+                visible: section.surfaces.targetsLoading !== true
+                    && section.surfaces.targetsLoaded === true && section.shareTargets.length === 0
+                height: visible ? implicitHeight : 0
+            }
+            Repeater {
+                model: section.shareTargets
+                delegate: Controls.MenuItem {
+                    required property var modelData
+                    text: modelData.label
+                    icon.name: modelData.icon
+                    onTriggered: {
+                        section.sendKey = modelData.key
+                        sendDialog.open()
+                    }
                 }
             }
-            onClicked: section.bridge.runCompanionTool(row.modelData.key)
         }
+    }
+
+    Dialogs.FileDialog {
+        id: sendDialog
+        title: qsTr("Choose Files to Send")
+        fileMode: Dialogs.FileDialog.OpenFiles
+        onAccepted: section.bridge.sendToTarget(section.sendKey, selectedFiles)
     }
 
     Kirigami.InlineMessage {

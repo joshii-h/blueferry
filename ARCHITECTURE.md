@@ -187,6 +187,10 @@ All paths are relative to `src/blueferry/` unless noted.
 | `plugin_settings_view.py` | Toolkit-free plugin rows, store cards and settings forms for Qt and the TUI (`qt/plugin_settings.py`, `tui_settings.py`). |
 | `features.py` | The local.env switches clients may store in settings.json (`Messages1.GetFeatures/SetFeature`). |
 | `cli_plugins.py` | `plugins list` and `plugins ALIAS …` (exec of the plugin's own CLI). |
+| `plugin_surfaces.py`, `cli_surfaces.py`, `qt/plugin_surfaces.py`, `qt/qml/PluginCardSection.qml`, `tui_plugins.py` | Host side of the ApiVersion 1.2 surfaces (`card`, `share`): card rows, actions with a checked `open_uri`, "Send to…" targets; `blueferry cards`/`blueferry send`, the Qt "From Plugins" section and Tools/tray "Send to…", the terminal phone screen. Plugin calls run on worker pools with timeouts; a failing plugin becomes a dimmed hint. |
+| `plugin_notify.py`, `plugin_prefs.py` | Daemon side of the `notify` capability: watches `Plugin1.Notify`, accepts it only from the owner of an enabled notify plugin's bus name running as the same user, rate-limits, and hands it to the libnotify sink (policy, content switch); the popup button calls `InvokeAction` asynchronously. `plugin_prefs` reads the disabled list without the plugin manager. |
+| `qt/qml/ui/` | Shared QML building blocks of the design: `SectionHeader`, `ListRow`, `CardFrame`, `FilterBar`, `EmptyState`, `Notice`. |
+| `tui_design.py` | The terminal client's matching section names, segmented filters (`f`) and key-hint lines. |
 | `profile_reset.py` | Detects HFP power-ups (oFono Timedout) and A2DP ConnectProfile (InProgress) that bluetoothd keeps stuck and asks the bearer supervisor for one rate-limited Disconnect/Connect of the device. |
 | `bluez_health.py` | Detects a bluetoothd that no longer answers D-Bus (NoReply streak, Peer.Ping, /proc state) and pauses BlueFerry's own Bluetooth work. |
 | `cli_reconnect.py` | `reconnect`: manual Classic reconnect that waits for the outcome. |

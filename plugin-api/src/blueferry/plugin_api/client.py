@@ -20,9 +20,14 @@ from typing import Any, Protocol
 from . import (
     MAX_RECENT_PHOTOS,
     MAX_REPLY_BYTES,
+    METHOD_GET_CARD_ITEMS,
+    METHOD_INVOKE_ACTION,
+    METHOD_SEND_FILES,
+    METHOD_SHARE_TARGETS,
     OBJECT_PATH,
     PHOTOS_INTERFACE,
     PLUGIN_INTERFACE,
+    surfaces,
 )
 from .config import SECRET_MASK, ConfigError
 from .manifest import PluginManifest
@@ -32,6 +37,11 @@ LIST_TIMEOUT_SEC = 90.0
 FETCH_TIMEOUT_SEC = 600.0
 # SetConfig may check the new settings against the plugin's server.
 CONFIG_TIMEOUT_SEC = 60.0
+# ApiVersion 1.2 surfaces. SendFiles only starts a transfer; long ones
+# report progress on a card item.
+CARD_TIMEOUT_SEC = 15.0
+ACTION_TIMEOUT_SEC = 60.0
+SHARE_TIMEOUT_SEC = 60.0
 _ASSET_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _TIMESTAMP = re.compile(r"^[0-9T:.+\-Z ]{4,40}$")
 _PHOTO_TYPES = frozenset({"image", "video", "other"})
@@ -156,7 +166,14 @@ class PluginClient:
         )
 
     def _call(self, interface: str, method: str, signature: str, args: tuple,
-              timeout: float) -> str:
+              timeout: float, *, precheck: bool = False) -> str:
+        if precheck:
+            # Before handing over files or a click: refuse a running plugin
+            # owned by somebody else. Without an owner yet, the call below
+            # activates ours and the check after it applies.
+            owner = self._transport.owner_uid(self.manifest.bus_name)
+            if owner is not None and owner != self._uid:
+                raise PluginError("the plugin runs as a different user; ignoring it")
         reply = self._transport.call(
             self.manifest.bus_name, interface, method, signature, args, timeout,
         )
@@ -242,6 +259,76 @@ class PluginClient:
             reasons = {"": "the plugin rejected the settings"}
         return ConfigResult(ok=bool(reply["ok"]), errors=reasons)
 
+    # ---- surfaces (ApiVersion 1.2) ------------------------------------------------
+
+    def _surface(self, parse: Callable[[object], Any], interface: str, method: str,
+                 signature: str, args: tuple, timeout: float, *,
+                 precheck: bool = False) -> Any:
+        reply = self._call(interface, method, signature, args, timeout, precheck=precheck)
+        try:
+            return parse(reply)
+        except surfaces.SurfaceError as error:
+            raise PluginError(str(error)) from None
+
+    def card_items(self) -> list[surfaces.CardItem]:
+        """GetCardItems: at most 8 items, 3 actions each, plain text."""
+        return self._surface(
+            surfaces.parse_card_items, PLUGIN_INTERFACE, METHOD_GET_CARD_ITEMS, "", (),
+            CARD_TIMEOUT_SEC,
+        )
+
+    def invoke_action(
+        self, item_id: str, action_id: str, args: Mapping[str, object] | None = None,
+        *, notify: bool = False,
+    ) -> surfaces.ActionResult:
+        """InvokeAction for a card item, or with ``notify=True`` for a popup
+        button (item id ``"notify"``).
+
+        An ``open_uri`` that is neither http(s) nor a file in the plugin
+        cache is dropped.
+        """
+        if notify:
+            item_id = surfaces.NOTIFY_ITEM_ID
+        if not surfaces.valid_id(item_id) or not surfaces.valid_id(action_id):
+            raise PluginError("not an action id")
+        try:
+            payload = surfaces.args_json(args)
+        except (TypeError, ValueError):
+            raise PluginError("invalid action arguments") from None
+        result = self._surface(
+            surfaces.parse_action_result, PLUGIN_INTERFACE, METHOD_INVOKE_ACTION, "sss",
+            (item_id, action_id, payload), ACTION_TIMEOUT_SEC, precheck=True,
+        )
+        uri = self.checked_open_uri(result.open_uri) if result.open_uri else None
+        return surfaces.ActionResult(result.ok, result.message, uri)
+
+    def share_targets(self) -> list[surfaces.ShareTarget]:
+        return self._surface(
+            surfaces.parse_share_targets, PLUGIN_INTERFACE, METHOD_SHARE_TARGETS, "", (),
+            CARD_TIMEOUT_SEC,
+        )
+
+    def send_files(self, target_id: str, paths: list[str]) -> surfaces.SendResult:
+        """SendFiles with absolute paths of existing regular files."""
+        if not surfaces.valid_id(target_id):
+            raise PluginError("not a share target")
+        try:
+            files = surfaces.checked_share_paths(paths)
+        except ValueError as error:
+            raise PluginError(str(error)) from None
+        return self._surface(
+            surfaces.parse_send_result, PLUGIN_INTERFACE, METHOD_SEND_FILES, "sas",
+            (target_id, files), SHARE_TIMEOUT_SEC, precheck=True,
+        )
+
+    def checked_open_uri(self, uri: object) -> str | None:
+        """Only http(s), or a file of this plugin's own cache directory."""
+        roots = [
+            root / name for root in self._cache_roots()
+            for name in (self.manifest.id, self.manifest.alias) if name
+        ]
+        return surfaces.checked_open_uri(uri, roots, uid=self._uid)
+
     # ---- photos capability ---------------------------------------------------
 
     def list_recent(self, limit: int) -> list[Photo]:
@@ -306,6 +393,14 @@ class PluginClient:
         if not stat.S_ISREG(info.st_mode) or info.st_uid != self._uid:
             return None
         return resolved
+
+
+def plugin_cache_roots(plugin_id: str, alias: str = "") -> tuple[Path, ...]:
+    """A plugin's own cache directories: ``<cache root>/<id>`` and, with an
+    alias, ``<cache root>/<alias>`` (e.g. ``~/.cache/blueferry/immich``)."""
+    return tuple(
+        root / name for root in default_cache_roots() for name in (plugin_id, alias) if name
+    )
 
 
 def default_cache_roots() -> tuple[Path, ...]:

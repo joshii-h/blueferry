@@ -151,6 +151,34 @@ _ALL_CALLS = [
     _call("Friday", "6:30 PM", "Familie Hirsig", "+41790000002", "outgoing", 2),
     _call("Sep 28", "10:00 AM", "Zahnarzt", "+41445550000", "incoming"),
 ]
+PLUGIN_SURFACES = {
+    "loaded": True, "busy": "", "message": "", "messageOk": True, "targetsLoaded": True,
+    "targetProblems": [],
+    "targets": [{"key": "io.weirdware.blueferry.localsend:iphone", "label": "iPhone (LocalSend)",
+                 "icon": "smartphone"},
+                {"key": "io.weirdware.blueferry.webdav:ablage", "label": "Ablage",
+                 "icon": "folder-cloud"}],
+    "cards": [
+        {"pluginId": "io.weirdware.blueferry.calendar", "name": "Calendar", "ok": True, "hint": "",
+         "items": [
+             {"id": "next", "icon": "view-calendar", "title": "Zahnarzt",
+              "subtitle": "Today 14:30 · in 25 min", "actions": [
+                  {"id": "open", "label": "Open", "icon": "", "primary": True},
+                  {"id": "snooze", "label": "Snooze", "icon": "alarm-symbolic",
+                   "primary": False}]},
+             {"id": "later", "icon": "view-calendar-day", "title": "Training",
+              "subtitle": "Tomorrow 18:00", "actions": []}]},
+        {"pluginId": "io.weirdware.blueferry.localsend", "name": "LocalSend", "ok": True,
+         "hint": "", "items": [
+             {"id": "job-1", "icon": "document-send", "title": "Sending 3 files to iPhone",
+              "subtitle": "42 % · 12 MB of 28 MB", "actions": [
+                  {"id": "cancel", "label": "Cancel", "icon": "dialog-cancel",
+                   "primary": False}]}]},
+        {"pluginId": "io.example.broken", "name": "Shortcuts", "ok": False,
+         "hint": "Unavailable: the plugin did not answer in time", "items": []},
+    ],
+}
+
 CALL_ROWS = {"all": _ALL_CALLS, "missed": [row for row in _ALL_CALLS if row["missed"]]}
 
 BRIDGE_QML = """
@@ -180,6 +208,7 @@ QtObject {
     property string phoneName: "Joshua's iPhone"
     property var notifications: []
     property var notificationsInfo: ({})
+    function refreshNotifications() {}
     property var compatibility: ({})
     property var onboardingCompatibility: compatibility
     property bool compatibilityLoaded: true
@@ -226,6 +255,12 @@ QtObject {
     property var doctor: ({running: false, ran: true, ok: true, warnings: true,
         text: "INFO doctor: Target MAC configured\nWARNING doctor: Adapter CoD = 0x6c010c"})
     property var pluginSettings: (%(plugins)s)
+    property var pluginSurfaces: (%(surfaces)s)
+    function refreshPluginCards() {}
+    function invokePluginAction(pluginId, itemId, actionId) {}
+    function clearPluginCardMessage() {}
+    function loadShareTargets() {}
+    function sendToTarget(key, urls) {}
     function loadFeatures() {}
     function setFeature(name, enabled) {}
     function runDoctor() {}
@@ -285,7 +320,7 @@ def _render(scheme: str, out_dir: Path) -> None:
     source = BRIDGE_QML % {
         "status": json.dumps(STATUS), "threads": json.dumps(THREADS),
         "features": json.dumps(FEATURES), "plugins": json.dumps(PLUGINS),
-        "call_rows": json.dumps(CALL_ROWS),
+        "call_rows": json.dumps(CALL_ROWS), "surfaces": json.dumps(PLUGIN_SURFACES),
     }
     bridge_component = QQmlComponent(engine)
     bridge_component.setData(source.encode(), QUrl())
@@ -321,9 +356,17 @@ def _render(scheme: str, out_dir: Path) -> None:
     path = out_dir / f"main-{scheme}-card-connecting.png"
     window.grabWindow().save(str(path))
     print(path)
+    # The whole card: From Plugins, Tools and Send to….
+    window.resize(SIZES[-1][0], 1400)
+    QTest.qWait(400)
+    path = out_dir / f"main-{scheme}-card-full.png"
+    window.grabWindow().save(str(path))
+    print(path)
     _render_photos(bridge, window, scheme, out_dir)
     _render_settings(bridge, window, scheme, out_dir)
     _render_calls(bridge, window, scheme, out_dir)
+    _render_notifications(bridge, window, scheme, out_dir)
+    _render_dialogs(bridge, window, scheme, out_dir)
     window.deleteLater()
     application.processEvents()
 
@@ -433,6 +476,67 @@ def _render_calls(bridge, window, scheme: str, out_dir: Path) -> None:
     path = out_dir / f"calls-{scheme}-not-ready.png"
     window.grabWindow().save(str(path))
     print(path)
+
+
+def _render_notifications(bridge, window, scheme: str, out_dir: Path) -> None:
+    """Notifications tab with content, then switched off."""
+    from PySide6.QtTest import QTest
+
+    window.resize(*SIZES[0])
+    bridge.setProperty("notificationsInfo", {"enabled": True, "content": True})
+    bridge.setProperty("notifications", [
+        {"app": "WhatsApp", "time": "Today 10:41", "title": "Anna Muster",
+         "body": "Kommst du heute Abend auch zum Essen?"},
+        {"app": "SBB Mobile", "time": "Today 09:12", "title": "Verspätung",
+         "body": "IC 8 nach Bern: ca. 5 Minuten später."},
+        {"app": "Kalender", "time": "Yesterday 18:00", "title": "Zahnarzt",
+         "body": ""},
+    ])
+    window.setProperty("currentTab", 2)
+    for width, height in SIZES:
+        window.resize(width, height)
+        QTest.qWait(400)
+        path = out_dir / f"notifications-{scheme}-{width}.png"
+        window.grabWindow().save(str(path))
+        print(path)
+    bridge.setProperty("notifications", [])
+    bridge.setProperty("featureHints", {"notifications": "Set BLUEFERRY_NOTIFICATION_HISTORY=true "
+                                        "in local.env to keep a list of iPhone notifications."})
+    window.resize(*SIZES[0])
+    QTest.qWait(300)
+    path = out_dir / f"notifications-{scheme}-off.png"
+    window.grabWindow().save(str(path))
+    print(path)
+
+
+def _render_dialogs(bridge, window, scheme: str, out_dir: Path) -> None:
+    """New message with suggestions, group confirmation and pairing code."""
+    from PySide6.QtCore import QObject
+    from PySide6.QtTest import QTest
+
+    window.resize(*SIZES[0])
+    window.setProperty("currentTab", 0)
+    shots = [
+        ("new-message", "newMessageDialog", lambda dialog: (
+            dialog.setProperty("recipient", "An"), bridge.setProperty("contactResults", [
+                {"name": "Anna Muster", "address": "41790000001"},
+                {"name": "Andreas Beispiel", "address": "andreas@example.com"}]))),
+        ("group", "confirmGroupDialog", lambda dialog: bridge.groupConfirmationRequested.emit(
+            "family", "Hallo zusammen", "+41790000002\n+41790000003\npapa@example.com")),
+        ("pairing", "pairingConfirmationDialog",
+         lambda dialog: bridge.pairingConfirmationRequested.emit("482913")),
+    ]
+    for name, object_name, prepare in shots:
+        dialog = window.findChild(QObject, object_name)
+        dialog.open()
+        QTest.qWait(300)
+        prepare(dialog)
+        QTest.qWait(300)
+        path = out_dir / f"dialog-{scheme}-{name}.png"
+        window.grabWindow().save(str(path))
+        print(path)
+        dialog.close()
+        QTest.qWait(300)
 
 
 def main() -> None:

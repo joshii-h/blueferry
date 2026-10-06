@@ -4,6 +4,7 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import "ui"
 
 // Fixed overview of the paired iPhone on the left of the main window: name,
 // battery/signal, now playing and quick switches. Opt-in features that are
@@ -122,13 +123,9 @@ Controls.ScrollView {
 
         Kirigami.Separator { Layout.fillWidth: true }
 
-        Kirigami.Heading {
-            Layout.fillWidth: true
-            Layout.topMargin: Kirigami.Units.largeSpacing
-            Layout.leftMargin: Kirigami.Units.largeSpacing
-            Layout.rightMargin: Kirigami.Units.largeSpacing
-            level: 4
+        SectionHeader {
             text: qsTr("Now Playing")
+            level: 4
         }
         Loader {
             Layout.fillWidth: true
@@ -158,14 +155,9 @@ Controls.ScrollView {
 
         Kirigami.Separator { Layout.fillWidth: true; Layout.topMargin: Kirigami.Units.smallSpacing }
 
-        Kirigami.Heading {
-            Layout.fillWidth: true
-            Layout.topMargin: Kirigami.Units.largeSpacing
-            Layout.bottomMargin: Kirigami.Units.smallSpacing
-            Layout.leftMargin: Kirigami.Units.largeSpacing
-            Layout.rightMargin: Kirigami.Units.largeSpacing
-            level: 4
+        SectionHeader {
             text: qsTr("Quick Settings")
+            level: 4
         }
 
         SubtitleSwitch {
@@ -235,6 +227,13 @@ Controls.ScrollView {
                 card.bridge.setProximityLock(checked, card.status.proximity_lock_grace_sec || 60)
                 checked = Qt.binding(function() { return card.status.proximity_lock_enabled === true })
             }
+        }
+
+        Kirigami.Separator { Layout.fillWidth: true; visible: pluginCards.visible }
+
+        PluginCardSection {
+            id: pluginCards
+            bridge: card.bridge
         }
 
         Kirigami.Separator { Layout.fillWidth: true }

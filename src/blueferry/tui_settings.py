@@ -182,7 +182,7 @@ class SettingsScreen(ModalScreen[None]):
                 yield Static("Press d to run blueferry doctor.", id="settings-doctor",
                              classes="dialog-copy")
             yield Static("Enter toggle · d diagnostics · p plugins · R restart service · Esc close",
-                         classes="dialog-copy")
+                         classes="key-hints")
             with Horizontal(classes="dialog-actions"):
                 yield Button("Plugins…", id="settings-plugins")
                 yield Button("Close", id="settings-close")
@@ -479,13 +479,13 @@ class PluginsScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="plugins-dialog", classes="dialog"):
             yield Static("Plugins", classes="dialog-title")
-            yield Static("Installed", classes="field-label")
+            yield Static("Installed", classes="field-label section-title")
             yield OptionList(id="plugins-installed")
-            yield Static("Add plugins (Enter installs)", classes="field-label")
+            yield Static("Add Plugins (Enter installs)", classes="field-label section-title")
             yield OptionList(id="plugins-store")
             yield Static("", id="plugins-hint", classes="dialog-copy")
             yield Static("c settings · e enable/disable · u update · x remove · i install URL · "
-                         "l plugin lists · r refresh · Esc close", classes="dialog-copy")
+                         "l plugin lists · r refresh · Esc close", classes="key-hints")
             with Horizontal(classes="dialog-actions"):
                 yield Button("Close", id="plugins-close")
 

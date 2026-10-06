@@ -612,3 +612,44 @@ ModalScreen {
     height: auto;
     max-height: 18;
 }
+
+/* Shared design (tui_design.py): section titles with their filter, key-hint
+   lines and empty states look the same in every dialog, like the Qt
+   SectionHeader, FilterBar and EmptyState. */
+.section-title {
+    height: 2;
+    padding: 1 0 0 0;
+}
+
+.key-hints {
+    height: auto;
+    padding: 1 1 0 1;
+    color: #64748b;
+}
+
+.empty-state {
+    height: auto;
+    padding: 1;
+    color: #52627b;
+    text-style: italic;
+}
+
+#sidebar-filter {
+    height: 1;
+    padding: 0 0 0 2;
+}
+
+#phone-plugins {
+    height: auto;
+    max-height: 12;
+    background: #0d1425;
+}
+
+#send-dialog {
+    width: 72;
+}
+
+#send-targets {
+    height: auto;
+    max-height: 10;
+}

@@ -4,6 +4,7 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import "ui"
 
 // Recent iPhone app notifications (opt-in, kept only in the daemon's
 // memory). Main asks the bridge to fetch them only while this tab is shown.
@@ -17,10 +18,27 @@ ColumnLayout {
     readonly property var rows: tab.bridge.notifications || []
     spacing: 0
 
+    SectionHeader {
+        text: qsTr("Notifications")
+        Controls.ToolButton {
+            objectName: "notificationsRefresh"
+            icon.name: "view-refresh"
+            text: qsTr("Refresh")
+            display: Controls.AbstractButton.IconOnly
+            enabled: tab.optInHint === ""
+            Accessible.name: text
+            Controls.ToolTip.text: text
+            Controls.ToolTip.visible: hovered
+            onClicked: tab.bridge.refreshNotifications()
+        }
+    }
+
     Kirigami.InlineMessage {
         objectName: "notificationContentHint"
         Layout.fillWidth: true
-        Layout.margins: Kirigami.Units.smallSpacing
+        Layout.leftMargin: Kirigami.Units.largeSpacing
+        Layout.rightMargin: Kirigami.Units.largeSpacing
+        Layout.bottomMargin: Kirigami.Units.smallSpacing
         visible: tab.info.enabled === true && tab.info.content !== true
         type: Kirigami.MessageType.Information
         text: qsTr("Only app names and times are shown. Set BLUEFERRY_SHOW_NOTIFICATION_CONTENT=true in local.env to see titles and text.")
@@ -29,61 +47,32 @@ ColumnLayout {
     Controls.ScrollView {
         Layout.fillWidth: true
         Layout.fillHeight: true
+        Controls.ScrollBar.horizontal.policy: Controls.ScrollBar.AlwaysOff
 
         ListView {
             id: notificationList
             model: tab.rows
             clip: true
 
-            delegate: Controls.ItemDelegate {
+            delegate: ListRow {
                 id: row
                 required property var modelData
-                width: ListView.view.width
+                partPrefix: "notification"
+                iconName: "preferences-desktop-notification"
+                title: row.modelData.app
+                bold: true
+                meta: row.modelData.time
+                subtitle: [row.modelData.title, row.modelData.subtitle || ""]
+                    .filter(part => part !== "").join(" · ")
+                body: row.modelData.body
                 Accessible.name: row.modelData.app + ", " + row.modelData.time
-                contentItem: ColumnLayout {
-                    spacing: 0
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Controls.Label {
-                            Layout.fillWidth: true
-                            text: row.modelData.app
-                            textFormat: Text.PlainText
-                            font.bold: true
-                            elide: Text.ElideRight
-                        }
-                        Controls.Label {
-                            text: row.modelData.time
-                            textFormat: Text.PlainText
-                            opacity: 0.7
-                        }
-                    }
-                    Controls.Label {
-                        Layout.fillWidth: true
-                        visible: text !== ""
-                        text: [row.modelData.title, row.modelData.subtitle]
-                            .filter(part => part !== "").join(" · ")
-                        textFormat: Text.PlainText
-                        elide: Text.ElideRight
-                    }
-                    Controls.Label {
-                        Layout.fillWidth: true
-                        visible: text !== ""
-                        text: row.modelData.body
-                        textFormat: Text.PlainText
-                        wrapMode: Text.Wrap
-                        maximumLineCount: 4
-                        elide: Text.ElideRight
-                        opacity: 0.8
-                    }
-                }
             }
 
-            Kirigami.PlaceholderMessage {
+            EmptyState {
                 objectName: "notificationsPlaceholder"
                 anchors.centerIn: parent
-                width: parent.width - Kirigami.Units.gridUnit * 4
                 visible: notificationList.count === 0
-                enabled: tab.optInHint === ""
+                dimmed: tab.optInHint !== ""
                 icon.name: "notifications"
                 text: tab.optInHint !== ""
                     ? qsTr("Notification List Is Off")

@@ -796,3 +796,24 @@ def test_search_finds_other_addresses_in_a_merged_contact(monkeypatch):
         assert merged in app._filtered_threads()
     search.value = "address:email:"
     assert app._filtered_threads() == []
+
+
+def test_f_cycles_the_conversation_filter_like_qt() -> None:
+    async def scenario() -> None:
+        backend = _Backend()
+        backend.loaded[0] = replace(backend.loaded[0], starred=True)
+        app = BlueFerryApp(TuiState(backend), monitor_factory=lambda: None)
+        async with app.run_test(size=(120, 36)) as pilot:
+            await _wait_for_threads(app, pilot, 2)
+            app.query_one("#thread-list").focus()
+            await pilot.press("f")
+            assert app.thread_filter == "unread"
+            unread = sum(1 for thread in app.state.threads if thread.unread)
+            await _wait_for_threads(app, pilot, unread)
+            await pilot.press("f")  # starred
+            await _wait_for_threads(app, pilot, 1)
+            assert "Starred" in app.query_one("#sidebar-filter").render().plain
+            await pilot.press("f")
+            await _wait_for_threads(app, pilot, 2)
+
+    _run_headless(scenario())

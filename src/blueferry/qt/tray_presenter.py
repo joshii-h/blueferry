@@ -154,3 +154,28 @@ def tool_entries(
         _("Ask the iPhone to trust this computer"),
     ))
     return entries
+
+
+# Theme icons of the menu entries, the same the phone card uses.
+ICONS = {
+    "open": "io.weirdware.BlueFerry",
+    "audio": "audio-speakers-symbolic",
+    "hotspot": "network-wireless-hotspot",
+    "mirror_notifications": "preferences-desktop-notification",
+    "reconnect": "view-refresh",
+    "mirror": "video-display",
+    "send": "document-send",
+    "photos": "folder-pictures",
+    "eject": "media-eject",
+    "pair": "emblem-locked",
+    "share": "document-send",
+    "quit": "application-exit",
+}
+# Section titles; the same names as the phone card and the terminal client.
+SECTION_QUICK = _("Quick Settings")
+SECTION_TOOLS = _("Tools")
+
+
+def share_menu_title(loading: bool, count: int) -> str:
+    """The submenu title; the submenu itself says when it is still looking."""
+    return _("Send to…")
