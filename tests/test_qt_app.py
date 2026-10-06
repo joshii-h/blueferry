@@ -189,3 +189,36 @@ def test_terminal_signals_quit_qt_and_restore_previous_handlers(monkeypatch):
 
     application.aboutToQuit.emit()
     assert installed == previous
+
+
+def test_main_window_loads_the_phone_overview_offscreen(monkeypatch):
+    """Smoke test: the real controller drives the card-and-tabs main window."""
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from pathlib import Path
+
+    from PySide6.QtCore import QObject, QUrl
+    from PySide6.QtGui import QGuiApplication
+    from PySide6.QtQml import QQmlComponent, QQmlEngine
+
+    from blueferry.qt.controller import BridgeController
+
+    application = QGuiApplication.instance() or QGuiApplication([])
+    engine = QQmlEngine()
+    warnings: list[str] = []
+    engine.warnings.connect(lambda errors: warnings.extend(e.toString() for e in errors))
+    bridge = BridgeController(backend=object(), setup=object(), subscribe=False, autostart=False)
+    main = Path(app_module.__file__).with_name("qml") / "Main.qml"
+    component = QQmlComponent(engine, QUrl.fromLocalFile(str(main)))
+    window = component.createWithInitialProperties({"bridge": bridge})
+    try:
+        assert window is not None, [error.toString() for error in component.errors()]
+        application.processEvents()
+        for name in ("phoneCard", "mainTabs", "callsTab", "notificationsTab"):
+            assert window.findChild(QObject, name) is not None, name
+        assert window.findChild(QObject, "phoneAudioSwitch").property("enabled") is False
+        assert not warnings, "\n".join(warnings)
+    finally:
+        if window is not None:
+            window.deleteLater()
+        application.processEvents()
+        engine.deleteLater()

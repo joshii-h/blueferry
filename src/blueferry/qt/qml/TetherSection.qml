@@ -12,6 +12,8 @@ ColumnLayout {
     id: section
     objectName: "tetherSection"
     required property var bridge
+    // The phone card shows only the switch and its state.
+    property bool compact: false
 
     readonly property var tether: section.bridge.tether || ({})
     readonly property bool transitioning: section.tether.pending === true
@@ -25,16 +27,17 @@ ColumnLayout {
     Layout.fillWidth: true
     spacing: Kirigami.Units.smallSpacing
 
-    Kirigami.Heading { text: qsTr("Internet Sharing"); level: 2 }
+    Kirigami.Heading { text: qsTr("Internet Sharing"); level: 2; visible: !section.compact }
     Controls.Label {
         Layout.fillWidth: true
+        visible: !section.compact
         wrapMode: Text.Wrap
         text: qsTr("Use the iPhone's Personal Hotspot over Bluetooth. Turn on Personal Hotspot on the iPhone first. BlueFerry connects only when you switch this on.")
     }
     Controls.Switch {
         id: tetherSwitch
         objectName: "tetherSwitch"
-        text: qsTr("Share iPhone Internet")
+        text: section.compact ? qsTr("Hotspot") : qsTr("Share iPhone Internet")
         checked: section.wantsConnection()
         enabled: section.bridge.status.daemon === true && !section.transitioning
         onToggled: {

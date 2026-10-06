@@ -23,7 +23,11 @@ on, so don't make it your only way to receive an important message yet.
 - Receive and send SMS, RCS, and iMessage through the iPhone.
 - Sync contacts, including phone numbers and Apple-ID email addresses.
 - Mark messages read from the desktop.
-- Use native GTK, KDE/Kirigami, Quickshell, or terminal clients.
+- Use native GTK, KDE/Kirigami, Quickshell, or terminal clients. The
+  Kirigami client shows a phone card (battery, now playing, sound, hotspot and
+  away-lock switches) next to Messages, Calls and Notifications tabs; settings
+  sit behind the gear in the header. Opt-in features that are off stay
+  visible but disabled and name the `local.env` setting that turns them on.
 - Keep local history encrypted with GNOME Keyring or KDE Wallet.
 - Group chats, when BlueFerry can identify the participants safely.
 - Optional: recent calls and missed-call notifications (off by default; see
@@ -724,8 +728,8 @@ BLUEFERRY_CALL_HISTORY_INTERVAL_SEC=300
   message, and enabling the option is your consent.
 
 View the list with `blueferry calls-history` (`--missed`, `--limit N`,
-`--sync` to refresh from the iPhone first) or **Recent Calls** in the KDE
-client's menu. The GTK, terminal, and Quickshell clients do not show it yet.
+`--sync` to refresh from the iPhone first) or the **Calls** tab of the KDE
+client. The GTK, terminal, and Quickshell clients do not show it yet.
 
 ## iPhone media control (optional)
 
@@ -752,7 +756,7 @@ blueferry media toggle     # also: play, pause, next, previous, volume-up,
 
 Only commands the iPhone currently offers are sent; for example, like/dislike
 exist only for players that advertise them. The Kirigami client shows a small
-now-playing bar above the conversations while a player is active.
+now-playing bar on its phone card while a player is active.
 
 With the MPRIS option, BlueFerry registers
 `org.mpris.MediaPlayer2.blueferry_iphone` on your session bus while the iPhone

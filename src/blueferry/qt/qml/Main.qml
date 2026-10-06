@@ -17,7 +17,6 @@ Kirigami.ApplicationWindow {
     onIphoneSettingsPageChanged: Qt.callLater(root.markSelectedThreadRead)
     property bool firstRunRedirected: false
     property var iphoneSettingsPage: null
-    property var recentCallsPage: null
     property string pendingMessageHandle: ""
 
     visible: true
@@ -50,8 +49,7 @@ Kirigami.ApplicationWindow {
     function selectMessage(handle) {
         const thread = conversationLogic.threadForMessage(bridge.threads, handle)
         if (!thread) return false
-        closePhoneSettings()
-        pageStack.currentIndex = 0
+        showTab(messagesTab)
         selectedThreadKey = thread.key
         pendingMessageHandle = ""
         return true
@@ -114,27 +112,37 @@ Kirigami.ApplicationWindow {
         pageStack.removePage(page)
     }
 
-    function openRecentCalls() {
-        if (!recentCallsLoader.item)
-            return
-        if (recentCallsPage !== null) {
-            pageStack.currentIndex = pageStack.depth - 1
-            return
+    // Tabs of the main page. Opt-in data is fetched only while its tab is
+    // shown and forgotten when it is left.
+    readonly property int messagesTab: 0
+    readonly property int callsTab: 1
+    readonly property int notificationsTab: 2
+    property int currentTab: messagesTab
+    property bool callHistoryWatched: false
+    property bool notificationsWatched: false
+    onCurrentTabChanged: root.syncWatches()
+
+    function syncWatches() {
+        const calls = root.currentTab === root.callsTab && bridge.callHistoryEnabled === true
+        if (calls !== root.callHistoryWatched) {
+            root.callHistoryWatched = calls
+            bridge.watchCallHistory(calls)
         }
-        closePhoneSettings()
-        recentCallsPage = pageStack.push(recentCallsLoader.item)
-        // Records are fetched only while the page is open.
-        bridge.watchCallHistory(true)
+        const notifications = root.currentTab === root.notificationsTab
+        if (notifications !== root.notificationsWatched) {
+            root.notificationsWatched = notifications
+            bridge.watchNotifications(notifications)
+        }
     }
 
-    function closeRecentCalls() {
-        if (recentCallsPage === null)
-            return
-        // Remove before clearing the reference: the Loader stays active while
-        // recentCallsPage is set, so the page is never destroyed on the stack.
-        pageStack.removePage(recentCallsPage)
-        recentCallsPage = null
-        bridge.watchCallHistory(false)
+    function showTab(tab) {
+        closePhoneSettings()
+        pageStack.currentIndex = 0
+        currentTab = tab
+    }
+
+    function openRecentCalls() {
+        showTab(callsTab)
     }
 
     function togglePhoneSettings() {
@@ -170,8 +178,7 @@ Kirigami.ApplicationWindow {
         }
 
         function onStatusChanged() {
-            if (root.bridge.callHistoryEnabled !== true)
-                root.closeRecentCalls()
+            root.syncWatches()
         }
 
         function onSetupLoadedChanged() {
@@ -197,49 +204,6 @@ Kirigami.ApplicationWindow {
     }
 
     pageStack.initialPage: messagesPage
-
-    globalDrawer: Kirigami.GlobalDrawer {
-        actions: [
-            Kirigami.Action {
-                text: qsTr("iPhone Settings")
-                icon.name: "phone"
-                onTriggered: root.openPhoneSettings()
-            },
-            Kirigami.Action {
-                // Optional HFP calls; hidden unless the backend enables them.
-                text: qsTr("Phone Calls")
-                icon.name: "call-start"
-                visible: (root.bridge.status || {}).calls_enabled === true
-                onTriggered: (callsLoader.item as CallsDialog)?.open()
-            },
-            Kirigami.Action {
-                text: qsTr("Recent Calls")
-                icon.name: "call-start"
-                // Opt-in backend feature (BLUEFERRY_CALL_HISTORY_ENABLED).
-                visible: root.bridge.callHistoryEnabled === true
-                onTriggered: root.openRecentCalls()
-            },
-            Kirigami.Action {
-                text: qsTr("Keyboard Shortcuts")
-                icon.name: "preferences-desktop-keyboard-shortcuts"
-                onTriggered: shortcutsDialog.open()
-            },
-            Kirigami.Action {
-                text: qsTr("About BlueFerry")
-                icon.name: "help-about"
-                onTriggered: {
-                    root.closePhoneSettings()
-                    root.pageStack.layers.push(aboutPage)
-                }
-            },
-            Kirigami.Action {
-                text: qsTr("Quit")
-                icon.name: "application-exit"
-                shortcut: StandardKey.Quit
-                onTriggered: Qt.quit()
-            }
-        ]
-    }
 
     Kirigami.PromptDialog {
         id: rosterChangedDialog
@@ -447,10 +411,37 @@ Kirigami.ApplicationWindow {
     Kirigami.Page {
         id: messagesPage
         visible: false
-        title: qsTr("Messages")
+        title: qsTr("BlueFerry")
         padding: 0
-        property bool narrow: width < 680
+        // The phone card collapses behind a header button on small windows.
+        property bool compact: width < Kirigami.Units.gridUnit * 40
+        property bool cardOpen: false
+        property bool narrow: messagesSplit.width < Kirigami.Units.gridUnit * 30
         property var thread: root.selectedThread()
+
+        actions: [
+            Kirigami.Action {
+                text: qsTr("Phone")
+                icon.name: "smartphone"
+                visible: messagesPage.compact
+                checkable: true
+                checked: messagesPage.cardOpen
+                displayHint: Kirigami.DisplayHint.IconOnly
+                onToggled: messagesPage.cardOpen = checked
+            },
+            Kirigami.Action {
+                text: qsTr("New Message")
+                icon.name: "list-add"
+                displayHint: Kirigami.DisplayHint.IconOnly
+                onTriggered: newMessageDialog.open()
+            },
+            Kirigami.Action {
+                text: qsTr("Settings")
+                icon.name: "configure"
+                displayHint: Kirigami.DisplayHint.IconOnly
+                onTriggered: root.togglePhoneSettings()
+            }
+        ]
 
         ColumnLayout {
             anchors.fill: parent
@@ -520,354 +511,367 @@ Kirigami.ApplicationWindow {
                     ]
                 }
 
-                Loader {
-                    Layout.fillWidth: true
-                    // Opt-in media control; absent unless the backend reports
-                    // a connected iPhone media service.
-                    active: !!root.bridge.nowPlaying && root.bridge.nowPlaying.available === true
-                    visible: active
-                    sourceComponent: NowPlayingBar {
-                        nowPlaying: root.bridge.nowPlaying
-                        onCommandRequested: command => root.bridge.sendMediaCommand(command)
-                    }
-                }
-
-                Controls.SplitView {
-                    id: messagesSplit
+                RowLayout {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    orientation: Qt.Horizontal
+                    spacing: 0
 
-                    handle: Item {
-                        implicitWidth: messagesPage.narrow
-                            ? 0 : Kirigami.Units.smallSpacing
-                        visible: !messagesPage.narrow
+                    PhoneCard {
+                        bridge: root.bridge
+                        Layout.fillHeight: true
+                        Layout.fillWidth: messagesPage.compact
+                        Layout.preferredWidth: messagesPage.compact
+                            ? messagesPage.width : Kirigami.Units.gridUnit * 17
+                        visible: !messagesPage.compact || messagesPage.cardOpen
+                    }
 
-                        Kirigami.Separator {
-                            anchors.centerIn: parent
-                            height: parent.height
-                        }
+                    Kirigami.Separator {
+                        Layout.fillHeight: true
+                        visible: !messagesPage.compact
                     }
 
                     ColumnLayout {
-                        Controls.SplitView.fillWidth: messagesPage.narrow
-                        Controls.SplitView.preferredWidth: messagesPage.narrow
-                            ? messagesSplit.width : messagesSplit.width * 0.35
-                        Controls.SplitView.minimumWidth: messagesPage.narrow
-                            ? 0 : Kirigami.Units.gridUnit * 12
-                        visible: !messagesPage.narrow || root.selectedThreadKey === ""
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        visible: !messagesPage.compact || !messagesPage.cardOpen
                         spacing: 0
 
-                        Controls.ToolBar {
+                        Controls.TabBar {
+                            id: mainTabs
+                            objectName: "mainTabs"
                             Layout.fillWidth: true
+                            currentIndex: root.currentTab
+                            onCurrentIndexChanged: root.currentTab = currentIndex
 
-                            contentItem: RowLayout {
-                                Controls.Label {
-                                    Layout.fillWidth: true
-                                    text: qsTr("Conversations")
-                                    font.bold: true
-                                    leftPadding: Kirigami.Units.smallSpacing
-                                }
-                                // Optional iPhone battery/signal (HFP calls
-                                // integration); absent unless a value is known.
-                                Loader {
-                                    id: phoneStatusLoader
-                                    readonly property var backendStatus: root.bridge.status || ({})
-                                    active: typeof phoneStatusLoader.backendStatus.phone_battery_level === "number"
-                                        || typeof phoneStatusLoader.backendStatus.phone_signal_strength === "number"
-                                    visible: active
-                                    sourceComponent: PhoneStatusIndicator {
-                                        objectName: "phoneStatusIndicator"
-                                        status: phoneStatusLoader.backendStatus
-                                    }
-                                }
-                                Controls.ToolButton {
-                                    icon.name: "list-add"
-                                    text: qsTr("New Message")
-                                    display: Controls.AbstractButton.IconOnly
-                                    Accessible.name: text
-                                    Controls.ToolTip.text: text
-                                    Controls.ToolTip.visible: hovered
-                                    onClicked: newMessageDialog.open()
-                                }
-                                Controls.ToolButton {
-                                    visible: messagesPage.narrow
-                                    icon.name: "settings-configure"
-                                    text: qsTr("Settings")
-                                    display: Controls.AbstractButton.IconOnly
-                                    Accessible.name: text
-                                    Controls.ToolTip.text: text
-                                    Controls.ToolTip.visible: hovered
-                                    onClicked: root.togglePhoneSettings()
-                                }
+                            Controls.TabButton {
+                                objectName: "messagesTabButton"
+                                text: qsTr("Messages")
+                                icon.name: "dialog-messages"
+                            }
+                            Controls.TabButton {
+                                objectName: "callsTabButton"
+                                text: qsTr("Calls")
+                                icon.name: "call-start"
+                            }
+                            Controls.TabButton {
+                                objectName: "notificationsTabButton"
+                                text: qsTr("Notifications")
+                                icon.name: "notifications"
                             }
                         }
 
-                        ListView {
-                            id: threadList
+                        StackLayout {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
-                            clip: true
-                            model: root.bridge.threads
-                            currentIndex: -1
+                            currentIndex: root.currentTab
 
-                            delegate: Controls.ItemDelegate {
-                                id: threadDelegate
-                                required property var modelData
-                                width: threadList.width
-                                highlighted: root.selectedThreadKey === modelData.key
-                                Accessible.name: threadDelegate.modelData.name
-                                onClicked: root.selectedThreadKey = modelData.key
-                                contentItem: RowLayout {
-                                    spacing: Kirigami.Units.smallSpacing
+                            Controls.SplitView {
+                                id: messagesSplit
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                orientation: Qt.Horizontal
 
-                                    ContactAvatar {
-                                        bridge: root.bridge
-                                        group: threadDelegate.modelData.is_group
-                                        address: !threadDelegate.modelData.is_group
-                                            && threadDelegate.modelData.recipients.length === 1
-                                            ? threadDelegate.modelData.recipients[0] : ""
-                                    }
-                                    ColumnLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 0
-                                        Controls.Label {
-                                            id: preview
-                                            Layout.fillWidth: true
-                                            text: threadDelegate.modelData.name
-                                            textFormat: Text.PlainText
-                                            font.bold: root.threadIsUnread(threadDelegate.modelData)
-                                            elide: Text.ElideRight
-                                        }
-                                        Controls.Label {
-                                            Layout.fillWidth: true
-                                            text: threadDelegate.modelData.messages.length
-                                                ? threadDelegate.modelData.messages[threadDelegate.modelData.messages.length - 1].body
-                                                : qsTr("No Messages")
-                                            textFormat: Text.PlainText
-                                            opacity: 0.7
-                                            elide: Text.ElideRight
-                                        }
-                                    }
-                                    Controls.ToolButton {
-                                        icon.name: threadDelegate.modelData.starred
-                                            ? "starred-symbolic" : "non-starred-symbolic"
-                                        Accessible.name: threadDelegate.modelData.starred
-                                            ? qsTr("Unstar Conversation")
-                                            : qsTr("Star Conversation")
-                                        onClicked: root.bridge.setThreadStarred(
-                                            threadDelegate.modelData.key,
-                                            !threadDelegate.modelData.starred
-                                        )
+                                handle: Item {
+                                    implicitWidth: messagesPage.narrow
+                                        ? 0 : Kirigami.Units.smallSpacing
+                                    visible: !messagesPage.narrow
+
+                                    Kirigami.Separator {
+                                        anchors.centerIn: parent
+                                        height: parent.height
                                     }
                                 }
-                                TapHandler {
-                                    acceptedButtons: Qt.RightButton
-                                    onTapped: eventPoint => {
-                                        threadContextMenu.threadKey = threadDelegate.modelData.key
-                                        threadContextMenu.popup(
-                                            threadDelegate,
-                                            eventPoint.position.x,
-                                            eventPoint.position.y
-                                        )
-                                    }
-                                }
-                            }
 
-                            Kirigami.PlaceholderMessage {
-                                anchors.centerIn: parent
-                                width: parent.width - Kirigami.Units.largeSpacing * 2
-                                visible: threadList.count === 0
-                                icon.name: "mail-message-new"
-                                text: root.bridge.status.storage_policy === "none"
-                                    ? qsTr("Conversation History Disabled")
-                                    : root.retainedStorageUnavailable()
-                                        ? qsTr("Conversation History Unavailable")
-                                        : qsTr("No Conversations Yet")
-                                explanation: root.bridge.status.storage_policy === "none"
-                                    ? qsTr("Local messages are not being retained. Choose a storage option in Settings to keep conversation history.")
-                                    : root.retainedStorageUnavailable()
-                                        ? root.storageDetail()
-                                        : qsTr("New iPhone messages will appear here.")
-                            }
-                        }
-                    }
-
-                    ColumnLayout {
-                        Controls.SplitView.fillWidth: true
-                        Controls.SplitView.minimumWidth: messagesPage.narrow
-                            ? 0 : Kirigami.Units.gridUnit * 18
-                        visible: !messagesPage.narrow || root.selectedThreadKey !== ""
-                        spacing: 0
-
-                        Controls.ToolBar {
-                            Layout.fillWidth: true
-
-                            contentItem: RowLayout {
-                                Controls.ToolButton {
-                                    visible: messagesPage.narrow
-                                    icon.name: "go-previous"
-                                    text: qsTr("Back")
-                                    display: Controls.AbstractButton.IconOnly
-                                    Accessible.name: text
-                                    Controls.ToolTip.text: text
-                                    Controls.ToolTip.visible: hovered
-                                    onClicked: root.selectedThreadKey = ""
-                                }
                                 ColumnLayout {
-                                    Layout.fillWidth: true
+                                    Controls.SplitView.fillWidth: messagesPage.narrow
+                                    Controls.SplitView.preferredWidth: messagesPage.narrow
+                                        ? messagesSplit.width : messagesSplit.width * 0.35
+                                    Controls.SplitView.minimumWidth: messagesPage.narrow
+                                        ? 0 : Kirigami.Units.gridUnit * 12
+                                    visible: !messagesPage.narrow || root.selectedThreadKey === ""
+                                    spacing: 0
+
+                                    Controls.ToolBar {
+                                        Layout.fillWidth: true
+
+                                        contentItem: RowLayout {
+                                            Controls.Label {
+                                                Layout.fillWidth: true
+                                                text: qsTr("Conversations")
+                                                font.bold: true
+                                                leftPadding: Kirigami.Units.smallSpacing
+                                            }
+                                        }
+                                    }
+
+                                    ListView {
+                                        id: threadList
+                                        Layout.fillWidth: true
+                                        Layout.fillHeight: true
+                                        clip: true
+                                        model: root.bridge.threads
+                                        currentIndex: -1
+
+                                        delegate: Controls.ItemDelegate {
+                                            id: threadDelegate
+                                            required property var modelData
+                                            width: threadList.width
+                                            highlighted: root.selectedThreadKey === modelData.key
+                                            Accessible.name: threadDelegate.modelData.name
+                                            onClicked: root.selectedThreadKey = modelData.key
+                                            contentItem: RowLayout {
+                                                spacing: Kirigami.Units.smallSpacing
+
+                                                ContactAvatar {
+                                                    bridge: root.bridge
+                                                    group: threadDelegate.modelData.is_group
+                                                    address: !threadDelegate.modelData.is_group
+                                                        && threadDelegate.modelData.recipients.length === 1
+                                                        ? threadDelegate.modelData.recipients[0] : ""
+                                                }
+                                                ColumnLayout {
+                                                    Layout.fillWidth: true
+                                                    spacing: 0
+                                                    Controls.Label {
+                                                        id: preview
+                                                        Layout.fillWidth: true
+                                                        text: threadDelegate.modelData.name
+                                                        textFormat: Text.PlainText
+                                                        font.bold: root.threadIsUnread(threadDelegate.modelData)
+                                                        elide: Text.ElideRight
+                                                    }
+                                                    Controls.Label {
+                                                        Layout.fillWidth: true
+                                                        text: threadDelegate.modelData.messages.length
+                                                            ? threadDelegate.modelData.messages[threadDelegate.modelData.messages.length - 1].body
+                                                            : qsTr("No Messages")
+                                                        textFormat: Text.PlainText
+                                                        opacity: 0.7
+                                                        elide: Text.ElideRight
+                                                    }
+                                                }
+                                                Controls.ToolButton {
+                                                    icon.name: threadDelegate.modelData.starred
+                                                        ? "starred-symbolic" : "non-starred-symbolic"
+                                                    Accessible.name: threadDelegate.modelData.starred
+                                                        ? qsTr("Unstar Conversation")
+                                                        : qsTr("Star Conversation")
+                                                    onClicked: root.bridge.setThreadStarred(
+                                                        threadDelegate.modelData.key,
+                                                        !threadDelegate.modelData.starred
+                                                    )
+                                                }
+                                            }
+                                            TapHandler {
+                                                acceptedButtons: Qt.RightButton
+                                                onTapped: eventPoint => {
+                                                    threadContextMenu.threadKey = threadDelegate.modelData.key
+                                                    threadContextMenu.popup(
+                                                        threadDelegate,
+                                                        eventPoint.position.x,
+                                                        eventPoint.position.y
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        Kirigami.PlaceholderMessage {
+                                            anchors.centerIn: parent
+                                            width: parent.width - Kirigami.Units.largeSpacing * 2
+                                            visible: threadList.count === 0
+                                            icon.name: "mail-message-new"
+                                            text: root.bridge.status.storage_policy === "none"
+                                                ? qsTr("Conversation History Disabled")
+                                                : root.retainedStorageUnavailable()
+                                                    ? qsTr("Conversation History Unavailable")
+                                                    : qsTr("No Conversations Yet")
+                                            explanation: root.bridge.status.storage_policy === "none"
+                                                ? qsTr("Local messages are not being retained. Choose a storage option in Settings to keep conversation history.")
+                                                : root.retainedStorageUnavailable()
+                                                    ? root.storageDetail()
+                                                    : qsTr("New iPhone messages will appear here.")
+                                        }
+                                    }
+                                }
+
+                                ColumnLayout {
+                                    Controls.SplitView.fillWidth: true
+                                    Controls.SplitView.minimumWidth: messagesPage.narrow
+                                        ? 0 : Kirigami.Units.gridUnit * 18
+                                    visible: !messagesPage.narrow || root.selectedThreadKey !== ""
+                                    spacing: 0
+
+                                    Controls.ToolBar {
+                                        Layout.fillWidth: true
+
+                                        contentItem: RowLayout {
+                                            Controls.ToolButton {
+                                                visible: messagesPage.narrow
+                                                icon.name: "go-previous"
+                                                text: qsTr("Back")
+                                                display: Controls.AbstractButton.IconOnly
+                                                Accessible.name: text
+                                                Controls.ToolTip.text: text
+                                                Controls.ToolTip.visible: hovered
+                                                onClicked: root.selectedThreadKey = ""
+                                            }
+                                            ColumnLayout {
+                                                Layout.fillWidth: true
+                                                Controls.Label {
+                                                    Layout.fillWidth: true
+                                                    text: messagesPage.thread ? messagesPage.thread.name : qsTr("Conversation")
+                                                    textFormat: Text.PlainText
+                                                    font.bold: true
+                                                    elide: Text.ElideRight
+                                                }
+                                                Controls.Label {
+                                                    Layout.fillWidth: true
+                                                    visible: messagesPage.thread !== null && !messagesPage.thread.is_group
+                                                    text: visible ? qsTr("Reply to: %1").arg(messagesPage.thread.recipients.join(", ")) : ""
+                                                    textFormat: Text.PlainText
+                                                    elide: Text.ElideRight
+                                                    opacity: 0.7
+                                                }
+                                            }
+                                            Controls.ToolButton {
+                                                visible: messagesPage.thread !== null
+                                                    && messagesPage.thread.group_origin === "named"
+                                                icon.name: "system-users"
+                                                text: qsTr("Edit Group Participants")
+                                                display: Controls.AbstractButton.IconOnly
+                                                Accessible.name: text
+                                                Controls.ToolTip.text: text
+                                                Controls.ToolTip.visible: hovered
+                                                onClicked: {
+                                                    groupParticipantsDialog.thread = messagesPage.thread
+                                                    groupParticipantsDialog.open()
+                                                }
+                                            }
+                                        }
+                                        }
+                                    }
+
                                     Controls.Label {
                                         Layout.fillWidth: true
-                                        text: messagesPage.thread ? messagesPage.thread.name : qsTr("Conversation")
-                                        textFormat: Text.PlainText
-                                        font.bold: true
-                                        elide: Text.ElideRight
+                                        visible: messagesPage.thread !== null
+                                            && messagesPage.thread.messages_truncated === true
+                                        text: qsTr("Showing recent messages. Older messages remain in local history.")
+                                        wrapMode: Text.Wrap
                                     }
-                                    Controls.Label {
+
+                                    ListView {
+                                        id: messageList
                                         Layout.fillWidth: true
-                                        visible: messagesPage.thread !== null && !messagesPage.thread.is_group
-                                        text: visible ? qsTr("Reply to: %1").arg(messagesPage.thread.recipients.join(", ")) : ""
-                                        textFormat: Text.PlainText
-                                        elide: Text.ElideRight
-                                        opacity: 0.7
+                                        Layout.fillHeight: true
+                                        clip: true
+                                        spacing: Kirigami.Units.smallSpacing
+                                        model: messagesPage.thread ? messagesPage.thread.messages : []
+                                        verticalLayoutDirection: ListView.TopToBottom
+
+                                        delegate: Item {
+                                            id: messageDelegate
+                                            required property var modelData
+                                            width: messageList.width
+                                            implicitHeight: bubble.implicitHeight + Kirigami.Units.smallSpacing * 2
+
+                                            MessageBubble {
+                                                id: bubble
+                                                message: messageDelegate.modelData
+                                                availableWidth: messageList.width
+                                                showSender: messagesPage.thread !== null
+                                                    && messagesPage.thread.is_group
+                                                anchors.right: messageDelegate.modelData.outgoing ? parent.right : undefined
+                                                anchors.left: messageDelegate.modelData.outgoing ? undefined : parent.left
+                                                anchors.margins: Kirigami.Units.largeSpacing
+                                            }
+                                        }
+
+                                        Kirigami.PlaceholderMessage {
+                                            anchors.centerIn: parent
+                                            width: parent.width - Kirigami.Units.largeSpacing * 4
+                                            visible: messagesPage.thread === null
+                                            text: qsTr("Select a Conversation")
+                                        }
+
+                                        onCountChanged: positionViewAtEnd()
                                     }
-                                }
-                                Controls.ToolButton {
-                                    visible: messagesPage.thread !== null
-                                        && messagesPage.thread.group_origin === "named"
-                                    icon.name: "system-users"
-                                    text: qsTr("Edit Group Participants")
-                                    display: Controls.AbstractButton.IconOnly
-                                    Accessible.name: text
-                                    Controls.ToolTip.text: text
-                                    Controls.ToolTip.visible: hovered
-                                    onClicked: {
-                                        groupParticipantsDialog.thread = messagesPage.thread
-                                        groupParticipantsDialog.open()
+
+                                    Kirigami.Separator { Layout.fillWidth: true }
+
+                                    Kirigami.InlineMessage {
+                                        Layout.fillWidth: true
+                                        Layout.margins: Kirigami.Units.smallSpacing
+                                        visible: messagesPage.thread !== null
+                                            && messagesPage.thread.participants_required === true
+                                        type: Kirigami.MessageType.Information
+                                        text: messagesPage.thread
+                                            ? messagesPage.thread.roster_changed
+                                                ? root.escapedRichText(
+                                                    qsTr("%1 is not in BlueFerry's saved participant list for %2. Review the list before replying.")
+                                                        .arg(root.htmlEscape(messagesPage.thread.unexpected_sender || qsTr("Someone new")))
+                                                        .arg(root.htmlEscape(messagesPage.thread.name))
+                                                  )
+                                                : root.escapedRichText(
+                                                    qsTr("%1 has sent a message to the group %2. BlueFerry needs its participant list before you can reply.")
+                                                        .arg(root.htmlEscape(messagesPage.thread.prompt_sender || qsTr("Someone")))
+                                                        .arg(root.htmlEscape(messagesPage.thread.name))
+                                                  )
+                                            : ""
+                                        actions: [Kirigami.Action {
+                                            text: qsTr("Add Participants")
+                                            icon.name: "list-add-user"
+                                            onTriggered: {
+                                                groupParticipantsDialog.thread = messagesPage.thread
+                                                groupParticipantsDialog.open()
+                                            }
+                                        }]
                                     }
-                                }
-                                Controls.ToolButton {
-                                    icon.name: "settings-configure"
-                                    text: qsTr("Settings")
-                                    display: Controls.AbstractButton.IconOnly
-                                    Accessible.name: text
-                                    Controls.ToolTip.text: text
-                                    Controls.ToolTip.visible: hovered
-                                    onClicked: root.togglePhoneSettings()
-                                }
-                            }
-                        }
 
-                        Controls.Label {
-                            Layout.fillWidth: true
-                            visible: messagesPage.thread !== null
-                                && messagesPage.thread.messages_truncated === true
-                            text: qsTr("Showing recent messages. Older messages remain in local history.")
-                            wrapMode: Text.Wrap
-                        }
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        Layout.margins: Kirigami.Units.smallSpacing
 
-                        ListView {
-                            id: messageList
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            clip: true
-                            spacing: Kirigami.Units.smallSpacing
-                            model: messagesPage.thread ? messagesPage.thread.messages : []
-                            verticalLayoutDirection: ListView.TopToBottom
-
-                            delegate: Item {
-                                id: messageDelegate
-                                required property var modelData
-                                width: messageList.width
-                                implicitHeight: bubble.implicitHeight + Kirigami.Units.smallSpacing * 2
-
-                                MessageBubble {
-                                    id: bubble
-                                    message: messageDelegate.modelData
-                                    availableWidth: messageList.width
-                                    showSender: messagesPage.thread !== null
-                                        && messagesPage.thread.is_group
-                                    anchors.right: messageDelegate.modelData.outgoing ? parent.right : undefined
-                                    anchors.left: messageDelegate.modelData.outgoing ? undefined : parent.left
-                                    anchors.margins: Kirigami.Units.largeSpacing
+                                        ExpandingMessageComposer {
+                                            id: composer
+                                            Connections {
+                                                target: root.bridge
+                                                function onThreadSendSucceeded(key: string, body: string): void {
+                                                    if (messagesPage.thread && messagesPage.thread.key === key
+                                                            && composer.text === body)
+                                                        composer.clear()
+                                                }
+                                            }
+                                            placeholderText: qsTr("Write a Message")
+                                            enabled: messagesPage.thread !== null
+                                                && messagesPage.thread.reply_ready && !root.bridge.busy
+                                            Accessible.name: qsTr("Message Text")
+                                            onAccepted: sendButton.clicked()
+                                        }
+                                        Controls.Button {
+                                            id: sendButton
+                                            Layout.alignment: Qt.AlignBottom
+                                            text: qsTr("Send")
+                                            icon.name: "document-send"
+                                            enabled: composer.enabled && composer.text.trim() !== ""
+                                            Accessible.name: qsTr("Send Message")
+                                            onClicked: {
+                                                root.bridge.sendThread(
+                                                    messagesPage.thread.key,
+                                                    composer.text,
+                                                    false
+                                                )
+                                            }
+                                        }
                                 }
                             }
 
-                            Kirigami.PlaceholderMessage {
-                                anchors.centerIn: parent
-                                width: parent.width - Kirigami.Units.largeSpacing * 4
-                                visible: messagesPage.thread === null
-                                text: qsTr("Select a Conversation")
+                            CallsTab {
+                                bridge: root.bridge
+                                onActiveCallsRequested: (callsLoader.item as CallsDialog)?.open()
                             }
 
-                            onCountChanged: positionViewAtEnd()
-                        }
-
-                        Kirigami.Separator { Layout.fillWidth: true }
-
-                        Kirigami.InlineMessage {
-                            Layout.fillWidth: true
-                            Layout.margins: Kirigami.Units.smallSpacing
-                            visible: messagesPage.thread !== null
-                                && messagesPage.thread.participants_required === true
-                            type: Kirigami.MessageType.Information
-                            text: messagesPage.thread
-                                ? messagesPage.thread.roster_changed
-                                    ? root.escapedRichText(
-                                        qsTr("%1 is not in BlueFerry's saved participant list for %2. Review the list before replying.")
-                                            .arg(root.htmlEscape(messagesPage.thread.unexpected_sender || qsTr("Someone new")))
-                                            .arg(root.htmlEscape(messagesPage.thread.name))
-                                      )
-                                    : root.escapedRichText(
-                                        qsTr("%1 has sent a message to the group %2. BlueFerry needs its participant list before you can reply.")
-                                            .arg(root.htmlEscape(messagesPage.thread.prompt_sender || qsTr("Someone")))
-                                            .arg(root.htmlEscape(messagesPage.thread.name))
-                                      )
-                                : ""
-                            actions: [Kirigami.Action {
-                                text: qsTr("Add Participants")
-                                icon.name: "list-add-user"
-                                onTriggered: {
-                                    groupParticipantsDialog.thread = messagesPage.thread
-                                    groupParticipantsDialog.open()
-                                }
-                            }]
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Layout.margins: Kirigami.Units.smallSpacing
-
-                            ExpandingMessageComposer {
-                                id: composer
-                                Connections {
-                                    target: root.bridge
-                                    function onThreadSendSucceeded(key: string, body: string): void {
-                                        if (messagesPage.thread && messagesPage.thread.key === key
-                                                && composer.text === body)
-                                            composer.clear()
-                                    }
-                                }
-                                placeholderText: qsTr("Write a Message")
-                                enabled: messagesPage.thread !== null
-                                    && messagesPage.thread.reply_ready && !root.bridge.busy
-                                Accessible.name: qsTr("Message Text")
-                                onAccepted: sendButton.clicked()
-                            }
-                            Controls.Button {
-                                id: sendButton
-                                Layout.alignment: Qt.AlignBottom
-                                text: qsTr("Send")
-                                icon.name: "document-send"
-                                enabled: composer.enabled && composer.text.trim() !== ""
-                                Accessible.name: qsTr("Send Message")
-                                onClicked: {
-                                    root.bridge.sendThread(
-                                        messagesPage.thread.key,
-                                        composer.text,
-                                        false
-                                    )
-                                }
+                            NotificationsTab {
+                                bridge: root.bridge
                             }
                         }
                     }
@@ -908,20 +912,6 @@ Kirigami.ApplicationWindow {
         sourceComponent: iphonePageComponent
     }
 
-    Loader {
-        id: recentCallsLoader
-        // Created only while the backend reports the opt-in feature, and
-        // kept visually parented like the settings page (see above). A page
-        // still on the stack stays alive until it has been removed.
-        active: root.bridge.callHistoryEnabled === true || root.recentCallsPage !== null
-        asynchronous: false
-        visible: false
-        sourceComponent: RecentCallsPage {
-            bridge: root.bridge
-            onCloseRequested: root.closeRecentCalls()
-        }
-    }
-
     Component {
         id: iphonePageComponent
 
@@ -929,6 +919,11 @@ Kirigami.ApplicationWindow {
             bridge: root.bridge
             onCloseRequested: root.closePhoneSettings()
             onClearHistoryRequested: clearDialog.open()
+            onShortcutsRequested: shortcutsDialog.open()
+            onAboutRequested: {
+                root.closePhoneSettings()
+                root.pageStack.layers.push(aboutPage)
+            }
             onBluetoothRestartRequested: phoneSettingsDialogs.requestBluetoothRestart()
             onPairingIssueRequested: phoneSettingsDialogs.showPairingIssue()
             onForgetRequested: mac => phoneSettingsDialogs.requestForget(mac)

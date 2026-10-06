@@ -189,10 +189,14 @@ All paths are relative to `src/blueferry/` unless noted.
 | `ui/util.py` | Small UI helpers. |
 | `qt/app.py` | PySide6/Kirigami entry point. |
 | `qt/controller.py` | Asynchronous `BridgeController` exposed to QML. |
+| `qt/phone_link.py` | Pure presenters for the phone overview: audio switch state and opt-in hints naming the `local.env` setting. |
 | `qt/tasks.py` | Qt worker primitive. |
 | `qt/avatars.py` | Image provider that decodes opt-in contact photos with `QImageReader` after header and size checks. |
 | `qt/activation.py` | Qt adapter for client activation. |
-| `qt/qml/Main.qml` | Kirigami window: navigation and composition. |
+| `qt/qml/Main.qml` | Kirigami window: phone card on the left, Messages/Calls/Notifications tabs, settings behind the header gear. |
+| `qt/qml/PhoneCard.qml` | Phone overview card: name, battery/signal, now playing, sound/hotspot/away-lock switches; disabled opt-ins show their setting. |
+| `qt/qml/CallsTab.qml` | Dial pad (digits, +, *, # only) and the embedded recent-calls list. |
+| `qt/qml/NotificationsTab.qml` | Opt-in list of recent iPhone app notifications, fetched only while shown. |
 | `qt/qml/ConversationLogic.qml` | Thread lookup, roster-warning dedup, participant parsing (also used by Quickshell). |
 | `qt/qml/PhoneSettingsPage.qml` | Qt setup and preferences page. |
 | `qt/qml/PhoneSettingsDialogs.qml` | Window-owned settings/pairing dialogs that outlive the page. |

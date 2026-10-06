@@ -688,6 +688,12 @@ def settings_window(qml_engine):
             property var devices: []
             property var contactResults: []
             property var nowPlaying: ({})
+            property var tether: ({})
+            property var featureHints: ({})
+            property var phoneAudio: ({})
+            property string phoneName: "Test iPhone"
+            property var notifications: []
+            property var notificationsInfo: ({})
             property var compatibility: ({})
             property var onboardingCompatibility: compatibility
             property bool compatibilityLoaded: false
@@ -735,6 +741,10 @@ def settings_window(qml_engine):
             function loadCallHistory() { record("loadCallHistory", []); }
             function syncCallHistory() { record("syncCallHistory", []); }
             function sendMediaCommand(command) { record("sendMediaCommand", [command]); }
+            function setPhoneAudioRoute(route) { record("setPhoneAudioRoute", [route]); }
+            function watchNotifications(watched) { record("watchNotifications", [watched]); }
+            function setThreadStarred(key, starred) { record("setThreadStarred", [key, starred]); }
+            function markThreadRead(key) { record("markThreadRead", [key]); }
         }
     ''', QUrl())
     assert not component.isError(), [error.toString() for error in component.errors()]
@@ -2310,25 +2320,131 @@ def test_recent_calls_page_loads_once_and_filters_missed_calls(qml_engine):
     page.deleteLater()
 
 
-def test_recent_calls_load_on_open_and_are_forgotten_on_close(qml_engine, settings_window):
-    _window, bridge = settings_window
+def test_calls_tab_watches_call_history_only_while_shown(qml_engine, settings_window):
+    window, bridge = settings_window
     _evaluate(qml_engine, "testWindow.openRecentCalls()")
-    assert _evaluate(qml_engine, "testWindow.recentCallsPage === null") is True
-    assert _evaluate(qml_engine, "testBridge.calls") == [], "disabled feature: nothing opens"
+    QGuiApplication.processEvents()
+    assert _evaluate(qml_engine, "testWindow.currentTab === testWindow.callsTab") is True
+    assert _evaluate(qml_engine, "testBridge.calls") == [], "disabled feature: nothing loads"
+    assert _settings_object(window, "callHistoryHint").property("visible") is True
 
     bridge.setProperty("callHistoryEnabled", True)
+    bridge.setProperty("status", {"call_history_enabled": True})
     QGuiApplication.processEvents()
-    _evaluate(qml_engine, "testWindow.openRecentCalls()")
-    QGuiApplication.processEvents()
-    assert _evaluate(qml_engine, "testWindow.recentCallsPage !== null") is True
-    assert [call["method"] for call in _evaluate(qml_engine, "testBridge.calls")] == ["watchCallHistory"]
-    assert _evaluate(qml_engine, "testBridge.calls")[0]["args"] == [True]
+    assert _evaluate(qml_engine, "testBridge.calls") == [
+        {"method": "watchCallHistory", "args": [True]},
+    ]
+    assert window.findChild(QObject, "recentCallsPage") is not None
 
-    _evaluate(qml_engine, "testWindow.closeRecentCalls()")
+    _evaluate(qml_engine, "testWindow.currentTab = testWindow.messagesTab")
     QGuiApplication.processEvents()
-    assert _evaluate(qml_engine, "testWindow.recentCallsPage === null") is True
-    assert _evaluate(qml_engine, "testBridge.calls")[-1] == {"method": "watchCallHistory", "args": [False]}
+    assert _evaluate(qml_engine, "testBridge.calls")[-1] == {
+        "method": "watchCallHistory", "args": [False],
+    }
     assert _evaluate(qml_engine, "testWindow.pageStack.depth") == 1
+
+
+def test_dial_pad_dials_only_dialable_characters(qml_engine, settings_window):
+    window, bridge = settings_window
+    _evaluate(qml_engine, "testBridge.featureHints = {calls: 'Set BLUEFERRY_CALLS_ENABLED=true'}")
+    _evaluate(qml_engine, "testWindow.currentTab = testWindow.callsTab")
+    QGuiApplication.processEvents()
+    call_button = _settings_object(window, "dialPadCallButton")
+    assert call_button.property("enabled") is False
+    assert "BLUEFERRY_CALLS_ENABLED=true" in _settings_object(window, "callsHint").property("text")
+
+    bridge.setProperty("status", {"calls_enabled": True})
+    bridge.setProperty("callsState", "ready")
+    QGuiApplication.processEvents()
+    field = _settings_object(window, "dialPadField")
+    qml_engine.globalObject().setProperty("callsTabItem", qml_engine.newQObject(
+        _settings_object(window, "callsTab")))
+    for key in ("0", "7", "9", "#", "x"):
+        _evaluate(qml_engine, f"callsTabItem.append('{key}')")
+    QMetaObject.invokeMethod(_settings_object(window, "dialPlusKey"), "clicked")
+    assert field.property("text") == "079#+"
+    assert _evaluate(qml_engine, "callsTabItem.dialable('+41 (79) 1-2<b>')") == "+417912"
+    QMetaObject.invokeMethod(call_button, "clicked")
+    assert _evaluate(qml_engine, "testBridge.calls")[-1] == {"method": "dialCall", "args": ["079#+"]}
+
+
+def test_phone_card_greys_out_opt_ins_and_switches_audio_explicitly(qml_engine, settings_window):
+    window, bridge = settings_window
+    card = _settings_object(window, "phoneCard")
+    assert card.property("visible") is True
+    assert _settings_object(window, "phoneCardName").property("text") == "Test iPhone"
+    _evaluate(qml_engine, """testBridge.featureHints = {
+        media: "Set BLUEFERRY_MEDIA_CONTROL_ENABLED=true", phoneStatus: "Battery <b>needs</b> calls"
+    }""")
+    _evaluate(qml_engine, """testBridge.phoneAudio = {
+        supported: true, available: false, onPc: false, pending: false,
+        hint: "Set BLUEFERRY_KEEP_PHONE_AUDIO_ON_PHONE=false"
+    }""")
+    QGuiApplication.processEvents()
+    audio = _settings_object(window, "phoneAudioSwitch")
+    assert audio.property("enabled") is False
+    assert "KEEP_PHONE_AUDIO" in _settings_object(window, "phoneAudioHint").property("text")
+    assert "MEDIA_CONTROL" in _settings_object(window, "nowPlayingHint").property("text")
+    hint = _settings_object(window, "phoneStatusHint")
+    qml_engine.globalObject().setProperty("phoneStatusHint", qml_engine.newQObject(hint))
+    assert _evaluate(qml_engine, "phoneStatusHint.textFormat") == 0  # Text.PlainText
+    assert _settings_object(window, "proximitySwitch").property("enabled") is False
+
+    bridge.setProperty("status", {"daemon": True, "proximity_lock": "idle"})
+    _evaluate(qml_engine, """testBridge.phoneAudio = {
+        supported: true, available: true, onPc: false, pending: false, hint: "On the iPhone"
+    }""")
+    QGuiApplication.processEvents()
+    _click_control(window, audio)
+    assert _evaluate(qml_engine, "testBridge.calls")[-1] == {
+        "method": "setPhoneAudioRoute", "args": ["pc"],
+    }
+    assert audio.property("checked") is False  # until the daemon reports "pc"
+    _click_control(window, _settings_object(window, "proximitySwitch"))
+    assert _evaluate(qml_engine, "testBridge.calls")[-1] == {
+        "method": "setProximityLock", "args": [True, 60],
+    }
+
+
+def test_notifications_tab_loads_while_shown_and_renders_plain_text(qml_engine, settings_window):
+    window, _bridge = settings_window
+    _evaluate(qml_engine, "testWindow.currentTab = testWindow.notificationsTab")
+    QGuiApplication.processEvents()
+    assert _evaluate(qml_engine, "testBridge.calls") == [
+        {"method": "watchNotifications", "args": [True]},
+    ]
+    _evaluate(qml_engine, """testBridge.featureHints = {
+        notifications: "Set BLUEFERRY_NOTIFICATION_HISTORY=true"
+    }""")
+    QGuiApplication.processEvents()
+    placeholder = _settings_object(window, "notificationsPlaceholder")
+    assert "NOTIFICATION_HISTORY" in placeholder.property("explanation")
+
+    _evaluate(qml_engine, """testBridge.featureHints = {}""")
+    _evaluate(qml_engine, "testBridge.notificationsInfo = {enabled: true, content: false}")
+    _evaluate(qml_engine, """testBridge.notifications = [
+        {app: "<b>Chat</b>", time: "10:00 AM", title: "", subtitle: "", body: ""}
+    ]""")
+    QGuiApplication.processEvents()
+    assert _settings_object(window, "notificationContentHint").property("visible") is True
+    source = (ROOT / "src/blueferry/qt/qml/NotificationsTab.qml").read_text()
+    assert source.count("Controls.Label {") == source.count("textFormat: Text.PlainText")
+
+    _evaluate(qml_engine, "testWindow.currentTab = testWindow.messagesTab")
+    QGuiApplication.processEvents()
+    assert _evaluate(qml_engine, "testBridge.calls")[-1] == {
+        "method": "watchNotifications", "args": [False],
+    }
+
+
+def test_settings_page_keeps_the_former_menu_entries(qml_engine, settings_window):
+    window, _bridge = settings_window
+    _evaluate(qml_engine, "testWindow.openPhoneSettings()")
+    QGuiApplication.processEvents()
+    assert _settings_object(window, "aboutButton") is not None
+    assert _settings_object(window, "shortcutsButton") is not None
+    _evaluate(qml_engine, "testWindow.closePhoneSettings()")
+
 class _OpenRuleBridge(QObject):
     """Inert recorder: the editor may only request validated backend edits."""
 

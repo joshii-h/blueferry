@@ -12,6 +12,8 @@ Kirigami.ScrollablePage {
     required property var bridge
     signal closeRequested()
     signal clearHistoryRequested()
+    signal shortcutsRequested()
+    signal aboutRequested()
     signal bluetoothRestartRequested()
     signal pairingIssueRequested()
     signal forgetRequested(string mac)
@@ -520,6 +522,28 @@ Kirigami.ScrollablePage {
                 icon.name: "edit-clear-history"
                 enabled: !iphonePage.bridge.busy
                 onClicked: iphonePage.clearHistoryRequested()
+            }
+        }
+
+        // Former application-menu entries.
+        Kirigami.Heading { text: qsTr("BlueFerry"); level: 2 }
+        RowLayout {
+            Controls.Button {
+                objectName: "shortcutsButton"
+                text: qsTr("Keyboard Shortcuts")
+                icon.name: "preferences-desktop-keyboard-shortcuts"
+                onClicked: iphonePage.shortcutsRequested()
+            }
+            Controls.Button {
+                objectName: "aboutButton"
+                text: qsTr("About BlueFerry")
+                icon.name: "help-about"
+                onClicked: iphonePage.aboutRequested()
+            }
+            Controls.Button {
+                text: qsTr("Quit")
+                icon.name: "application-exit"
+                onClicked: Qt.quit()
             }
         }
     }

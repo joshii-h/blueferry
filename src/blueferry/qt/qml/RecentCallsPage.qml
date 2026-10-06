@@ -5,15 +5,15 @@ import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
-// Opt-in list of the iPhone's recent calls. Main.qml only instantiates it
-// through a Loader when the backend reports call_history_enabled.
-Kirigami.ScrollablePage {
+// Opt-in list of the iPhone's recent calls, embedded in the Calls tab. Main
+// only instantiates it through a Loader when the backend reports
+// call_history_enabled, and records are fetched only while the tab is shown.
+ColumnLayout {
     id: callsPage
     objectName: "recentCallsPage"
-    title: qsTr("Recent Calls")
     required property var bridge
     property bool missedOnly: false
-    signal closeRequested()
+    spacing: 0
 
     function visibleCalls() {
         const calls = callsPage.bridge.callHistory || []
@@ -38,90 +38,100 @@ Kirigami.ScrollablePage {
         return "call-incoming"
     }
 
-    actions: [
-        Kirigami.Action {
+    RowLayout {
+        Layout.fillWidth: true
+        Layout.margins: Kirigami.Units.smallSpacing
+        Kirigami.Heading {
+            Layout.fillWidth: true
+            level: 3
+            text: qsTr("Recent Calls")
+        }
+        Controls.CheckBox {
+            objectName: "missedOnlyCheckBox"
             text: qsTr("Missed Only")
-            icon.name: "call-missed"
-            checkable: true
             checked: callsPage.missedOnly
             onToggled: callsPage.missedOnly = checked
-        },
-        Kirigami.Action {
-            text: qsTr("Refresh from iPhone")
+        }
+        Controls.ToolButton {
             icon.name: "view-refresh"
+            text: qsTr("Refresh from iPhone")
+            display: Controls.AbstractButton.IconOnly
             enabled: !callsPage.bridge.busy
-            onTriggered: callsPage.bridge.syncCallHistory()
-        },
-        Kirigami.Action {
-            text: qsTr("Close")
-            icon.name: "window-close"
-            onTriggered: callsPage.closeRequested()
+            Accessible.name: text
+            Controls.ToolTip.text: text
+            Controls.ToolTip.visible: hovered
+            onClicked: callsPage.bridge.syncCallHistory()
         }
-    ]
+    }
 
-    ListView {
-        id: callsList
-        model: callsPage.visibleCalls()
-        reuseItems: true
+    Controls.ScrollView {
+        Layout.fillWidth: true
+        Layout.fillHeight: true
 
-        Kirigami.PlaceholderMessage {
-            anchors.centerIn: parent
-            width: parent.width - Kirigami.Units.gridUnit * 4
-            visible: callsList.count === 0
-            icon.name: callsPage.bridge.callHistoryError !== "" ? "dialog-warning" : "call-start"
-            text: callsPage.bridge.callHistoryError !== ""
-                ? qsTr("Call history is unavailable")
-                : (callsPage.missedOnly ? qsTr("No missed calls") : qsTr("No recent calls"))
-            explanation: callsPage.bridge.callHistoryError
-        }
+        ListView {
+            id: callsList
+            model: callsPage.visibleCalls()
+            reuseItems: true
 
-        delegate: Controls.ItemDelegate {
-            id: callRow
-            required property var modelData
-            width: ListView.view.width
-            Accessible.name: callsPage.directionText(callRow.modelData.direction)
-                + ", " + callRow.modelData.caller + ", " + callRow.modelData.time
+            Kirigami.PlaceholderMessage {
+                anchors.centerIn: parent
+                width: parent.width - Kirigami.Units.gridUnit * 4
+                visible: callsList.count === 0
+                icon.name: callsPage.bridge.callHistoryError !== "" ? "dialog-warning" : "call-start"
+                text: callsPage.bridge.callHistoryError !== ""
+                    ? qsTr("Call history is unavailable")
+                    : (callsPage.missedOnly ? qsTr("No missed calls") : qsTr("No recent calls"))
+                explanation: callsPage.bridge.callHistoryError
+            }
 
-            contentItem: RowLayout {
-                spacing: Kirigami.Units.largeSpacing
+            delegate: Controls.ItemDelegate {
+                id: callRow
+                required property var modelData
+                width: ListView.view.width
+                Accessible.name: callsPage.directionText(callRow.modelData.direction)
+                    + ", " + callRow.modelData.caller + ", " + callRow.modelData.time
 
-                Kirigami.Icon {
-                    source: callsPage.directionIcon(callRow.modelData.direction)
-                    color: callRow.modelData.missed ? Kirigami.Theme.negativeTextColor
-                                                    : Kirigami.Theme.textColor
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
-                }
+                contentItem: RowLayout {
+                    spacing: Kirigami.Units.largeSpacing
 
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 0
-
-                    Controls.Label {
-                        Layout.fillWidth: true
-                        // Remote names are plain text, never markup.
-                        textFormat: Text.PlainText
-                        text: callRow.modelData.caller
-                        elide: Text.ElideRight
+                    Kirigami.Icon {
+                        source: callsPage.directionIcon(callRow.modelData.direction)
                         color: callRow.modelData.missed ? Kirigami.Theme.negativeTextColor
                                                         : Kirigami.Theme.textColor
+                        Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                        Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
                     }
-                    Controls.Label {
+
+                    ColumnLayout {
                         Layout.fillWidth: true
+                        spacing: 0
+
+                        Controls.Label {
+                            Layout.fillWidth: true
+                            // Remote names are plain text, never markup.
+                            textFormat: Text.PlainText
+                            text: callRow.modelData.caller
+                            elide: Text.ElideRight
+                            color: callRow.modelData.missed ? Kirigami.Theme.negativeTextColor
+                                                            : Kirigami.Theme.textColor
+                        }
+                        Controls.Label {
+                            Layout.fillWidth: true
+                            textFormat: Text.PlainText
+                            text: callRow.modelData.name !== "" && callRow.modelData.address !== ""
+                                ? callsPage.directionText(callRow.modelData.direction) + " · "
+                                    + callRow.modelData.address
+                                : callsPage.directionText(callRow.modelData.direction)
+                            elide: Text.ElideRight
+                            opacity: 0.7
+                        }
+                    }
+
+                    Controls.Label {
                         textFormat: Text.PlainText
-                        text: callRow.modelData.name !== "" && callRow.modelData.address !== ""
-                            ? callsPage.directionText(callRow.modelData.direction) + " · "
-                                + callRow.modelData.address
-                            : callsPage.directionText(callRow.modelData.direction)
-                        elide: Text.ElideRight
+                        text: callRow.modelData.time
                         opacity: 0.7
                     }
-                }
-
-                Controls.Label {
-                    textFormat: Text.PlainText
-                    text: callRow.modelData.time
-                    opacity: 0.7
                 }
             }
         }
