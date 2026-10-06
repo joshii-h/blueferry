@@ -246,3 +246,17 @@ def test_unverified_senders_are_rate_limited_and_verified_ones_remembered() -> N
     _emit(bus, "Again", "later")
     assert [p.note.title for p in shown] == ["Hi", "Again"]
     assert len(bus.calls) == asked
+
+
+def test_one_shot_senders_do_not_grow_the_lookup_table() -> None:
+    now = [0.0]
+    bus = _Bus()
+    popups = PluginPopups(bus, show=lambda _p: None, plugins=lambda: [CALENDAR], uid=1000,
+                          clock=lambda: now[0])
+    popups.start()
+    for n in range(300):
+        _emit(bus, "x", "y", sender=f":1.{n}")
+    now[0] = 120.0
+    for n in range(300, 600):
+        _emit(bus, "x", "y", sender=f":1.{n}")
+    assert len(popups._lookups) <= 300

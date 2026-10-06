@@ -166,7 +166,10 @@ class PluginPopups:
             return False
         window.append(now)
         if len(table) > 256:
-            for stale in [name for name, times in table.items() if not times][:128]:
+            # One-shot senders never come back to empty their window: drop
+            # every entry whose newest call is older than the window.
+            for stale in [name for name, times in table.items()
+                          if not times or now - times[-1] > 60]:
                 del table[stale]
         return True
 

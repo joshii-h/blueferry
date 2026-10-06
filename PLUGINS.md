@@ -148,7 +148,10 @@ Where it shows up:
   The daemon reads manifests (it still runs no plugin code), accepts the
   signal only from the owner of an enabled `notify` plugin's bus name
   running as the same user (an unverified sender gets at most twelve
-  lookups a minute), and shows at most six popups a minute per plugin. A click on the button calls `InvokeAction("notify", action_id,
+  lookups a minute), and shows at most six popups a minute per plugin.
+  The check needs the plugin to still own its name when the signal
+  arrives: emit a popup and exit at once, and the first one may be lost
+  (later ones from the same connection are remembered). A click on the button calls `InvokeAction("notify", action_id,
   "{}")`. The signal itself is visible on the user's session bus; keep
   personal data out of it where you can.
 - **`open_uri`** is opened only when it is `http(s)://` or a `file://`
