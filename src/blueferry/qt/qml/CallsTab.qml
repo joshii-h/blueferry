@@ -332,16 +332,18 @@ GridLayout {
             }
         }
 
-        EmptyState {
-            objectName: "callHistoryHint"
+        Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.margins: Kirigami.Units.largeSpacing
             visible: callsTab.bridge.callHistoryEnabled !== true
-            dimmed: true
-            icon.name: "call-start"
-            text: qsTr("Recent Calls Are Off")
-            explanation: callsTab.hints.callHistory || ""
+            EmptyState {
+                anchors.centerIn: parent
+                objectName: "callHistoryHint"
+                dimmed: true
+                icon.name: "call-start"
+                text: qsTr("Recent Calls Are Off")
+                explanation: callsTab.hints.callHistory || ""
+            }
         }
     }
 }
