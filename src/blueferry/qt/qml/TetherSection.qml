@@ -25,7 +25,7 @@ ColumnLayout {
     }
 
     Layout.fillWidth: true
-    spacing: Kirigami.Units.smallSpacing
+    spacing: section.compact ? 0 : Kirigami.Units.smallSpacing
 
     Kirigami.Heading { text: qsTr("Internet Sharing"); level: 2; visible: !section.compact }
     Controls.Label {
@@ -34,9 +34,14 @@ ColumnLayout {
         wrapMode: Text.Wrap
         text: qsTr("Use the iPhone's Personal Hotspot over Bluetooth. Turn on Personal Hotspot on the iPhone first. BlueFerry connects only when you switch this on.")
     }
-    Controls.Switch {
+    SubtitleSwitch {
         id: tetherSwitch
         objectName: "tetherSwitch"
+        Layout.fillWidth: true
+        // In the phone card the state reads as the switch's explanation.
+        horizontalPadding: section.compact ? Kirigami.Units.largeSpacing : 0
+        subtitle: section.compact && section.tether.state !== "failed"
+            ? section.tether.summary || "" : ""
         text: section.compact ? qsTr("Hotspot") : qsTr("Share iPhone Internet")
         checked: section.wantsConnection()
         enabled: section.bridge.status.daemon === true && !section.transitioning
@@ -49,7 +54,7 @@ ColumnLayout {
     Controls.Label {
         objectName: "tetherSummary"
         Layout.fillWidth: true
-        visible: section.tether.state !== "failed"
+        visible: !section.compact && section.tether.state !== "failed"
         wrapMode: Text.Wrap
         textFormat: Text.PlainText
         text: section.tether.summary || ""
@@ -57,6 +62,8 @@ ColumnLayout {
     Kirigami.InlineMessage {
         objectName: "tetherError"
         Layout.fillWidth: true
+        Layout.leftMargin: section.compact ? Kirigami.Units.largeSpacing : 0
+        Layout.rightMargin: section.compact ? Kirigami.Units.largeSpacing : 0
         visible: section.tether.state === "failed"
         type: Kirigami.MessageType.Warning
         text: section.tether.summary || ""

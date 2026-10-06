@@ -36,7 +36,7 @@ Controls.ScrollView {
 
     ColumnLayout {
         width: card.availableWidth
-        spacing: Kirigami.Units.smallSpacing
+        spacing: 0
 
         RowLayout {
             Layout.fillWidth: true
@@ -44,13 +44,14 @@ Controls.ScrollView {
             spacing: Kirigami.Units.largeSpacing
 
             Kirigami.Icon {
+                Layout.alignment: Qt.AlignTop
                 source: "smartphone"
                 Layout.preferredWidth: Kirigami.Units.iconSizes.large
                 Layout.preferredHeight: Kirigami.Units.iconSizes.large
             }
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 0
+                spacing: Kirigami.Units.smallSpacing / 2
                 Kirigami.Heading {
                     objectName: "phoneCardName"
                     Layout.fillWidth: true
@@ -64,48 +65,51 @@ Controls.ScrollView {
                     Layout.fillWidth: true
                     text: card.connectionText()
                     textFormat: Text.PlainText
-                    opacity: 0.7
+                    color: Kirigami.Theme.disabledTextColor
                     elide: Text.ElideRight
+                }
+                // Battery, signal and network from the optional HFP
+                // integration; the indicator only exists while a value is known.
+                Loader {
+                    id: phoneStatusLoader
+                    Layout.fillWidth: true
+                    Layout.topMargin: Kirigami.Units.smallSpacing
+                    active: card.hasPhoneStatus
+                    visible: active
+                    sourceComponent: PhoneStatusIndicator {
+                        objectName: "phoneStatusIndicator"
+                        status: card.status
+                    }
+                }
+                Controls.Label {
+                    objectName: "phoneStatusHint"
+                    Layout.fillWidth: true
+                    visible: !card.hasPhoneStatus && (card.hints.phoneStatus || "") !== ""
+                    text: card.hints.phoneStatus || ""
+                    textFormat: Text.PlainText
+                    wrapMode: Text.Wrap
+                    color: Kirigami.Theme.disabledTextColor
+                    font: Kirigami.Theme.smallFont
                 }
             }
         }
 
-        // Battery, signal and network from the optional HFP integration;
-        // the indicator only exists while a value is known.
-        Loader {
-            id: phoneStatusLoader
-            Layout.fillWidth: true
-            Layout.leftMargin: Kirigami.Units.largeSpacing
-            Layout.rightMargin: Kirigami.Units.largeSpacing
-            active: card.hasPhoneStatus
-            visible: active
-            sourceComponent: PhoneStatusIndicator {
-                objectName: "phoneStatusIndicator"
-                status: card.status
-            }
-        }
-        Controls.Label {
-            objectName: "phoneStatusHint"
-            Layout.fillWidth: true
-            Layout.leftMargin: Kirigami.Units.largeSpacing
-            Layout.rightMargin: Kirigami.Units.largeSpacing
-            visible: !card.hasPhoneStatus && (card.hints.phoneStatus || "") !== ""
-            text: card.hints.phoneStatus || ""
-            textFormat: Text.PlainText
-            wrapMode: Text.Wrap
-            color: Kirigami.Theme.disabledTextColor
-            font: Kirigami.Theme.smallFont
-        }
-
-        Kirigami.Separator { Layout.fillWidth: true; Layout.topMargin: Kirigami.Units.smallSpacing }
+        Kirigami.Separator { Layout.fillWidth: true }
 
         Kirigami.Heading {
+            Layout.fillWidth: true
+            Layout.topMargin: Kirigami.Units.largeSpacing
             Layout.leftMargin: Kirigami.Units.largeSpacing
+            Layout.rightMargin: Kirigami.Units.largeSpacing
             level: 4
             text: qsTr("Now Playing")
         }
         Loader {
             Layout.fillWidth: true
+            Layout.leftMargin: Kirigami.Units.largeSpacing
+            Layout.rightMargin: Kirigami.Units.smallSpacing
+            Layout.topMargin: Kirigami.Units.smallSpacing
+            Layout.bottomMargin: Kirigami.Units.smallSpacing
             active: card.nowPlaying.available === true
             visible: active
             sourceComponent: NowPlayingBar {
@@ -116,8 +120,8 @@ Controls.ScrollView {
         Controls.Label {
             objectName: "nowPlayingHint"
             Layout.fillWidth: true
-            Layout.leftMargin: Kirigami.Units.largeSpacing
-            Layout.rightMargin: Kirigami.Units.largeSpacing
+            Layout.margins: Kirigami.Units.largeSpacing
+            Layout.topMargin: Kirigami.Units.smallSpacing
             visible: card.nowPlaying.available !== true
             text: card.hints.media || qsTr("Waiting for the iPhone's media service.")
             textFormat: Text.PlainText
@@ -129,89 +133,62 @@ Controls.ScrollView {
         Kirigami.Separator { Layout.fillWidth: true; Layout.topMargin: Kirigami.Units.smallSpacing }
 
         Kirigami.Heading {
+            Layout.fillWidth: true
+            Layout.topMargin: Kirigami.Units.largeSpacing
+            Layout.bottomMargin: Kirigami.Units.smallSpacing
             Layout.leftMargin: Kirigami.Units.largeSpacing
+            Layout.rightMargin: Kirigami.Units.largeSpacing
             level: 4
             text: qsTr("Quick Settings")
         }
 
-        ColumnLayout {
+        SubtitleSwitch {
+            id: audioSwitch
+            objectName: "phoneAudioSwitch"
             Layout.fillWidth: true
-            Layout.leftMargin: Kirigami.Units.largeSpacing
-            Layout.rightMargin: Kirigami.Units.largeSpacing
-            spacing: Kirigami.Units.smallSpacing
+            text: qsTr("Sound on this computer")
+            subtitle: card.audio.hint || ""
+            checked: card.audio.onPc === true
+            enabled: card.status.daemon === true && card.audio.available === true
+                && card.audio.pending !== true
+            onToggled: {
+                card.bridge.setPhoneAudioRoute(checked ? "pc" : "phone")
+                // Follow the daemon's report, not the click.
+                checked = Qt.binding(function() { return card.audio.onPc === true })
+            }
+        }
 
-            Controls.Switch {
-                id: audioSwitch
-                objectName: "phoneAudioSwitch"
-                Layout.fillWidth: true
-                text: qsTr("Sound on this computer")
-                checked: card.audio.onPc === true
-                enabled: card.status.daemon === true && card.audio.available === true
-                    && card.audio.pending !== true
-                onToggled: {
-                    card.bridge.setPhoneAudioRoute(checked ? "pc" : "phone")
-                    // Follow the daemon's report, not the click.
-                    checked = Qt.binding(function() { return card.audio.onPc === true })
-                }
+        Loader {
+            Layout.fillWidth: true
+            active: card.tether.available === true
+            visible: active
+            sourceComponent: TetherSection {
+                bridge: card.bridge
+                compact: true
             }
-            Controls.Label {
-                objectName: "phoneAudioHint"
-                Layout.fillWidth: true
-                text: card.audio.hint || ""
-                textFormat: Text.PlainText
-                wrapMode: Text.Wrap
-                color: audioSwitch.enabled ? Kirigami.Theme.textColor : Kirigami.Theme.disabledTextColor
-                opacity: audioSwitch.enabled ? 0.7 : 1
-                font: Kirigami.Theme.smallFont
-            }
+        }
+        SubtitleSwitch {
+            objectName: "tetherUnavailableSwitch"
+            Layout.fillWidth: true
+            visible: card.tether.available !== true
+            enabled: false
+            text: qsTr("Hotspot")
+            subtitle: qsTr("Internet sharing is not offered by the running BlueFerry service.")
+        }
 
-            Loader {
-                Layout.fillWidth: true
-                active: card.tether.available === true
-                visible: active
-                sourceComponent: TetherSection {
-                    bridge: card.bridge
-                    compact: true
-                }
-            }
-            Controls.Switch {
-                objectName: "tetherUnavailableSwitch"
-                Layout.fillWidth: true
-                visible: card.tether.available !== true
-                enabled: false
-                text: qsTr("Hotspot")
-            }
-            Controls.Label {
-                Layout.fillWidth: true
-                visible: card.tether.available !== true
-                text: qsTr("Internet sharing is not offered by the running BlueFerry service.")
-                textFormat: Text.PlainText
-                wrapMode: Text.Wrap
-                color: Kirigami.Theme.disabledTextColor
-                font: Kirigami.Theme.smallFont
-            }
-
-            Controls.Switch {
-                id: proximitySwitch
-                objectName: "proximitySwitch"
-                Layout.fillWidth: true
-                text: qsTr("Lock when I walk away")
-                checked: card.status.proximity_lock_enabled === true
-                enabled: card.status.daemon === true && card.status.proximity_lock !== undefined
-                    && !card.bridge.busy
-                onToggled: {
-                    card.bridge.setProximityLock(checked, card.status.proximity_lock_grace_sec || 60)
-                    checked = Qt.binding(function() { return card.status.proximity_lock_enabled === true })
-                }
-            }
-            Controls.Label {
-                Layout.fillWidth: true
-                visible: (card.hints.proximity || "") !== ""
-                text: card.hints.proximity || ""
-                textFormat: Text.PlainText
-                wrapMode: Text.Wrap
-                color: Kirigami.Theme.disabledTextColor
-                font: Kirigami.Theme.smallFont
+        SubtitleSwitch {
+            id: proximitySwitch
+            objectName: "proximitySwitch"
+            Layout.fillWidth: true
+            Layout.bottomMargin: Kirigami.Units.largeSpacing
+            text: qsTr("Lock when I walk away")
+            subtitle: card.hints.proximity || ""
+            checked: card.status.proximity_lock_enabled === true
+            enabled: card.status.daemon === true && card.status.proximity_lock !== undefined
+                && !card.bridge.busy
+            onToggled: {
+                card.bridge.setProximityLock(checked, card.status.proximity_lock_grace_sec || 60)
+                checked = Qt.binding(function() { return card.status.proximity_lock_enabled === true })
             }
         }
     }

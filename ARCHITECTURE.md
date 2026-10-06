@@ -203,6 +203,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `qt/qml/NotificationOpenMapEditor.qml` | Loaded editor for notification click rules (shown with the "all" policy). |
 | `qt/qml/OnboardingSummary.qml` | Renders the onboarding stage message. |
 | `qt/qml/TetherSection.qml` | Opt-in tethering switch, loaded only when the daemon offers `Tether1`. |
+| `qt/qml/SubtitleSwitch.qml` | Phone-card switch row with a wrapped, dimmed explanation, styled like Kirigami's subtitle delegates. |
 | `qt/qml/ProximityLockSettings.qml` | Away-lock toggle, grace period, and warning; loaded only for daemons that report it. |
 | `qt/qml/GroupConfirmationDialog.qml` | Group recipient confirmation before sending. |
 | `qt/qml/NewMessageDialog.qml` | New message composition. |

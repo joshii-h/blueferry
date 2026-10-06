@@ -73,6 +73,19 @@ RowLayout {
         implicitHeight: implicitWidth
     }
 
+    Controls.Label {
+        objectName: "phoneNetworkLabel"
+        Layout.fillWidth: true
+        visible: indicator.networkName !== ""
+        text: indicator.roaming
+            ? qsTr("%1 (roaming)").arg(indicator.networkName) : indicator.networkName
+        textFormat: Text.PlainText
+        elide: Text.ElideRight
+        color: Kirigami.Theme.disabledTextColor
+    }
+    // Keeps the values together on the left when no network name is known.
+    Item { Layout.fillWidth: true; visible: indicator.networkName === "" }
+
     HoverHandler { id: hover }
 
     // The operator name comes from the phone. The attached ToolTip of the

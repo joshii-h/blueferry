@@ -2383,7 +2383,7 @@ def test_phone_card_greys_out_opt_ins_and_switches_audio_explicitly(qml_engine, 
     QGuiApplication.processEvents()
     audio = _settings_object(window, "phoneAudioSwitch")
     assert audio.property("enabled") is False
-    assert "KEEP_PHONE_AUDIO" in _settings_object(window, "phoneAudioHint").property("text")
+    assert "KEEP_PHONE_AUDIO" in audio.property("subtitle")
     assert "MEDIA_CONTROL" in _settings_object(window, "nowPlayingHint").property("text")
     hint = _settings_object(window, "phoneStatusHint")
     qml_engine.globalObject().setProperty("phoneStatusHint", qml_engine.newQObject(hint))
