@@ -233,3 +233,21 @@ def test_main_window_loads_the_phone_overview_offscreen(monkeypatch, tmp_path):
             window.deleteLater()
         application.processEvents()
         engine.deleteLater()
+
+
+def test_own_tray_icon_steps_aside_while_the_standalone_tray_runs():
+    class Recorder:
+        def __init__(self):
+            self.calls = []
+
+        def setVisible(self, visible):
+            self.calls.append(("visible", visible))
+
+        def setQuitOnLastWindowClosed(self, quit_):
+            self.calls.append(("quit", quit_))
+
+    tray, application = Recorder(), Recorder()
+    app_module._show_own_tray(application, tray, True)
+    app_module._show_own_tray(application, tray, False)
+    assert tray.calls == [("visible", False), ("visible", True)]
+    assert application.calls == [("quit", True), ("quit", False)]
