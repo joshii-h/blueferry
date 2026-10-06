@@ -869,8 +869,9 @@ background:
 
 ## Companion tools (optional)
 
-The Qt phone card (section **Tools**), the tray menu and `blueferry tools`
-can start three programs that BlueFerry does not ship. Each entry only
+The Qt phone card (section **Tools**), the tray menu, the terminal
+client's overview (`o`, then `m` mirror, `f` LocalSend, `i` photos, `e`
+eject, `y` trust) and `blueferry tools` can start three programs that BlueFerry does not ship. Each entry only
 works when its tool is installed; otherwise it stays greyed out with what
 to install. These are local client actions; the daemon is not involved.
 

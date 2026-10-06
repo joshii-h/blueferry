@@ -10,7 +10,7 @@ _CHOICES = ("status", *companion_tools.ACTIONS)
 
 
 def _system() -> System:
-    return System()
+    return companion_tools.default_system()
 
 
 def tools(

@@ -188,6 +188,12 @@ class System:
     is_mount: Callable[[Path], bool] = os.path.ismount
 
 
+def default_system() -> System:
+    """The real system. Clients call this (not ``System()``) so the test
+    suite can swap in an inert one for every client at once."""
+    return System()
+
+
 @dataclass(frozen=True, slots=True)
 class ToolState:
     """One entry in the card, tray and CLI."""

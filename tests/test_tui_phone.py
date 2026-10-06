@@ -169,3 +169,60 @@ def test_disabled_features_show_opt_in_hints_and_send_nothing() -> None:
             assert backend.requests == []
 
     _run(scenario())
+
+
+def test_tools_text_is_plain_and_greys_out_missing_tools() -> None:
+    from blueferry import companion_tools as tools
+    from blueferry.tui_phone import tools_text
+
+    assert tools_text(None).plain == "Looking for tools…"
+    photos, eject = tools.photos_states(tools.PhotoProbe(installed=True, device=True))
+    snapshot = tools.Snapshot((
+        tools.ToolState("mirror", True, True, "[b]Mirror[/b]", "\x1b[2Jhint", active=True),
+        tools.ToolState("send", False, False, "Send", "Install LocalSend"),
+        photos, eject,
+    ))
+    text = tools_text(snapshot, needs_pairing=True)
+    plain = text.plain
+    assert "[m] ON  [b]Mirror[/b]" in plain and "\x1b" not in plain
+    assert "[f]" in plain and "Install LocalSend" in plain
+    assert "[e]" not in plain  # nothing mounted
+    assert "[y]" in plain and "trust this computer" in plain
+    dimmed = [span for span in text.spans if span.style == "dim"]
+    assert any(plain[span.start:span.end].startswith("[f]") for span in dimmed)
+    busy = tools_text(snapshot, busy="photos").plain
+    assert "[i] …   iPhone photos (USB)" in busy and "[y]" not in busy
+
+
+def test_phone_screen_runs_tools_with_keys_on_a_fake_system(tmp_path) -> None:
+    from blueferry.companion_tools import CommandResult
+    from tests.test_companion_tools import DEVICE, PHOTO_TOOLS, Fake
+
+    fake = Fake(tmp_path, installed={"uxplay", *PHOTO_TOOLS}, answers={
+        **DEVICE, ("idevicepair", "validate"): CommandResult(1, "not paired"),
+    })
+
+    async def scenario() -> None:
+        app = BlueFerryApp(
+            TuiState(_Backend()), monitor_factory=lambda: None,
+            companion_system=fake.system(),
+        )
+        async with app.run_test(size=(140, 60)) as pilot:
+            await _until(pilot, lambda: app.state.status.calls_enabled)
+            app.set_focus(None)
+            await pilot.press("o")
+            await _until(pilot, lambda: "Mirror iPhone screen" in _plain(app, "#phone-tools"))
+            await pilot.press("m")
+            await _until(pilot, lambda: len(fake.commands) == 1)
+            assert list(fake.commands) == [("uxplay", "-n", "battlestation", "-nh")]
+            await pilot.press("f")  # LocalSend missing: a hint, no launch
+            await pilot.press("i")
+            await _until(pilot, lambda: "[y]" in _plain(app, "#phone-tools"))
+            assert ["ifuse"] not in [argv[:1] for argv in fake.ran]
+            fake.answers[("idevicepair", "pair")] = CommandResult(0, "SUCCESS")
+            await pilot.press("y")
+            await _until(pilot, lambda: ["idevicepair", "pair"] in fake.ran)
+            await _until(pilot, lambda: "[y]" not in _plain(app, "#phone-tools"))
+            assert len(fake.commands) == 1
+
+    _run(scenario())

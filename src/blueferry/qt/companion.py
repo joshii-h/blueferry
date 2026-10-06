@@ -26,7 +26,7 @@ class CompanionTools(QObject):
 
     def __init__(self, system: System | None = None, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self._system = system or System()
+        self._system = system or companion_tools.default_system()
         self._pool = QThreadPool(self)
         self._pool.setMaxThreadCount(1)
         self._tasks: set[Task] = set()

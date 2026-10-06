@@ -250,6 +250,28 @@ dbus.connection.Connection.call_blocking = _record_sync_dbus(
 
 
 @pytest.fixture(autouse=True)
+def inert_companion_tools(monkeypatch):
+    """Clients never start UxPlay, LocalSend or ifuse from a test.
+
+    Every client gets its system from ``companion_tools.default_system``;
+    here that system finds no tools and refuses to run anything. Tests that
+    exercise the tools inject their own fake ``System``.
+    """
+    from blueferry import companion_tools
+
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("a test tried to start a companion tool")
+
+    inert = companion_tools.System(
+        which=lambda _name: None, desktop_app=lambda _id: None,
+        command_app=refuse, run=refuse, open_uri=refuse, kill=refuse,
+        runtime_dir=lambda: pathlib.Path("/nonexistent/blueferry-test-runtime"),
+        is_mount=lambda _path: False,
+    )
+    monkeypatch.setattr(companion_tools, "default_system", lambda: inert)
+
+
+@pytest.fixture(autouse=True)
 def sync_dbus_guard():
     """Fail a test in which daemon code made a blocking D-Bus call.
 

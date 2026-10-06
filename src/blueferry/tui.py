@@ -22,6 +22,7 @@ from blueferry import config, phone_overview
 from blueferry.backend_lifecycle import BackendLifecycleError, ensure_backend_current
 from blueferry.bus import get_session_bus
 from blueferry.client import BackendClient, BackendError, TetherUnsupportedError
+from blueferry.companion_tools import System
 from blueferry.conversation_state import (
     ConversationSnapshot,
     ConversationState,
@@ -625,8 +626,11 @@ class BlueFerryApp(App[None]):
         state: TuiState,
         *,
         monitor_factory: Callable[[], _Monitor | None] = _EventMonitor,
+        companion_system: System | None = None,
     ) -> None:
         super().__init__()
+        # UxPlay, LocalSend and iPhone photos; injectable for tests.
+        self.companion_system = companion_system
         self.state = state
         self._monitor_factory = monitor_factory
         self._monitor: _Monitor | None = None
@@ -1167,7 +1171,10 @@ class BlueFerryApp(App[None]):
         if self._shortcut_blocked() or isinstance(self.screen, PhoneScreen):
             return
         self.push_screen(
-            PhoneScreen(self.state.client, lambda: self.state.status, lambda: self.tether)
+            PhoneScreen(
+                self.state.client, lambda: self.state.status, lambda: self.tether,
+                tools_system=self.companion_system,
+            )
         )
 
     def action_media(self, command: str) -> None:
