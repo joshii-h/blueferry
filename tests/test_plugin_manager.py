@@ -1,0 +1,265 @@
+"""Plugin installs from Git URLs with fake git and venv; no process, no network."""
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+
+import pytest
+
+from blueferry.plugin_api.manifest import discover, parse_manifest
+from blueferry.plugin_manager import InstallError, PluginManager, _rewrite
+
+URL = "https://git.example.org/me/blueferry-plugin-demo"
+OLD, NEW, HEAD = "a" * 40, "b" * 40, "c" * 40
+MANIFEST = """[BlueFerry Plugin]
+Id=io.example.demo
+Name=Demo photos
+Version={version}
+ApiVersion=1.1
+MinBlueFerry=0.8
+Capabilities=photos;
+Source=https://git.example.org/me/blueferry-plugin-demo
+Exec=blueferry-demo serve
+Cli=blueferry-demo
+Alias=demo
+
+[Config url]
+Label=Server URL
+Type=url
+Required=true
+"""
+
+
+class FakeRunner:
+    """Answers git, venv and pip like the real tools would, on the file system."""
+
+    def __init__(self) -> None:
+        self.tags = {"v0.1.0": OLD}
+        self.head = HEAD
+        self.files = {
+            OLD: {"data/io.example.demo.plugin": MANIFEST.format(version="0.1.0")},
+            NEW: {"data/io.example.demo.plugin": MANIFEST.format(version="0.2.0")},
+            HEAD: {"src/demo/io.example.demo.plugin": MANIFEST.format(version="0.3.0.dev")},
+        }
+        self.calls: list[list[str]] = []
+        self.checked_out: dict[str, str] = {}
+        self.fail_pip = False
+        self.programs = ("blueferry-demo",)
+
+    def run(self, argv, *, cwd=None, timeout):
+        argv = [str(part) for part in argv]
+        self.calls.append(argv)
+        assert timeout > 0
+        if "ls-remote" in argv:
+            if "--tags" in argv:
+                return "".join(f"{commit}\trefs/tags/{tag}\n" for tag, commit in self.tags.items())
+            return f"{self.head}\tHEAD\n" if self.head else ""
+        if "clone" in argv:
+            assert argv[-2] == URL and Path(argv[-1]).is_dir()
+            return ""
+        if "checkout" in argv:
+            directory, commit = Path(argv[argv.index("-C") + 1]), argv[-1]
+            for name, text in self.files[commit].items():
+                (directory / name).parent.mkdir(parents=True, exist_ok=True)
+                (directory / name).write_text(text)
+            self.checked_out[str(directory)] = commit
+            return ""
+        if "rev-parse" in argv:
+            return self.checked_out[argv[argv.index("-C") + 1]] + "\n"
+        if "log" in argv:
+            return "bbbbbbb Add videos\nccccccc Fix paging\n"
+        if argv[1:3] == ["-m", "venv"]:
+            assert "--system-site-packages" in argv
+            (Path(argv[-1]) / "bin").mkdir(parents=True)
+            (Path(argv[-1]) / "bin" / "python").write_text("")
+            return ""
+        if argv[1:3] == ["-m", "pip"]:
+            if self.fail_pip:
+                raise InstallError("pip failed: no matching distribution")
+            for program in self.programs:
+                (Path(argv[0]).parent / program).write_text("")
+            return ""
+        if argv[1] == "-c":
+            return ""
+        raise AssertionError(f"unexpected command {argv}")
+
+
+@pytest.fixture
+def setup(tmp_path):
+    runner = FakeRunner()
+    manager = PluginManager(
+        data_home=tmp_path / "data", settings_path=tmp_path / "config" / "plugins.json",
+        runner=runner, python="/usr/bin/python3", clock=lambda: 1000.0,
+    )
+    return manager, runner
+
+
+def _ran(runner, word):
+    return [call for call in runner.calls if word in " ".join(call)]
+
+
+def test_prepare_runs_no_plugin_code_and_commit_publishes_it(setup, monkeypatch) -> None:
+    manager, runner = setup
+    monkeypatch.setenv("XDG_DATA_HOME", str(manager.data_home))
+    prepared = manager.prepare(URL)
+    assert (prepared.ref, prepared.commit) == ("v0.1.0", OLD)
+    assert not _ran(runner, "venv") and not _ran(runner, "pip")
+    rows = dict(prepared.summary())
+    assert rows["Source"] == URL and rows["Ref"].startswith("v0.1.0 (commit aaaaaaaaaaaa")
+    assert rows["Capabilities"] == "photos" and rows["Settings"] == "Server URL"
+    assert rows["Runs"] == "blueferry-demo serve"
+
+    record = manager.commit(prepared)
+    venv = manager.root / "venvs" / "io.example.demo-aaaaaaaaaaaa"
+    assert record.venv == str(venv) and record.ref == "v0.1.0"
+    installed = parse_manifest(manager.manifest_path("io.example.demo").read_text())
+    assert installed.exec == (str(venv / "bin" / "blueferry-demo"), "serve")
+    assert installed.cli == (str(venv / "bin" / "blueferry-demo"),)
+    assert [field.key for field in installed.config] == ["url"]
+    service = manager.service_path(installed).read_text()
+    assert f"Exec={venv}/bin/blueferry-demo serve" in service
+    assert os.stat(manager.manifest_path("io.example.demo")).st_mode & 0o022 == 0
+    assert (manager.source_dir("io.example.demo") / "data").is_dir()
+    assert not list((manager.root / "src").glob(".staging-*"))
+    assert manager.records()["io.example.demo"] == record
+    entries, ignored = manager.entries()
+    assert ignored == [] and entries[0].managed and entries[0].source == URL
+
+
+def test_without_tags_the_default_branch_is_pinned_as_a_commit(setup) -> None:
+    manager, runner = setup
+    runner.tags = {"latest": OLD}  # not a version tag
+    prepared = manager.prepare(URL)
+    assert prepared.ref == prepared.commit == HEAD
+    assert prepared.manifest.version == "0.3.0.dev"
+    manager.discard(prepared)
+    assert not prepared.staging.exists()
+
+
+@pytest.mark.parametrize("url", [
+    "http://git.example.org/x", "git@github.com:me/x.git", "file:///etc", "ext::sh -c id",
+    "https://git.example.org/../x", "https://exa mple.org/x",
+])
+def test_only_https_git_urls(setup, url) -> None:
+    manager, runner = setup
+    with pytest.raises(InstallError, match="https"):
+        manager.prepare(url)
+    assert runner.calls == []
+
+
+def test_explicit_refs(setup) -> None:
+    manager, runner = setup
+    runner.tags["v0.2.0"] = NEW
+    assert manager.resolve(URL, "v0.1.0") == ("v0.1.0", OLD)
+    assert manager.resolve(URL, NEW) == (NEW, NEW)
+    assert manager.resolve(URL) == ("v0.2.0", NEW)
+    with pytest.raises(InstallError, match="no tag"):
+        manager.resolve(URL, "v9")
+    with pytest.raises(InstallError, match="tag or a full"):
+        manager.resolve(URL, "--upload-pack=x")
+
+
+def test_a_manifest_that_runs_something_else_is_refused_before_asking(setup) -> None:
+    manager, runner = setup
+    runner.files[OLD] = {"data/x.plugin": MANIFEST.format(version="1").replace(
+        "Exec=blueferry-demo serve", "Exec=/bin/sh -c evil")}
+    with pytest.raises(InstallError, match="must name a program"):
+        manager.prepare(URL)
+    runner.files[OLD] = {"a.plugin": MANIFEST.format(version="1"),
+                         "data/b.plugin": MANIFEST.format(version="1")}
+    prepared = manager.prepare(URL)
+    assert prepared.manifest.version == "1"
+    manager.discard(prepared)
+    runner.files[OLD] = {"README.md": "no manifest"}
+    with pytest.raises(InstallError, match="exactly one"):
+        manager.prepare(URL)
+    assert not list((manager.root / "src").glob(".staging-*"))
+
+
+def test_a_failed_install_restores_the_previous_one(setup) -> None:
+    manager, runner = setup
+    manager.commit(manager.prepare(URL))
+    before = manager.manifest_path("io.example.demo").read_text()
+    runner.tags["v0.2.0"] = NEW
+    runner.fail_pip = True
+    with pytest.raises(InstallError, match="pip failed"):
+        manager.commit(manager.prepare(URL))
+    assert manager.manifest_path("io.example.demo").read_text() == before
+    assert manager.records()["io.example.demo"].commit == OLD
+    assert (manager.source_dir("io.example.demo") / "data" / "io.example.demo.plugin").read_text() \
+        == MANIFEST.format(version="0.1.0")
+    assert not (manager.root / "venvs" / "io.example.demo-bbbbbbbbbbbb").exists()
+
+
+def test_update_shows_the_change_and_replaces_the_venv(setup) -> None:
+    manager, runner = setup
+    manager.commit(manager.prepare(URL))
+    assert manager.prepare_update("io.example.demo") is None
+    runner.tags["v0.2.0"] = NEW
+    record, ref, commit = manager.check_update("io.example.demo")
+    assert (record.commit, ref, commit) == (OLD, "v0.2.0", NEW)
+    prepared = manager.prepare_update("io.example.demo")
+    assert prepared is not None and prepared.changes == ["bbbbbbb Add videos", "ccccccc Fix paging"]
+    assert f"{OLD}..{NEW}" in _ran(runner, "log")[0]
+    assert dict(prepared.summary())["Replaces"].startswith("v0.1.0")
+    manager.commit(prepared)
+    assert [path.name for path in (manager.root / "venvs").iterdir()] == [
+        "io.example.demo-bbbbbbbbbbbb"]
+    with pytest.raises(InstallError, match="not installed with"):
+        manager.check_update("io.example.other")
+
+
+def test_remove_deletes_only_what_install_wrote(setup, tmp_path) -> None:
+    manager, _runner = setup
+    manager.commit(manager.prepare(URL))
+    plugin_settings = tmp_path / "config" / "blueferry" / "plugins" / "io.example.demo"
+    plugin_settings.mkdir(parents=True)
+    manager.set_enabled("io.example.demo", False)
+    service = manager.service_path(parse_manifest(MANIFEST.format(version="1")))
+    removed = manager.remove("io.example.demo")
+    assert manager.manifest_path("io.example.demo") in removed and service in removed
+    assert not service.exists() and not list((manager.root / "venvs").iterdir())
+    assert manager.records() == {} and plugin_settings.is_dir()
+    assert manager.disabled() == frozenset()
+    with pytest.raises(InstallError):
+        manager.remove("io.example.demo")
+
+
+def test_enable_and_disable_persist(setup) -> None:
+    manager, _runner = setup
+    manager.set_enabled("io.a.b", False)
+    manager.set_enabled("io.c.d", False)
+    manager.set_enabled("io.a.b", True)
+    assert manager.disabled() == frozenset({"io.c.d"})
+    assert os.stat(manager.settings_path).st_mode & 0o077 == 0
+
+
+def test_install_replaces_a_manually_installed_manifest(setup, monkeypatch) -> None:
+    """The pre-store Immich setup wrote its own manifest; install takes it over."""
+    manager, _runner = setup
+    monkeypatch.setenv("XDG_DATA_HOME", str(manager.data_home))
+    manager.root.mkdir(parents=True)
+    old = manager.manifest_path("io.example.demo")
+    old.write_text(MANIFEST.format(version="0.0.1").replace(
+        "Exec=blueferry-demo serve", "Exec=/home/me/.local/bin/blueferry-demo serve"))
+    old.chmod(0o644)
+    prepared = manager.prepare(URL)
+    assert prepared.unmanaged is not None and prepared.unmanaged.version == "0.0.1"
+    assert "manually installed" in dict(prepared.summary())["Replaces"]
+    manager.commit(prepared)
+    assert discover([manager.root]).plugins[0].version == "0.1.0"
+
+
+def test_rewrite_touches_only_the_plugin_group() -> None:
+    text = "[BlueFerry Plugin]\nExec=a serve\nCli=a\n[Config x]\nExec=keep\n"
+    assert _rewrite(text, ("/v/a", "serve"), ("/v/a",)) == (
+        "[BlueFerry Plugin]\nExec=/v/a serve\nCli=/v/a\n[Config x]\nExec=keep\n"
+    )
+
+
+def test_records_survive_garbage(setup) -> None:
+    manager, _runner = setup
+    manager.root.mkdir(parents=True)
+    (manager.root / "installs.json").write_text(json.dumps({"plugins": {"x": {"bad": 1}}}))
+    assert manager.records() == {}
