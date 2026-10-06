@@ -36,6 +36,7 @@ class PluginSurfaces(QObject):
         *,
         load_cards: Callable[[], list[surfaces.PluginCard]] = surfaces.load_cards,
         load_targets: Callable[[], surfaces.ShareTargets] = surfaces.load_targets,
+        share_available: Callable[[], bool] = surfaces.share_available,
         invoke: Callable[..., surfaces.Outcome] = surfaces.invoke,
         find: Callable[[str, str], Any] = surfaces.find_plugin,
         send: Callable[..., surfaces.Outcome] = surfaces.send,
@@ -47,6 +48,7 @@ class PluginSurfaces(QObject):
         super().__init__(parent)
         self._load_cards = load_cards
         self._load_targets = load_targets
+        self._share_available = share_available
         self._invoke = invoke
         self._find = find
         self._send = send
@@ -62,6 +64,7 @@ class PluginSurfaces(QObject):
         self._state: dict[str, Any] = {
             "loaded": False, "cards": [], "busy": "", "message": "", "messageOk": True,
             "targets": [], "targetsLoaded": False, "targetProblems": [],
+            "targetsLoading": False, "shareAvailable": False,
         }
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
@@ -110,9 +113,13 @@ class PluginSurfaces(QObject):
             return
         self._loading = True
 
-        def done(cards: list[surfaces.PluginCard]) -> None:
+        def work() -> tuple:
+            return self._load_cards(), self._share_available()
+
+        def done(value: tuple) -> None:
+            cards, share = value
             self._loading = False
-            self._update(loaded=True, cards=surfaces.card_rows(cards))
+            self._update(loaded=True, cards=surfaces.card_rows(cards), shareAvailable=bool(share))
             if self._reload_again:
                 self._reload_again = False
                 self._timer.start()
@@ -122,7 +129,7 @@ class PluginSurfaces(QObject):
             self._update(loaded=True)
             self._say(message or _("Plugins are unavailable."), False)
 
-        self._run(self._load_cards, done, failed)
+        self._run(work, done, failed)
 
     def invoke(self, plugin_id: str, item_id: str, action_id: str) -> None:
         if self._state["busy"]:
@@ -146,9 +153,21 @@ class PluginSurfaces(QObject):
     # ---- share ------------------------------------------------------------------
 
     def load_targets(self) -> None:
+        """Ask the share plugins for targets (starts them); only when the
+        user opens "Send to…"."""
+        if self._state["targetsLoading"]:
+            return
+        self._update(targetsLoading=True)
+
+        def failed(message: str) -> None:
+            self._update(targetsLoading=False, targetsLoaded=True)
+            self._say(message or _("The plugins did not answer."), False)
+
         def done(targets: surfaces.ShareTargets) -> None:
             self._choices = {choice.key: choice for choice in targets.choices}
             self._update(
+                targetsLoading=False,
+                shareAvailable=bool(targets.choices) or self._state["shareAvailable"],
                 targetsLoaded=True,
                 targets=[
                     {"key": choice.key, "icon": choice.icon or "document-send",
@@ -158,7 +177,7 @@ class PluginSurfaces(QObject):
                 targetProblems=list(targets.problems),
             )
 
-        self._run(self._load_targets, done)
+        self._run(self._load_targets, done, failed)
 
     def send(self, key: str, urls: Sequence[object]) -> None:
         choice = self._choices.get(key)

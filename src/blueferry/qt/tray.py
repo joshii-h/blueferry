@@ -139,6 +139,7 @@ class TrayController(QObject):
         launch: Callable[[], bool] | None = None,
         companion: CompanionTools | None = None,
         load_targets: Callable[[], surfaces.ShareTargets] = surfaces.load_targets,
+        share_available: Callable[[], bool] = surfaces.share_available,
         send: Callable[..., surfaces.Outcome] = surfaces.send,
         pick_files: Callable[[str], list[str]] | None = None,
     ) -> None:
@@ -181,6 +182,7 @@ class TrayController(QObject):
         # "Send to…": targets from plugins with the share capability
         # (PLUGINS.md 1.2), looked up off the UI thread when the menu opens.
         self._load_targets = load_targets
+        self._share_available = share_available
         self._send = send
         self._pick_files = pick_files or pick_files_dialog
         self._plugin_pool = QThreadPool(self)
@@ -208,7 +210,10 @@ class TrayController(QObject):
         self.share_action.setVisible(False)
         self.menu.addSeparator()
         self.menu.addAction(self.quit_action)
-        self.menu.aboutToShow.connect(self.refresh_share_targets)
+        # Manifests only when the menu opens; the targets (which start the
+        # plugins) only when the submenu opens.
+        self.menu.aboutToShow.connect(self.check_share_available)
+        self.share_menu.aboutToShow.connect(self.refresh_share_targets)
         # Tools and USB devices change without a signal: look when opened.
         self.menu.aboutToShow.connect(self.companion.refresh)
         self.tray.setContextMenu(self.menu)
@@ -450,10 +455,17 @@ class TrayController(QObject):
         task.signals.finished.connect(lambda: self._plugin_tasks.discard(task))
         self._plugin_pool.start(task)
 
+    def check_share_available(self) -> None:
+        def done(value: object) -> None:
+            self.share_action.setVisible(bool(value) or bool(self.share_targets))
+
+        self._plugin_work(self._share_available, done, lambda _message: None)
+
     def refresh_share_targets(self) -> None:
         if self._targets_loading:
             return
         self._targets_loading = True
+        self.render_share()
         self._plugin_work(self._load_targets, self._targets_done,
                           lambda _message: self._targets_done(None))
 
@@ -471,9 +483,12 @@ class TrayController(QObject):
                 surfaces.choice_label(choice, self.share_targets),
             )
             action.triggered.connect(lambda _checked=False, key=choice.key: self.send_to(key))
+        if not self.share_targets:
+            placeholder = self.share_menu.addAction(
+                _("Looking for targets…") if self._targets_loading else _("No targets right now"))
+            placeholder.setEnabled(False)
         self.share_menu.setTitle(presenter.share_menu_title(
             self._targets_loading, len(self.share_targets)))
-        self.share_action.setVisible(bool(self.share_targets))
 
     def send_to(self, key: str) -> None:
         choice = next((c for c in self.share_targets if c.key == key), None)

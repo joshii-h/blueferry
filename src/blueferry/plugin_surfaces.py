@@ -143,6 +143,12 @@ def invoke(
 # ---- share --------------------------------------------------------------------
 
 
+def share_available() -> bool:
+    """Whether "Send to…" has a plugin behind it; reads manifests only and
+    starts nothing (asking for the targets would activate every plugin)."""
+    return bool(surface_plugins(CAPABILITY_SHARE))
+
+
 @dataclass(frozen=True, slots=True)
 class ShareChoice:
     """One "Send to…" entry: ``key`` is ``<plugin id>:<target id>``."""

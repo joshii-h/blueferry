@@ -239,6 +239,7 @@ _SHARE_SMOKE = textwrap.dedent("""
     tray = TrayController(
         QDBusConnection("not-connected"), launch=lambda: True,
         load_targets=lambda: surfaces.ShareTargets([choice]),
+        share_available=lambda: True,
         send=lambda target, paths: sent.append((target.key, paths))
         or surfaces.Outcome(True, "Sending 1 file"),
         pick_files=lambda label: ["/tmp/a.jpg"],
@@ -247,12 +248,17 @@ _SHARE_SMOKE = textwrap.dedent("""
     sections = [a.text() for a in tray.menu.actions() if a.isSeparator() and a.text()]
     assert sections == ["Quick Settings", "Tools"], sections
     assert not tray.share_action.isVisible()
-    tray.refresh_share_targets()
+    tray.check_share_available()  # manifests only: nothing is started
     deadline = time.monotonic() + 5
-    while not tray.share_menu.actions() and time.monotonic() < deadline:
+    while not tray.share_action.isVisible() and time.monotonic() < deadline:
         app.processEvents()
         time.sleep(0.01)
     assert tray.share_action.isVisible()
+    tray.refresh_share_targets()
+    while (not tray.share_menu.actions() or not tray.share_menu.actions()[0].isEnabled()) \
+            and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
     assert [a.text() for a in tray.share_menu.actions()] == ["iPhone (LocalSend)"]
     tray.share_menu.actions()[0].trigger()
     while not reported and time.monotonic() < deadline:

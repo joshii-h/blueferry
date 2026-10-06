@@ -24,6 +24,7 @@ ColumnLayout {
     readonly property var shareTargets: section.surfaces.targets || []
     property string sendKey: ""
 
+    // Asking for targets starts the share plugins: only when the menu opens.
     function loadTargets() {
         if (typeof section.bridge.loadShareTargets === "function")
             section.bridge.loadShareTargets()
@@ -114,13 +115,15 @@ ColumnLayout {
         id: sendRow
         objectName: "sendToRow"
         Layout.fillWidth: true
-        visible: section.shareTargets.length > 0
+        visible: section.surfaces.shareAvailable === true || section.shareTargets.length > 0
         density: "compact"
         wrapSubtitle: true
         avatarSize: Kirigami.Units.iconSizes.smallMedium
         iconName: "document-send"
         title: qsTr("Send to…")
-        subtitle: section.shareTargets.map(target => target.label).join(", ")
+        subtitle: section.shareTargets.length > 0
+            ? section.shareTargets.map(target => target.label).join(", ")
+            : qsTr("Send files to a plugin target")
         enabled: (section.surfaces.busy || "") === ""
         onClicked: sendMenu.popup(sendRow, 0, sendRow.height)
 
@@ -128,6 +131,19 @@ ColumnLayout {
             id: sendMenu
             objectName: "sendToMenu"
             onAboutToShow: section.loadTargets()
+            Controls.MenuItem {
+                text: qsTr("Looking for targets…")
+                enabled: false
+                visible: section.surfaces.targetsLoading === true && section.shareTargets.length === 0
+                height: visible ? implicitHeight : 0
+            }
+            Controls.MenuItem {
+                text: qsTr("No targets right now")
+                enabled: false
+                visible: section.surfaces.targetsLoading !== true
+                    && section.surfaces.targetsLoaded === true && section.shareTargets.length === 0
+                height: visible ? implicitHeight : 0
+            }
             Repeater {
                 model: section.shareTargets
                 delegate: Controls.MenuItem {
@@ -189,8 +205,5 @@ ColumnLayout {
         running: section.visible && !section.busy
         onTriggered: section.refresh()
     }
-    Component.onCompleted: {
-        section.refresh()
-        section.loadTargets()
-    }
+    Component.onCompleted: section.refresh()
 }

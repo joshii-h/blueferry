@@ -177,6 +177,5 @@ SECTION_TOOLS = _("Tools")
 
 
 def share_menu_title(loading: bool, count: int) -> str:
-    if loading and count == 0:
-        return _("Send to… (looking for targets)")
+    """The submenu title; the submenu itself says when it is still looking."""
     return _("Send to…")
