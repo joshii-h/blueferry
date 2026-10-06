@@ -55,6 +55,8 @@ from blueferry.contacts import ContactsResolver
 from blueferry.dbus_service import MessagesService, claim_bus_name
 from blueferry.errors import BlueFerryError
 from blueferry.event_dispatcher import EventDispatcher
+from blueferry.gio_dbus import GioDBus
+from blueferry.gio_dbus import system_bus as gio_system_bus
 from blueferry.group_routes import GroupRoutesStore
 from blueferry.history import (
     history_count,
@@ -254,7 +256,7 @@ class Daemon:
         # Where the iPhone's media playback goes. Only offered when the
         # WirePlumber policy does not strip the A2DP sink role.
         self.phone_audio_route = PhoneAudioRoute(
-            get_system_bus,
+            GioDBus(gio_system_bus),
             device_path,
             allowed=not config.KEEP_PHONE_AUDIO_ON_PHONE,
             on_changed=self._emit_status_soon,
