@@ -30,9 +30,15 @@ def _wait(predicate) -> None:
     timer = QTimer()
     timer.timeout.connect(lambda: loop.quit() if predicate() else None)
     timer.start(10)
-    QTimer.singleShot(5000, loop.quit)
+    # An owned timer, stopped below: a QTimer.singleShot(…, loop.quit) would
+    # fire seconds later on this loop after it is gone and crash the suite.
+    deadline = QTimer()
+    deadline.setSingleShot(True)
+    deadline.timeout.connect(loop.quit)
+    deadline.start(5000)
     loop.exec()
     timer.stop()
+    deadline.stop()
     assert predicate()
 
 
