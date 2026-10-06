@@ -219,6 +219,14 @@ class CallHistory(Protocol):
     def sync(self, success: Success, failure: Failure) -> None: ...
 
     def discard_cache(self) -> None: ...
+class PhoneAudioControl(Protocol):
+    def snapshot(self) -> dict[str, object]: ...
+
+    def set_route(
+        self, route: str, success: Callable[[str], None], failure: Failure,
+    ) -> None: ...
+
+
 class TetherControl(Protocol):
     def snapshot(self) -> dict[str, object]: ...
 
@@ -253,6 +261,7 @@ class BackendDependencies:
     contact_photos: bool = False
     media: MediaControl | None = None
     tether: TetherControl | None = None
+    phone_audio: PhoneAudioControl | None = None
     set_proximity_lock: Callable[[bool, int], dict[str, Any]] | None = None
 
 
@@ -1272,6 +1281,17 @@ class BackendOperations:
                 "BLUEFERRY_MEDIA_CONTROL_ENABLED=true to opt in"
             )
         self.dependencies.media.send_command(name, on_success, on_failure)
+    def set_phone_audio_route(
+        self, route: str, success: Callable[[str], None], failure: Failure,
+    ) -> None:
+        audio = self.dependencies.phone_audio
+        if audio is None:
+            raise NotReadyError("phone audio routing is unavailable in this backend")
+        audio.set_route(
+            route, success,
+            lambda error: failure(OperationFailedError("AudioRoute", error)),
+        )
+
     def _tether(self) -> TetherControl:
         if self.dependencies.tether is None:
             raise NotReadyError("Bluetooth tethering is unavailable in this backend")

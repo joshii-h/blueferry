@@ -70,6 +70,7 @@ from blueferry.obex.mns_watch import MnsWatch
 from blueferry.obex.sessions import SessionManager
 from blueferry.obex.worker import ObexWorker
 from blueferry.pair_setup import bond_status
+from blueferry.phone_audio_route import PhoneAudioRoute
 from blueferry.profile_supervisor import ProfileSessions, ProfileSupervisor
 from blueferry.protocol import BUS_NAME
 from blueferry.proximity_lock import (
@@ -241,6 +242,16 @@ class Daemon:
             on_event=self._on_call_event,
             phone_reachable=lambda: self.bearers.bredr_connected,
             on_phone_status=self._on_phone_status,
+        )
+        # Where the iPhone's media playback goes. Only offered when the
+        # WirePlumber policy does not strip the A2DP sink role.
+        self.phone_audio_route = PhoneAudioRoute(
+            get_system_bus,
+            device_path,
+            allowed=not config.KEEP_PHONE_AUDIO_ON_PHONE,
+            on_changed=self._emit_status_soon,
+            schedule=GLib.timeout_add_seconds,
+            cancel=GLib.source_remove,
         )
         # Opt-in sub-feature of calls: one low-battery warning per cycle.
         self.low_battery = LowBatteryMonitor(config.PHONE_BATTERY_LOW_PERCENT)
@@ -578,6 +589,7 @@ class Daemon:
                 contact_photos=config.CONTACT_PHOTOS,
                 media=self.media,
                 tether=self.tether,
+                phone_audio=self.phone_audio_route,
                 set_proximity_lock=self._set_proximity_lock,
             ),
         )
@@ -751,6 +763,7 @@ class Daemon:
         # MAP/PBAP attempt. Phone-initiated LE remains usable for ANCS.
         self.bearers.start()
         self.tether.start()
+        self.phone_audio_route.start()
 
         # ANCS — per-app notifications via BLE GATT. Independent of MAP/PBAP.
         # The bearer supervisor connects LE alongside BR/EDR; the client waits
@@ -1159,6 +1172,7 @@ class Daemon:
             "media_control_enabled": self.media is not None,
             "media_control_available": bool(self.media and self.media.available),
             "media_mpris_enabled": self.mpris is not None,
+            **self.phone_audio_route.snapshot(),
             **self._controller_identity(),
             **self.connectivity.snapshot(),
         }
@@ -1260,6 +1274,7 @@ class Daemon:
         self.recovery.stop()
         self.calls.stop()
         self.tether.stop()
+        self.phone_audio_route.stop()
         self.read_receipts.close()
         self.adapter_class.stop()
         self.bearers.stop()

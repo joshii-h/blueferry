@@ -103,6 +103,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `calls/controller.py` | Optional HFP calls: oFono modem discovery, Powered→Online bring-up, call tracking and control, backoff; watches the phone's battery/signal interfaces while online. |
 | `calls/phone_status.py` | Optional phone status: pure parsing of oFono's Handsfree/NetworkRegistration properties and the once-per-cycle low-battery decision. |
 | `calls/missed.py` | Optional: detects HFP calls that stop ringing unanswered and keeps a short in-memory (time, number) list so call history does not announce the same missed call again. |
+| `phone_audio_route.py` | Content-free iPhone A2DP route (`pc`/`phone`/`unavailable`) from BlueZ `MediaTransport1`/`Device1`, switched through `ConnectProfile`/`DisconnectProfile`. |
 | `tether.py` | Opt-in Bluetooth PAN tethering state machine, Network1 link watch, and BlueZ error tokens. |
 | `tether_backends.py` | Tethering strategies: a per-user NetworkManager PAN profile, or plain `Network1.Connect("nap")`. |
 
@@ -171,6 +172,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `cli_otp.py` | `otp-status` and `otp-check` for one-time code auto-copy. |
 | `cli_notifications.py` | `notifications open-map` rule editing. |
 | `cli_media.py` | `blueferry media` now-playing status and commands. |
+| `cli_audio.py` | `blueferry audio [status\|pc\|phone]`. |
 | `cli_tether.py` | `blueferry tether [status\|on\|off]`. |
 | `cli_proximity.py` | `proximity-lock` status, dry run, enable, and disable. |
 | `tui.py` | Textual terminal client. |

@@ -757,6 +757,18 @@ iPhone one step, seeking is not offered (use `blueferry media skip-forward` or
 BlueFerry deliberately does not use AVRCP for this: acting as an AVRCP
 controller could make the iPhone route its audio to this computer.
 
+### Play iPhone audio on this computer
+
+With `BLUEFERRY_KEEP_PHONE_AUDIO_ON_PHONE=false` (the computer may then act as
+an A2DP sink), `blueferry audio pc` asks bluetoothd to open the iPhone's A2DP
+stream (`Device1.ConnectProfile` with the A2DP Source UUID) and
+`blueferry audio phone` closes it again. `blueferry audio` shows the current
+route. The route counts as `pc` while bluetoothd exports a `MediaTransport1`
+for the phone; whether iOS actually plays through it is the phone's decision.
+With the default `true` the switch reports `unavailable` and explains why.
+This is built from the BlueZ 5.87 sources and mocks only; it has not been
+verified on hardware.
+
 ## Internet sharing (experimental)
 
 BlueFerry can also use the iPhone's Personal Hotspot over Bluetooth (PAN).

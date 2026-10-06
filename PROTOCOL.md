@@ -581,6 +581,21 @@ version, and controller noted as the maintenance rule below requires:
   the link-only fallback ends with the daemon. NetworkManager-owned links
   survive a daemon restart and are re-adopted through the `Network1` watch.
 
+## A2DP audio route (source-read only)
+
+`Media1.SetPhoneAudioRoute("pc")` calls `Device1.ConnectProfile` with the
+phone's A2DP Source UUID `0000110a-…`. In BlueZ 5.87 that reaches
+`source_connect()` (`profiles/audio/source.c`): the computer, as A2DP sink,
+discovers and configures one of the phone's stream endpoints and opens the
+AVDTP stream; it returns `AlreadyConnected` when the stream is already open.
+bluetoothd then exports `org.bluez.MediaTransport1` with the local sink UUID
+`0000110b-…`. Starting the stream is the phone's job (AVDTP START on playback).
+`"phone"` calls `DisconnectProfile`, which closes the stream (`avdtp_close`).
+The route is reported as `pc` while that transport exists. Introspection of a
+connected iPhone 2026-10-06 showed the transport (`State=active`, UUID
+`0000110b-…`) when WirePlumber allowed the sink role; the switch itself has
+not been exercised on hardware.
+
 ## Historical HFP result
 
 HFP calling is not part of BlueFerry, but the experiment produced one useful
