@@ -129,6 +129,23 @@ def test_failure_retries_with_backoff(harness) -> None:
     assert client.level == 12
 
 
+def test_a_new_link_restarts_the_backoff(harness) -> None:
+    client, bus, timers, _levels = harness
+    client.observe_bearer_state(True)
+    client.start()
+    bus.take("GetManagedObjects").succeed(_objects())
+    timers.run_all()
+    bus.take("ReadValue", LEVEL).fail()
+    timers.run_all()
+    bus.take("ReadValue", LEVEL).fail()
+    assert list(timers.delays.values())[-1] == 4
+    client.observe_bearer_state(False)
+    client.observe_bearer_state(True)
+    timers.run_all()
+    bus.take("ReadValue", LEVEL).fail()
+    assert list(timers.delays.values())[-1] == 2
+
+
 def test_owner_change_and_removed_characteristic_reset(harness) -> None:
     client, bus, timers, _levels = harness
     _subscribe(client, bus, timers)

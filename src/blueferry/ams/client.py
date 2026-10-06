@@ -12,9 +12,10 @@ daemon's GLib loop is never blocked, and all GATT operations are serialized
 through one bounded queue. Replies that arrive after a bearer reset, a BlueZ
 owner change or ``stop()`` are discarded by generation.
 
-Like the ANCS client, this client never calls ``StopNotify``: bluetoothd 5.87
-crashes when a CCC enable completes after its registration was freed during
-an LE flap (see PROTOCOL.md). Registrations are released when the daemon's
+This client never calls ``StopNotify``: bluetoothd 5.87 crashes when a CCC
+enable completes after its registration was freed during an LE flap (see
+PROTOCOL.md). The ANCS client only stops dead registrations while ATT is
+settled. Registrations are released when the daemon's
 D-Bus connection closes.
 """
 from __future__ import annotations

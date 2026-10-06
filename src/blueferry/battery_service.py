@@ -11,10 +11,12 @@ Every BlueZ call is asynchronous (``reply_handler``/``error_handler``) so the
 daemon's GLib loop is never blocked. Replies that arrive after a bearer
 reset, a BlueZ owner change or ``stop()`` are discarded by generation.
 
-Like the ANCS and AMS clients, this client never calls ``StopNotify``:
-bluetoothd 5.87 crashes when a CCC enable completes after its registration
-was freed during an LE flap (see PROTOCOL.md). The registration is released
-when the daemon's D-Bus connection closes.
+Like the AMS client, this client never calls ``StopNotify``: bluetoothd 5.87
+crashes when a CCC enable completes after its registration was freed during
+an LE flap (see PROTOCOL.md). The registration is released when the
+daemon's D-Bus connection closes. (ANCS keeps one guarded, synchronous
+StopNotify for dead registrations while ATT is settled; nothing here needs
+that.)
 
 The level is a personal reading: it only reaches GetStatus (unicast), never
 a signal or a log line.
@@ -135,8 +137,12 @@ class BatteryServiceClient:
             self._cancel_timer("_settle_id")
             self._reset()
             return
-        if previous is not True and self._started:
-            self._schedule_settle()
+        if previous is not True:
+            # A fresh link starts a fresh backoff; failures of the last
+            # link say nothing about this one.
+            self._retry_delay = RETRY_INITIAL_SECONDS
+            if self._started:
+                self._schedule_settle()
 
     def observe_bluez_owner(self, old_owner, new_owner) -> None:
         if not self._started:
