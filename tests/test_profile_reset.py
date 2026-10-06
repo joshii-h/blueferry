@@ -11,6 +11,7 @@ import logging
 import dbus
 import pytest
 
+from blueferry import bluetooth_capabilities as caps
 from blueferry import config, profile_reset
 from blueferry.bearer_supervisor import PROFILE_RESET_SETTLE_SECONDS, BearerSupervisor
 from blueferry.profile_reset import (
@@ -415,6 +416,66 @@ def test_audio_route_reports_in_progress_and_success() -> None:
     subject.set_route("pc", lambda _route: None, pytest.fail)
     bus.held.pop()[0]()
     assert seen == ["in-progress", "ok"]
+
+
+# ---- doctor ----------------------------------------------------------------------
+
+def _proc(tmp_path, processes):
+    for pid, (comm, argv) in enumerate(processes, start=100):
+        entry = tmp_path / str(pid)
+        entry.mkdir()
+        (entry / "comm").write_text(comm + "\n")
+        (entry / "cmdline").write_bytes(b"\0".join(argv) + b"\0")
+    return tmp_path
+
+
+@pytest.mark.parametrize(("argv", "expected"), [
+    ([b"/usr/libexec/bluetooth/bluetoothd", b"-E"], True),
+    ([b"/usr/libexec/bluetooth/bluetoothd", b"-E", b"-P", b"hfp"], False),
+    ([b"/usr/libexec/bluetooth/bluetoothd", b"-Phfp"], False),
+    ([b"/usr/libexec/bluetooth/bluetoothd", b"--noplugin=sap,hfp"], False),
+    ([b"/usr/libexec/bluetooth/bluetoothd", b"--noplugin", b"h*"], False),
+    ([b"/usr/libexec/bluetooth/bluetoothd", b"-P", b"sap"], True),
+])
+def test_hfp_plugin_conflict_reads_the_bluetoothd_command_line(tmp_path, argv, expected):
+    root = _proc(tmp_path, [("ofonod", [b"/usr/sbin/ofonod"]), ("bluetoothd", argv)])
+    assert caps.hfp_plugin_conflict(root) is expected
+
+
+def test_hfp_plugin_check_is_skipped_without_ofono(tmp_path) -> None:
+    root = _proc(tmp_path, [("bluetoothd", [b"/usr/libexec/bluetooth/bluetoothd"])])
+    assert caps.hfp_plugin_conflict(root) is None
+
+
+def test_doctor_recommends_bluetooth_opts_and_reports_the_last_reset(
+    monkeypatch, caplog,
+) -> None:
+    from typer.testing import CliRunner
+
+    from blueferry import cli
+
+    monkeypatch.setattr(cli, "_setup_logging", lambda _verbose: None)
+    monkeypatch.setattr(config, "IPHONE_MAC", "02:00:00:00:00:01")
+    monkeypatch.setattr(cli, "_find_obexd", lambda: "/usr/lib/bluetooth/obexd")
+    monkeypatch.setattr(config, "ensure_dirs", lambda: None)
+    monkeypatch.setattr(cli.bluez_setup, "current_cod", lambda: 0x240404)
+    monkeypatch.setattr(cli.bluez_setup, "desired_cod_matches", lambda _cod: True)
+    monkeypatch.setattr(caps, "hfp_plugin_conflict", lambda: True)
+    monkeypatch.setattr(caps.service_manager, "init_system", lambda: "openrc")
+    monkeypatch.setattr(cli, "_running_backend_status", lambda: {
+        "profile_reset_auto": True,
+        "profile_reset_suggested": "",
+        "profile_reset_last": REASON_HFP,
+        "profile_reset_last_at": 1_760_000_000,
+        "profile_reset_last_auto": True,
+    })
+    caplog.set_level(logging.INFO, logger="doctor")
+    result = CliRunner().invoke(cli.app, ["doctor"])
+    text = caplog.text
+    assert result.exit_code == 0
+    assert "Checks completed with warnings." in result.output
+    assert "/etc/conf.d/bluetooth" in text and "-P hfp" in text
+    assert "Last profile reset" in text and "automatic" in text and "HFP" in text
 
 
 # ---- daemon wiring ----------------------------------------------------------------
