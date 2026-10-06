@@ -1316,7 +1316,10 @@ class BackendOperations:
             raise NotReadyError("phone audio routing is unavailable in this backend")
         audio.set_route(
             route, success,
-            lambda error: failure(OperationFailedError("AudioRoute", error)),
+            lambda error: failure(
+                error if isinstance(error, NotReadyError)
+                else OperationFailedError("AudioRoute", error)
+            ),
         )
 
     def _tether(self) -> TetherControl:

@@ -194,7 +194,7 @@ class Daemon:
         self.mpris: MprisPlayer | None = None
         self.adapter_class = AdapterClassSupervisor(config.ADAPTER)
         self.solicitation = SolicitationSupervisor(config.ADAPTER)
-        self.phone_audio = WirePlumberPhoneAudioPolicy()
+        self.phone_audio_policy = WirePlumberPhoneAudioPolicy()
         # Opt-in convenience lock. It only reads bearer state the supervisor
         # below already polls and never unlocks anything.
         self.proximity_settings = ProximityLockSettings()
@@ -754,7 +754,7 @@ class Daemon:
                 "the saved iPhone is not currently paired; open a client to pair it"
             )
 
-        self.phone_audio.reconcile(enabled=config.KEEP_PHONE_AUDIO_ON_PHONE)
+        self.phone_audio_policy.reconcile(enabled=config.KEEP_PHONE_AUDIO_ON_PHONE)
 
         # Class-of-Device is controller state, not durable configuration.
         # Repair it before opening either bearer and continue supervising it

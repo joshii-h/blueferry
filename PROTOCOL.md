@@ -596,6 +596,15 @@ connected iPhone 2026-10-06 showed the transport (`State=active`, UUID
 `0000110b-…`) when WirePlumber allowed the sink role; the switch itself has
 not been exercised on hardware.
 
+Open hardware questions:
+
+- `DisconnectProfile` on the A2DP Source UUID may take AVRCP down with the
+  stream. The AVRCP target would then disappear and media control could report
+  NowPlaying as unavailable until the phone reconnects it.
+- The iPhone can open the A2DP stream itself, so a route set to `phone` may
+  silently return to `pc` without any BlueFerry request. The status follows
+  bluetoothd, so clients see that change, but BlueFerry does not prevent it.
+
 ## Historical HFP result
 
 HFP calling is not part of BlueFerry, but the experiment produced one useful

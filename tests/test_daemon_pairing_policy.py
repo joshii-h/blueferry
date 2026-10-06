@@ -107,7 +107,7 @@ def _daemon(make_daemon, calls):
     value.profiles = _Profiles(calls)
     value.adapter_class = _AdapterClass(calls)
     value.solicitation = _Solicitation(calls)
-    value.phone_audio = type(
+    value.phone_audio_policy = type(
         "Audio", (), {"reconcile": lambda self, **_kwargs: False}
     )()
     # logind and adapter power watches need the real system bus.

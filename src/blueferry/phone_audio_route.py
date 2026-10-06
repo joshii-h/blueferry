@@ -89,6 +89,7 @@ class PhoneAudioRoute:
         self._pending: str | None = None
         self._generation = 0
         self._settle_id: int | None = None
+        self._stopped = False
 
     # ---- state ---------------------------------------------------------
 
@@ -120,6 +121,7 @@ class PhoneAudioRoute:
     def start(self) -> None:
         if not self._allowed or self._matches:
             return
+        self._stopped = False
         bus = self._bus()
         self._matches = [
             bus.add_signal_receiver(
@@ -246,6 +248,9 @@ class PhoneAudioRoute:
         method = "ConnectProfile" if route == ROUTE_PC else "DisconnectProfile"
 
         def done() -> None:
+            if self._stopped:
+                # A late BlueZ reply after stop() touches no timer or bus.
+                return
             before = self.snapshot()
             self._pending = None
             self._changed(before)
@@ -262,6 +267,11 @@ class PhoneAudioRoute:
                 return
             log.info("phone audio %s failed: %s", method, name)
             done()
+            if name == "org.bluez.Error.InProgress":
+                failure(NotReadyError(
+                    "bluetoothd is still changing the iPhone's audio; try again shortly"
+                ))
+                return
             failure(error)
 
         try:
@@ -284,6 +294,8 @@ class PhoneAudioRoute:
         self._settle_id = self._schedule(SETTLE_SEC, fire)
 
     def stop(self) -> None:
+        self._stopped = True
+        self._pending = None
         self._generation += 1
         if self._settle_id is not None:
             self._cancel(self._settle_id)

@@ -219,3 +219,40 @@ def test_cli_describes_every_state_without_content() -> None:
         "phone_audio_reason": "keep_phone_audio_on_phone",
     })
     assert "Update" in describe_route({})
+
+
+def test_late_reply_after_stop_touches_no_timer_or_bus() -> None:
+    bus = Bus(tree())
+    subject, timers, changes = route(bus)
+    subject.start()
+    accepted: list[str] = []
+    subject.set_route("pc", accepted.append, pytest.fail)
+    reply = bus.held.pop()[0]
+    subject.stop()
+    assert subject.snapshot()["phone_audio_pending"] == ""
+    calls, emitted = len(bus.calls), len(changes)
+    reply()
+    assert timers.pending == {}
+    assert len(bus.calls) == calls and len(changes) == emitted
+
+
+def test_in_progress_maps_to_not_ready_with_a_retry_hint() -> None:
+    bus = Bus(tree())
+    subject, _timers, _changes = route(bus)
+    subject.start()
+    errors: list[Exception] = []
+    subject.set_route("pc", pytest.fail, errors.append)
+    bus.held.pop()[1](dbus.exceptions.DBusException("x", name="org.bluez.Error.InProgress"))
+    assert isinstance(errors[0], NotReadyError) and "try again" in str(errors[0])
+
+    class Audio:
+        def snapshot(self):
+            return {}
+
+        def set_route(self, route, success, failure):
+            failure(NotReadyError("busy"))
+
+    seen: list[Exception] = []
+    ops = BackendOperations(object(), BackendDependencies(phone_audio=Audio()))  # type: ignore[arg-type]
+    ops.set_phone_audio_route("pc", pytest.fail, seen.append)
+    assert isinstance(seen[0], NotReadyError)
