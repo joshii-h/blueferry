@@ -292,3 +292,20 @@ def test_plugin_api_imports_nothing_else_from_blueferry() -> None:
                 assert not (node.module or "").startswith("blueferry"), (path.name, node.module)
             if isinstance(node, ast.Import):
                 assert not any(a.name.startswith("blueferry") for a in node.names), path.name
+
+
+def test_plugin_api_ships_from_one_tree() -> None:
+    """BlueFerry and blueferry-plugin-api build the same files, not copies."""
+    import tomllib
+
+    root = Path(__file__).resolve().parents[1]
+    link = root / "src" / "blueferry" / "plugin_api"
+    assert link.is_symlink()
+    assert link.resolve() == (root / "plugin-api" / "src" / "blueferry" / "plugin_api").resolve()
+    # A blueferry/__init__.py there would replace BlueFerry's own when both
+    # distributions share an environment.
+    assert not (root / "plugin-api" / "src" / "blueferry" / "__init__.py").exists()
+    with (root / "plugin-api" / "pyproject.toml").open("rb") as stream:
+        project = tomllib.load(stream)
+    assert project["project"]["name"] == "blueferry-plugin-api"
+    assert project["tool"]["setuptools"]["packages"]["find"]["namespaces"] is True

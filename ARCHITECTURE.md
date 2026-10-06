@@ -180,7 +180,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `cli_tether.py` | `blueferry tether [status\|on\|off]`. |
 | `companion_tools.py`, `cli_tools.py`, `qt/companion.py` | Client-only launchers for UxPlay screen mirroring, LocalSend and the iPhone camera roll over USB (ifuse); `blueferry tools`, the Qt card's Tools section and the tray menu. Not part of the daemon or its D-Bus API; which/Gio/subprocess are injectable. |
 | `cli_proximity.py` | `proximity-lock` status, dry run, enable, and disable. |
-| `plugin_api/` | Plugin contract: manifest parser and discovery, validating `PluginClient`, `PluginService`/`PhotosService` base, test harness. Imports nothing else from `blueferry`. |
+| `plugin_api/` | Plugin contract: manifest parser and discovery, validating `PluginClient`, `PluginService`/`PhotosService` base, test harness. Imports nothing else from `blueferry`. A symlink to `plugin-api/src/blueferry/plugin_api`, which `plugin-api/pyproject.toml` also builds as the separate distribution `blueferry-plugin-api` for plugins in their own repositories. |
 | `photos_view.py`, `cli_photos.py`, `tui_photos.py`, `qt/qml/PhotosTab.qml` | Client side of the `photos` capability: plugin lookup, blocking loads for worker threads, plain-text labels; `blueferry photos`, the TUI Photos screen (`g`) and the Qt Photos tab (loaded only while shown). |
 | `plugins/immich_photos/` (repository root) | Bundled Immich plugin, laid out as its own package; imports only `plugin_api`. |
 | `cli_plugins.py` | `plugins list` and `plugins ALIAS …` (exec of the plugin's own CLI). |
@@ -270,7 +270,8 @@ contract.
   `io.weirdware.BlueFerry.Plugin.<id>`. The daemon neither loads nor knows
   them; clients discover manifests, call plugins from worker threads and treat
   every reply as untrusted. `plugin_api/` is self-contained (no other
-  `blueferry` imports, enforced by a test) so it can become its own package.
+  `blueferry` imports, enforced by a test); `plugin-api/` packages the same
+  tree as `blueferry-plugin-api`.
 
 ## D-Bus calls inside the daemon
 
