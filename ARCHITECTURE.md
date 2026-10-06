@@ -210,7 +210,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `qt/activation.py` | Qt adapter for client activation. |
 | `qt/qml/Main.qml` | Kirigami window: phone card on the left, Messages/Calls/Notifications tabs, settings behind the header gear. |
 | `qt/qml/PhoneCard.qml` | Phone overview card: name, battery/signal, now playing, sound/hotspot/away-lock switches; disabled opt-ins show their setting. |
-| `qt/qml/CallsTab.qml` | Dial pad (digits, +, *, # only) and the embedded recent-calls list. |
+| `qt/qml/CallsTab.qml` | Running calls as cards (answer, hold, hang up, sound), a round dial pad with contact suggestions (dials digits, +, *, # only; long press on 0 for +) and the embedded recent-calls list. |
 | `qt/qml/NotificationsTab.qml` | Opt-in list of recent iPhone app notifications, fetched only while shown. |
 | `qt/qml/ConversationLogic.qml` | Thread lookup, roster-warning dedup, participant parsing (also used by Quickshell). |
 | `qt/qml/PhoneSettingsPage.qml` | Qt setup and preferences page. |
@@ -222,11 +222,10 @@ All paths are relative to `src/blueferry/` unless noted.
 | `qt/qml/ProximityLockSettings.qml` | Away-lock toggle, grace period, and warning; loaded only for daemons that report it. |
 | `qt/qml/GroupConfirmationDialog.qml` | Group recipient confirmation before sending. |
 | `qt/qml/NewMessageDialog.qml` | New message composition. |
-| `qt/qml/CallsDialog.qml` | Optional phone-calls dialog (list, dial, answer, hang up). |
 | `qt/qml/PhoneStatusIndicator.qml` | Optional iPhone battery/signal indicator (loaded only when values are known; plain-text tooltip). |
 | `qt/qml/ExpandingMessageComposer.qml` | Growing message editor. |
 | `qt/qml/MessageBubble.qml` | Message bubble. |
-| `qt/qml/RecentCallsPage.qml` | Opt-in recent-calls list, created through a `Loader`. |
+| `qt/qml/RecentCallsPage.qml` | Opt-in recent-calls list, created through a `Loader`: grouped by day (`phone_overview.call_groups`), repeated calls folded with a count, call back and message on hover, All/Missed filter. |
 | `qt/qml/ContactAvatar.qml` | Conversation icon, replaced by the contact photo when the option is on. |
 | `qt/qml/NowPlayingBar.qml` | Opt-in iPhone now-playing bar with transport buttons. |
 | `quickshell_bridge.py` | Persistent stdin/stdout JSON bridge from Quickshell to the session D-Bus API. |

@@ -13,7 +13,7 @@ from typing import Any
 from blueferry.i18n import _
 from blueferry.models import CallHistoryEntry
 from blueferry.tether_status import TetherStatus
-from blueferry.time_display import format_message_timestamp
+from blueferry.time_display import day_and_clock, format_message_timestamp
 
 LOCAL_ENV = "~/.config/blueferry/local.env"
 MEDIA_BUTTONS = ("previous", "toggle", "next")
@@ -190,6 +190,45 @@ def call_rows(entries: Iterable[CallHistoryEntry]) -> list[dict[str, Any]]:
         }
         for entry in entries
     ]
+
+
+def call_groups(
+    entries: Iterable[CallHistoryEntry],
+    *,
+    missed_only: bool = False,
+    now: Any = None,
+) -> list[dict[str, Any]]:
+    """Recent calls for a day-grouped list, newest first.
+
+    Consecutive calls from the same number in the same direction on the same
+    day fold into one row with ``count``; ``day`` is the section label and
+    ``clock`` the time of the newest call in the row.
+    """
+    rows: list[dict[str, Any]] = []
+    for entry in entries:
+        if missed_only and not entry.missed:
+            continue
+        day, clock = day_and_clock(entry.timestamp, now=now)
+        previous = rows[-1] if rows else None
+        if (
+            previous is not None and previous["day"] == day
+            and previous["direction"] == entry.direction
+            and (entry.address or entry.display_caller) == previous["key"]
+        ):
+            previous["count"] += 1
+            continue
+        rows.append({
+            "key": entry.address or entry.display_caller,
+            "day": day or _("Earlier"),
+            "clock": clock,
+            "caller": entry.display_caller,
+            "address": entry.address,
+            "known": bool(entry.name),
+            "direction": entry.direction,
+            "missed": entry.missed,
+            "count": 1,
+        })
+    return rows
 
 
 def notification_rows(records: object) -> list[dict[str, str]]:

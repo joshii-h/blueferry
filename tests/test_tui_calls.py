@@ -7,7 +7,7 @@ import time
 from textual.widgets import Button, Input, Static
 
 from blueferry.client import BackendError
-from blueferry.models import BackendStatus, CallsSnapshot
+from blueferry.models import BackendStatus, CallInfo, CallsSnapshot
 from blueferry.tui import BlueFerryApp, TuiState
 from blueferry.tui_calls import CallsScreen, describe, hangup_target, ringing_call
 
@@ -165,5 +165,58 @@ def test_calls_key_explains_the_opt_in_when_disabled() -> None:
             await pilot.pause(0.1)
             assert not isinstance(app.screen, CallsScreen)
             assert backend.requests == []
+
+    _run(scenario())
+
+
+def test_calls_panel_groups_recent_calls_by_day_and_calls_back() -> None:
+    from datetime import datetime, timedelta
+
+    from textual.widgets import OptionList
+
+    from blueferry.models import CallHistoryEntry
+
+    today = datetime.now().replace(hour=12, minute=0, second=0, microsecond=0)
+
+    class Backend(_Backend):
+        def __init__(self) -> None:
+            super().__init__()
+            self.snapshot = CallsSnapshot(state="ready", calls=(
+                CallInfo(call_id="voicecall01", state="active", contact_name="Alice"),))
+
+        def call_history(self, limit: int = 200):
+            return [
+                CallHistoryEntry("missed", today.isoformat(), "+41790000001", "[b]Eve[/b]"),
+                CallHistoryEntry("missed", (today - timedelta(minutes=5)).isoformat(),
+                                 "+41790000001", "[b]Eve[/b]"),
+                CallHistoryEntry("incoming", (today - timedelta(days=1)).isoformat(),
+                                 "+41790000002"),
+            ]
+
+        def swap_calls(self) -> None:
+            self.requests.append(("swap",))
+
+    async def scenario() -> None:
+        backend = Backend()
+        app = BlueFerryApp(TuiState(backend), monitor_factory=lambda: None)
+        async with app.run_test(size=(120, 44)) as pilot:
+            await _until(pilot, lambda: app.state.status.calls_enabled)
+            app.set_focus(None)
+            await pilot.press("c")
+            await _until(pilot, lambda: isinstance(app.screen, CallsScreen))
+            screen = app.screen
+            recent = screen.query_one("#calls-recent", OptionList)
+            await _until(pilot, lambda: recent.option_count == 4)
+            prompts = [str(recent.get_option_at_index(i).prompt) for i in range(4)]
+            assert prompts[0] == "Today" and prompts[2] == "Yesterday"
+            assert "[b]Eve[/b] (2)" in prompts[1]  # literal, folded with a count
+            assert recent.get_option_at_index(0).disabled
+            await _until(pilot, lambda: screen.snapshot.available)
+            recent.focus()
+            recent.highlighted = 3
+            await pilot.press("b")
+            await _until(pilot, lambda: ("dial", "+41790000002") in backend.requests)
+            await pilot.press("h")
+            await _until(pilot, lambda: ("swap",) in backend.requests)
 
     _run(scenario())

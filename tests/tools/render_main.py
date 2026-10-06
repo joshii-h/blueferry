@@ -136,6 +136,23 @@ PLUGINS = {
     "defaultIndex": "https://raw.githubusercontent.com/joshii-h/blueferry-plugins-index/main/plugins-index.json",
 }
 
+def _call(day, clock, caller, address, direction, count=1, known=True):
+    return {"day": day, "clock": clock, "caller": caller, "address": address, "known": known,
+            "direction": direction, "missed": direction == "missed", "count": count,
+            "key": address}
+
+
+_ALL_CALLS = [
+    _call("Today", "2:36 PM", "Anna Muster", "+41790000001", "missed", 3),
+    _call("Today", "11:02 AM", "+41 44 123 45 67", "+41441234567", "incoming", known=False),
+    _call("Today", "9:15 AM", "Papa", "+41790000003", "outgoing"),
+    _call("Yesterday", "8:40 PM", "Anna Muster", "+41790000001", "incoming"),
+    _call("Yesterday", "1:05 PM", "DPD Kundendienst", "+41848000000", "missed"),
+    _call("Friday", "6:30 PM", "Familie Hirsig", "+41790000002", "outgoing", 2),
+    _call("Sep 28", "10:00 AM", "Zahnarzt", "+41445550000", "incoming"),
+]
+CALL_ROWS = {"all": _ALL_CALLS, "missed": [row for row in _ALL_CALLS if row["missed"]]}
+
 BRIDGE_QML = """
 import QtQuick
 QtObject {
@@ -177,8 +194,21 @@ QtObject {
     property string pairingIssueReport: ""
     property string version: "render"
     property string bluetoothRestartCommand: ""
-    property bool callHistoryEnabled: false
+    property bool callHistoryEnabled: true
     property var callHistory: []
+    property var callHistoryRows: (%(call_rows)s)
+    function syncCallHistory() {}
+    function loadCallHistory() {}
+    function findContacts(query) {
+        contactResults = query.length >= 2 ? [{name: "Anna Muster", address: "41790000001"},
+            {name: "Andreas Beispiel", address: "41790000004"}] : []
+    }
+    function dialCall(number) {}
+    function answerCall(callId) {}
+    function hangupCall(callId) {}
+    function swapCalls() {}
+    function refreshCalls() {}
+    function sendMessage(recipient, body) {}
     property string callHistoryError: ""
     property int avatarRevision: 0
     property var companionTools: ({probed: true, busy: "", needsPairing: true, messageOk: false,
@@ -255,6 +285,7 @@ def _render(scheme: str, out_dir: Path) -> None:
     source = BRIDGE_QML % {
         "status": json.dumps(STATUS), "threads": json.dumps(THREADS),
         "features": json.dumps(FEATURES), "plugins": json.dumps(PLUGINS),
+        "call_rows": json.dumps(CALL_ROWS),
     }
     bridge_component = QQmlComponent(engine)
     bridge_component.setData(source.encode(), QUrl())
@@ -292,6 +323,7 @@ def _render(scheme: str, out_dir: Path) -> None:
     print(path)
     _render_photos(bridge, window, scheme, out_dir)
     _render_settings(bridge, window, scheme, out_dir)
+    _render_calls(bridge, window, scheme, out_dir)
     window.deleteLater()
     application.processEvents()
 
@@ -366,6 +398,39 @@ def _render_settings(bridge, window, scheme: str, out_dir: Path) -> None:
     page.setProperty("drilled", True)
     QTest.qWait(400)
     path = out_dir / f"settings-{scheme}-narrow-plugins.png"
+    window.grabWindow().save(str(path))
+    print(path)
+
+
+def _render_calls(bridge, window, scheme: str, out_dir: Path) -> None:
+    """Calls tab: a running call, then the hands-free link not ready yet."""
+    from datetime import datetime, timedelta, timezone
+
+    from PySide6.QtTest import QTest
+
+    window.metaObject().invokeMethod(window, "closePhoneSettings")
+    QTest.qWait(300)
+    window.resize(*SIZES[0])
+    bridge.setProperty("status", dict(STATUS, call_history_enabled=True))
+    bridge.setProperty("callsState", "ready")
+    started = (datetime.now(timezone.utc) - timedelta(minutes=3, seconds=12)).isoformat()
+    bridge.setProperty("phoneCalls", [{
+        "call_id": "voicecall01", "state": "active", "ringing": False,
+        "display_peer": "Anna Muster", "number": "+41790000001", "first_seen": started,
+    }])
+    window.setProperty("currentTab", 1)
+    QTest.qWait(500)
+    for width, height in SIZES:
+        window.resize(width, height)
+        QTest.qWait(400)
+        path = out_dir / f"calls-{scheme}-active-{width}.png"
+        window.grabWindow().save(str(path))
+        print(path)
+    window.resize(*SIZES[0])
+    bridge.setProperty("phoneCalls", [])
+    bridge.setProperty("callsState", "connecting")
+    QTest.qWait(400)
+    path = out_dir / f"calls-{scheme}-not-ready.png"
     window.grabWindow().save(str(path))
     print(path)
 

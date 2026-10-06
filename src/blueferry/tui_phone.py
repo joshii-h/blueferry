@@ -134,16 +134,21 @@ def calls_text(status: Mapping[str, Any], entries: list[CallHistoryEntry] | None
         return Text(hint, style="dim")
     if entries is None:
         return Text("Loading…", style="dim")
-    rows = overview.call_rows(entries[:_MAX_ROWS])
+    rows = overview.call_groups(entries[:_MAX_ROWS])
     if not rows:
         return Text("No recent calls", style="dim")
     text = Text()
+    day = None
     for row in rows:
+        if row["day"] != day:
+            day = row["day"]
+            text.append(f"{_plain(day)}\n", style="bold #7dd3fc")
+        count = f" ({row['count']})" if row["count"] > 1 else ""
         text.append(
-            f"{row['direction']:<9} {_plain(row['caller'])}  {_plain(row['time'])}\n",
+            f"  {row['clock']:>8}  {row['direction']:<9} {_plain(row['caller'])}{count}\n",
             style="bold #fda4af" if row["missed"] else "",
         )
-    text.append("Press c to dial.", style="dim")
+    text.append("Press c to call back from the list.", style="dim")
     return text
 
 

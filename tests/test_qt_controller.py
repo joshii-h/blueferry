@@ -974,6 +974,9 @@ def test_call_history_uses_worker_tasks_without_touching_conversation_errors(mon
     assert Backend.synced == 1
     assert controller.callHistory[0]["caller"] == "+15551230002"
     assert controller.callHistory[0]["missed"] is True
+    rows = controller.callHistoryRows
+    assert rows["all"][0]["caller"] == "+15551230002" and rows["all"][0]["count"] == 1
+    assert rows["missed"] == rows["all"] and rows["all"][0]["clock"]
     assert controller.callHistoryError == ""
     assert controller.errorText == ""
     assert changes == [True]

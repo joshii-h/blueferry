@@ -745,6 +745,7 @@ def settings_window(qml_engine):
             function answerCall(callId) { record("answerCall", [callId]); }
             function hangupCall(callId) { record("hangupCall", [callId]); }
             function hangupAllCalls() { record("hangupAllCalls", []); }
+            function swapCalls() { record("swapCalls", []); }
             function watchCallHistory(watched) { record("watchCallHistory", [watched]); }
             function loadCallHistory() { record("loadCallHistory", []); }
             function syncCallHistory() { record("syncCallHistory", []); }
@@ -830,10 +831,10 @@ _FIND_JS = """(function find(item, name) {
 })"""
 
 
-def _visual_find(root, name):
+def _visual_find(root, name, engine=None):
     """Search the visual tree in QML: Repeater delegates are not QObject
     children, and walking it from Python trips over unwrappable types."""
-    engine = qmlEngine(root)
+    engine = engine or qmlEngine(root)
     finder = engine.evaluate(_FIND_JS)
     found = finder.call([engine.newQObject(root), name])
     return found.toQObject() if found.isQObject() else None
@@ -960,39 +961,30 @@ def test_qt_storage_label_reports_unavailability_after_failed_reads(settings_win
     assert labels == [label, "Unavailable", label]
 
 
-def test_optional_calls_dialog_lists_calls_and_dials_through_the_bridge(
-    qml_engine, settings_window,
-):
+def test_running_calls_show_as_cards_with_answer_hold_and_hang_up(qml_engine, settings_window):
     window, bridge = settings_window
-    # Calls off (the default): the dialog is never instantiated.
-    assert window.findChild(QObject, "callsDialog") is None
-    bridge.setProperty("status", {"calls_enabled": True})
+    _evaluate(qml_engine, "testWindow.currentTab = testWindow.callsTab")
     QGuiApplication.processEvents()
-    dialog = _settings_object(window, "callsDialog")
-    assert dialog.property("callsReady") is False
+    assert _visual_find(window.contentItem(), "activeCallCard", qml_engine) is None
+    bridge.setProperty("status", {"calls_enabled": True})
     bridge.setProperty("callsState", "ready")
     bridge.setProperty("phoneCalls", [
-        {"call_id": "voicecall01", "state": "incoming", "ringing": True, "display_peer": "Alice"},
+        {"call_id": "voicecall01", "state": "incoming", "ringing": True,
+         "display_peer": "<b>Alice</b>", "number": "+41790000001", "first_seen": ""},
     ])
-    assert QMetaObject.invokeMethod(dialog, "open")
-    # onOpened runs after the popup's enter transition.
-    for _ in range(100):
-        if _evaluate(qml_engine, "testBridge.calls.length"):
-            break
-        QTest.qWait(20)
-
-    assert dialog.property("callsReady") is True
-    assert _evaluate(qml_engine, "testBridge.calls.map(call => call.method)") == ["refreshCalls"]
-    _settings_object(window, "callsNumberField").setProperty("text", "+41 79 123 45 67")
-    qml_engine.globalObject().setProperty("callsDialog", qml_engine.newQObject(dialog))
-    # "Hang Up All" needs more than one call; "Dial" needs a number.
-    assert _evaluate(qml_engine, "callsDialog.customFooterActions[0].enabled") is False
-    _evaluate(qml_engine, "callsDialog.customFooterActions[1].trigger()")
-    assert _evaluate(qml_engine, "testBridge.calls[1]") == {
-        "method": "dialCall", "args": ["+41 79 123 45 67"],
-    }
-    assert QMetaObject.invokeMethod(dialog, "close")
     QGuiApplication.processEvents()
+    card = _visual_find(window.contentItem(), "activeCallCard", qml_engine)
+    assert card is not None
+    assert _visual_find(card, "activeCallState").property("text") == "Incoming call…"
+    hangup = _visual_find(card, "activeCallHangup")
+    assert hangup.property("text") == "Decline"
+    QMetaObject.invokeMethod(hangup, "clicked")
+    assert _evaluate(qml_engine, "testBridge.calls")[-1] == {
+        "method": "hangupCall", "args": ["voicecall01"],
+    }
+    bridge.setProperty("phoneCalls", [])
+    QGuiApplication.processEvents()
+    assert _visual_find(window.contentItem(), "activeCallCard", qml_engine) is None
 
 
 def test_optional_phone_status_indicator_appears_only_with_known_values(
@@ -2358,14 +2350,31 @@ class _CallsBridge(QObject):
         self.loads = 0
         self.syncs = 0
 
-    @Property("QVariantList", constant=True)
-    def callHistory(self):
-        return [
-            {"direction": "missed", "caller": "<b>Eve</b>", "name": "<b>Eve</b>",
-             "address": "+15551230002", "time": "Today", "missed": True},
-            {"direction": "outgoing", "caller": "+15551230001", "name": "",
-             "address": "+15551230001", "time": "Today", "missed": False},
-        ]
+    @Property("QVariantMap", constant=True)
+    def callHistoryRows(self):
+        missed = {"direction": "missed", "caller": "<b>Eve</b>", "known": True,
+                  "address": "+15551230002", "day": "Today", "clock": "2:36 PM",
+                  "missed": True, "count": 3}
+        outgoing = {"direction": "outgoing", "caller": "+15551230001", "known": False,
+                    "address": "+15551230001", "day": "Today", "clock": "1:02 PM",
+                    "missed": False, "count": 1}
+        return {"all": [missed, outgoing], "missed": [missed]}
+
+    @Property("QVariantMap", constant=True)
+    def status(self):
+        return {}
+
+    @Property(int, constant=True)
+    def avatarRevision(self) -> int:
+        return 0
+
+    @Property(str, constant=True)
+    def callsState(self) -> str:
+        return "disabled"
+
+    @Slot(str, result=str)
+    def avatarSource(self, _address: str) -> str:
+        return ""
 
     @Property(str, constant=True)
     def callHistoryError(self) -> str:
@@ -2450,7 +2459,9 @@ def test_dial_pad_dials_only_dialable_characters(qml_engine, settings_window):
         _settings_object(window, "callsTab")))
     for key in ("0", "7", "9", "#", "x"):
         _evaluate(qml_engine, f"callsTabItem.append('{key}')")
-    QMetaObject.invokeMethod(_settings_object(window, "dialPlusKey"), "clicked")
+    zero = _visual_find(window.contentItem(), "dialKey0", qml_engine)
+    QMetaObject.invokeMethod(zero, "pressAndHold")
+    QMetaObject.invokeMethod(zero, "clicked")  # the release after a long press
     assert field.property("text") == "079#+"
     assert _evaluate(qml_engine, "callsTabItem.dialable('+41 (79) 1-2<b>')") == "+417912"
     QMetaObject.invokeMethod(call_button, "clicked")

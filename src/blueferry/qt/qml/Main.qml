@@ -409,17 +409,6 @@ Kirigami.ApplicationWindow {
         bridge: root.bridge
     }
 
-    // Optional HFP calls: nothing is instantiated unless the backend enables
-    // them, so the default window is unchanged.
-    Loader {
-        id: callsLoader
-        active: (root.bridge.status || {}).calls_enabled === true
-        sourceComponent: CallsDialog {
-            objectName: "callsDialog"
-            bridge: root.bridge
-        }
-    }
-
     Kirigami.Page {
         id: messagesPage
         objectName: "messagesPage"
@@ -1003,7 +992,10 @@ Kirigami.ApplicationWindow {
 
                             CallsTab {
                                 bridge: root.bridge
-                                onActiveCallsRequested: (callsLoader.item as CallsDialog)?.open()
+                                onMessageRequested: address => {
+                                    newMessageDialog.recipient = address
+                                    newMessageDialog.open()
+                                }
                             }
 
                             NotificationsTab {

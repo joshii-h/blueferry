@@ -17,7 +17,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtDBus import QDBusConnection
 
-from blueferry import __version__, photos_view
+from blueferry import __version__, phone_overview, photos_view
 from blueferry.backend_lifecycle import ensure_backend_current, restart_backend
 from blueferry.bluetooth_devices import iphone_candidates
 from blueferry.client import BackendClient, TetherUnsupportedError
@@ -156,6 +156,7 @@ class BridgeController(QObject):
         self._refresh_timer.setInterval(100)
         self._refresh_timer.timeout.connect(self.refresh)
         self._call_history: list[dict] = []
+        self._call_history_rows: dict = {}
         self._call_history_error = ""
         self._call_history_loading = False
         self._call_history_again = False
@@ -241,6 +242,11 @@ class BridgeController(QObject):
     @Property("QVariantList", notify=callHistoryChanged)
     def callHistory(self):
         return self._call_history
+
+    @Property("QVariantMap", notify=callHistoryChanged)
+    def callHistoryRows(self):
+        """Day-grouped rows for the Calls tab: ``all`` and ``missed``."""
+        return self._call_history_rows
 
     @Property(str, notify=callHistoryChanged)
     def callHistoryError(self) -> str:
@@ -986,6 +992,7 @@ class BridgeController(QObject):
         self._call_history_again = False
         if self._call_history or self._call_history_error:
             self._call_history = []
+            self._call_history_rows = {}
             self._call_history_error = ""
             self.callHistoryChanged.emit()
 
@@ -999,13 +1006,20 @@ class BridgeController(QObject):
             return
         self._call_history_loading = True
 
-        def operation() -> list[dict]:
-            return [entry.to_dict() for entry in self._backend.call_history(200)]
+        def operation() -> tuple[list[dict], dict]:
+            entries = self._backend.call_history(200)
+            rows = {
+                "all": phone_overview.call_groups(entries),
+                "missed": phone_overview.call_groups(entries, missed_only=True),
+            }
+            return [entry.to_dict() for entry in entries], rows
 
         def completed(value: object) -> None:
             # A reply that lands after the page closed is discarded.
             if self._call_history_watched:
-                self._call_history = list(value) if isinstance(value, list) else []
+                calls, rows = value if isinstance(value, tuple) else ([], {})
+                self._call_history = list(calls)
+                self._call_history_rows = dict(rows)
                 self._call_history_error = ""
                 self.callHistoryChanged.emit()
             finished()
@@ -1325,6 +1339,11 @@ class BridgeController(QObject):
     @Slot()
     def hangupAllCalls(self) -> None:
         self._call_action(self._backend.hangup_all_calls)
+
+    @Slot()
+    def swapCalls(self) -> None:
+        """Hold the active call (or resume the held one): HFP AT+CHLD=2."""
+        self._call_action(self._backend.swap_calls)
 
     @Slot()
     def syncContacts(self) -> None:
