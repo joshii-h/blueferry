@@ -151,6 +151,8 @@ class CallController:
         on_event: Callable[[CallEvent], None] | None = None,
         phone_reachable: Callable[[], bool] | None = None,
         on_phone_status: Callable[[PhoneStatus], None] | None = None,
+        on_powered_failed: Callable[[str], None] | None = None,
+        on_powered: Callable[[], None] | None = None,
         schedule: Schedule = GLib.timeout_add_seconds,
         cancel: Cancel = GLib.source_remove,
     ) -> None:
@@ -164,6 +166,10 @@ class CallController:
         self._on_event = on_event or (lambda _event: None)
         self._phone_reachable = phone_reachable or (lambda: True)
         self._on_phone_status = on_phone_status or (lambda _status: None)
+        # Profile self-healing (profile_reset.py) watches the HFP bring-up:
+        # the D-Bus error name of each rejected Powered=true, and success.
+        self._on_powered_failed = on_powered_failed or (lambda _name: None)
+        self._on_powered = on_powered or (lambda: None)
         self._schedule = schedule
         self._cancel = cancel
 
@@ -218,6 +224,11 @@ class CallController:
     @property
     def phone_status(self) -> PhoneStatus:
         return self._phone
+
+    @property
+    def call_active(self) -> bool:
+        """True while oFono reports any call, ringing or held included."""
+        return bool(self._calls)
 
     def snapshot(self) -> dict[str, object]:
         """Status fields merged into the unicast GetStatus reply.
@@ -576,6 +587,8 @@ class CallController:
                 return
             log.info("found the iPhone's oFono HFP modem")
         self._modem = modem
+        if modem.powered:
+            self._on_powered()
         self._advance()
 
     def _release_modem(self) -> None:
@@ -601,6 +614,8 @@ class CallController:
             or (self._modem.online and not previous.online)
             or (self._modem.voice_ready and not previous.voice_ready)
         )
+        if self._modem.powered and not previous.powered:
+            self._on_powered()
         if progressed:
             # oFono moved forward on its own; a pending backoff would only
             # delay the next bring-up step.
@@ -668,6 +683,8 @@ class CallController:
             log.log(
                 self._bringup_level(), "oFono rejected %s=true: %s", name, public_error(error),
             )
+            if name == "Powered":
+                self._on_powered_failed(public_error(error))
             if self._modem is not None and self._modem.path == path:
                 self._cancel_timer("_bringup_id")
                 self._schedule_retry()

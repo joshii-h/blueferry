@@ -1180,3 +1180,26 @@ def test_phone_values_and_own_number_never_reach_logs_or_state(caplog) -> None:
                 and any(char.isdigit() for char in r.getMessage())]
     assert "+41791234567" not in repr(controller.phone_status)
     assert "SubscriberNumbers" not in repr(controller.phone_status)
+
+
+def test_powered_timeouts_and_power_up_are_reported_for_profile_healing() -> None:
+    failures: list[str] = []
+    powered: list[bool] = []
+    transport = FakeTransport()
+    timers = Timers()
+    controller = CallController(
+        enabled=True, mac=MAC, adapter="hci0", transport=transport,
+        on_powered_failed=failures.append, on_powered=lambda: powered.append(True),
+        schedule=timers.schedule, cancel=timers.cancel,
+    )
+    controller.start()
+    transport.take("GetModems").on_reply([_modem()])
+    transport.take("SetProperty").on_error(
+        dbus.exceptions.DBusException("x", name="org.ofono.Error.Timedout")
+    )
+    assert failures == ["org.ofono.Error.Timedout"]
+    assert powered == []
+
+    transport.emit(MODEM_IFACE, "PropertyChanged", MODEM, "Powered", dbus.Boolean(True))
+    assert powered == [True]
+    assert controller.call_active is False

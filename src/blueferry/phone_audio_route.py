@@ -60,6 +60,15 @@ SETTLE_SEC = 2
 # headphones are unplugged. Resume once the phone has settled on its speaker.
 RESUME_AFTER_HANDBACK_SEC = 2
 
+IN_PROGRESS_HEALING_TEXT = (
+    "Bluetooth is still changing the iPhone's audio connection; BlueFerry is "
+    "resetting it now. Try again in a few seconds."
+)
+IN_PROGRESS_TEXT = (
+    "Bluetooth is still changing the iPhone's audio connection. Try again "
+    "shortly; if this keeps happening, use Reconnect."
+)
+
 _ALREADY = frozenset({
     "org.bluez.Error.AlreadyConnected",
     "org.bluez.Error.NotConnected",
@@ -83,6 +92,8 @@ class PhoneAudioRoute:
         cancel: Cancel,
         was_playing: Callable[[], bool] | None = None,
         resume_playback: Callable[[], None] | None = None,
+        on_in_progress: Callable[[], bool] | None = None,
+        on_connected: Callable[[], None] | None = None,
     ) -> None:
         self._bus = bus
         self._device_path = device_path
@@ -101,6 +112,11 @@ class PhoneAudioRoute:
         self._resume_id: int | None = None
         self._was_playing = was_playing
         self._resume_playback = resume_playback
+        # Profile self-healing (profile_reset.py): InProgress replies to
+        # ConnectProfile, and successful connects. on_in_progress returns
+        # True when a device reset is under way.
+        self._on_in_progress = on_in_progress or (lambda: False)
+        self._on_connected = on_connected or (lambda: None)
         self._stopped = False
 
     # ---- state ---------------------------------------------------------
@@ -270,6 +286,8 @@ class PhoneAudioRoute:
             self._settle()
 
         def reply(*_args) -> None:
+            if method == "ConnectProfile" and not self._stopped:
+                self._on_connected()
             done()
             if resume and not self._stopped:
                 self._schedule_resume()
@@ -283,8 +301,13 @@ class PhoneAudioRoute:
             log.info("phone audio %s failed: %s", method, name)
             done()
             if name == "org.bluez.Error.InProgress":
+                healing = (
+                    method == "ConnectProfile"
+                    and not self._stopped
+                    and self._on_in_progress()
+                )
                 failure(NotReadyError(
-                    "bluetoothd is still changing the iPhone's audio; try again shortly"
+                    IN_PROGRESS_HEALING_TEXT if healing else IN_PROGRESS_TEXT
                 ))
                 return
             failure(error)
