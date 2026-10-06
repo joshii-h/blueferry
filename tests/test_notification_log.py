@@ -90,3 +90,32 @@ def test_cli_rendering_explains_the_opt_in_and_escapes_text() -> None:
         {"time": WHEN.isoformat(), "app_name": "Chat", "title": "a\x1b[2J", "body": "b"},
     ]})
     assert "\x1b" not in lines[0] and "Chat" in lines[0]
+
+
+def test_modified_notification_replaces_the_record_with_the_same_id() -> None:
+    log = NotificationLog(show_content=True)
+    log.handle_ancs(event(1, body="first"))
+    log.handle_ancs(event(2))
+    log.handle_ancs(event(1, body="edited"))
+    snap = log.snapshot(10)
+    assert [record["id"] for record in snap] == [2, 1]
+    assert snap[1]["body"] == "edited"
+    # The same uid from another app is a different notification.
+    log.handle_ancs(event(1, app_id="com.example.other"))
+    assert len(log.snapshot(10)) == 3
+
+
+def test_change_signals_are_coalesced_through_the_idle_scheduler() -> None:
+    queued: list = []
+    changes: list[int] = []
+    log = NotificationLog(
+        show_content=False, on_changed=lambda: changes.append(1), idle=queued.append,
+    )
+    for uid in range(3):
+        log.handle_ancs(event(uid))
+    assert changes == [] and len(queued) == 1
+    assert queued.pop()() is False
+    assert changes == [1]
+    log.clear()
+    queued.pop()()
+    assert changes == [1, 1]

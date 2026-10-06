@@ -460,6 +460,8 @@ list starts empty after every backend restart. Titles and bodies are kept only
 with `BLUEFERRY_SHOW_NOTIFICATION_CONTENT=true`, otherwise just the app and the
 time. Apps other than Messages only reach BlueFerry with the "All iPhone
 Notifications" policy. While encrypted storage is locked the list is refused.
+It is a recent history, not a mirror of the iPhone's Notification Center:
+notifications dismissed on the iPhone stay in the list by design.
 
 ### Clicking iPhone app notifications
 

@@ -246,7 +246,9 @@ class Daemon:
         )
         # Opt-in, memory-only list of recent iPhone app notifications.
         self.notification_log: NotificationLog | None = (
-            NotificationLog(show_content=config.SHOW_NOTIFICATION_CONTENT)
+            NotificationLog(
+                show_content=config.SHOW_NOTIFICATION_CONTENT, idle=GLib.idle_add,
+            )
             if config.NOTIFICATION_HISTORY else None
         )
         # Where the iPhone's media playback goes. Only offered when the

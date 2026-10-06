@@ -39,10 +39,15 @@ class NotificationLog:
         on_changed: Callable[[], None] | None = None,
         capacity: int = DEFAULT_CAPACITY,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        idle: Callable[[Callable[[], bool]], object] | None = None,
     ) -> None:
         self._show_content = show_content
         self._on_changed = on_changed
         self._clock = clock
+        # With an idle scheduler (GLib.idle_add in the daemon), a burst of
+        # notifications yields one NotificationsChanged per loop iteration.
+        self._idle = idle
+        self._emit_pending = False
         self._records: deque[dict[str, object]] = deque(maxlen=max(1, capacity))
 
     def set_listener(self, on_changed: Callable[[], None]) -> None:
@@ -66,15 +71,38 @@ class NotificationLog:
         if self._show_content:
             for key in ("title", "subtitle", "body"):
                 record[key] = _bounded(getattr(event, key, ""))
-        self._records.append(record)
-        if self._on_changed is not None:
-            self._on_changed()
+        # ANCS reports a modified notification again with the same uid.
+        for index, existing in enumerate(self._records):
+            if existing["id"] == record["id"] and existing["app_id"] == record["app_id"]:
+                self._records[index] = record
+                break
+        else:
+            self._records.append(record)
+        self._notify()
 
     def clear(self) -> None:
         had = bool(self._records)
         self._records.clear()
-        if had and self._on_changed is not None:
+        if had:
+            self._notify()
+
+    def _notify(self) -> None:
+        if self._on_changed is None:
+            return
+        if self._idle is None:
             self._on_changed()
+            return
+        if self._emit_pending:
+            return
+        self._emit_pending = True
+
+        def fire() -> bool:
+            self._emit_pending = False
+            if self._on_changed is not None:
+                self._on_changed()
+            return False
+
+        self._idle(fire)
 
     def snapshot(self, limit: int) -> list[dict[str, object]]:
         """Newest first, at most ``limit`` records (copies)."""
