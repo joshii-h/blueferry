@@ -14,6 +14,7 @@ from blueferry.companion_tools import ToolState
 from blueferry.i18n import _, ngettext
 from blueferry.models import BackendStatus, Thread, phone_status_fields
 from blueferry.qt.phone_link import phone_audio
+from blueferry.reconnect_view import reconnect_view
 from blueferry.tether_status import TetherStatus
 
 MAX_BADGE = 99
@@ -100,6 +101,19 @@ def mirror_toggle(status: Mapping[str, Any] | None) -> TrayToggle:
     if value is None:
         return TrayToggle(False, False, False, text)
     return TrayToggle(True, True, value is True, text)
+
+
+@dataclass(frozen=True, slots=True)
+class TrayAction:
+    visible: bool
+    enabled: bool
+    text: str
+
+
+def reconnect_entry(status: Mapping[str, Any] | None) -> TrayAction:
+    """"Reconnect iPhone" while the Classic link is down and offered."""
+    view = reconnect_view(status)
+    return TrayAction(view.offered, view.offered, _("Reconnect iPhone"))
 
 
 def audio_route_for(checked: bool) -> str:

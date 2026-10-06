@@ -36,6 +36,7 @@ from blueferry.qt.avatars import avatar_url
 from blueferry.qt.companion import CompanionTools
 from blueferry.qt.tasks import Task
 from blueferry.quirks_report import issue_report, issue_url
+from blueferry.reconnect_view import UNREACHABLE_TEXT, reconnect_view, result_text
 from blueferry.service_manager import bluetooth_restart_command
 from blueferry.setup_client import (
     DISCOVERY_SECONDS,
@@ -110,6 +111,8 @@ class BridgeController(QObject):
         self._bluetooth_active = False
         self._busy_count = 0
         self._error_text = ""
+        self._reconnect_pending = False
+        self._reconnect_notice = ""
         self._pairing_issue_report = ""
         self._compatibility: dict = {}
         self._configuration = ConfigurationState(False, "", "", "")
@@ -334,6 +337,41 @@ class BridgeController(QObject):
     @Property("QVariantMap", notify=statusChanged)
     def phoneAudio(self):
         return phone_link.phone_audio(self._status)
+
+    @Property("QVariantMap", notify=statusChanged)
+    def reconnect(self):
+        """Manual reconnect: available, offered (button visible) and hint."""
+        view = reconnect_view(self._status)
+        hint = self._reconnect_notice or view.hint
+        return {"available": view.available, "offered": view.offered, "hint": hint}
+
+    @Slot()
+    def reconnectPhone(self) -> None:
+        """Skip the automatic backoff and page the iPhone once now."""
+        def completed(value: object) -> None:
+            result = str(value)
+            if result == "unreachable":
+                self._reconnect_pending = False
+                self._reconnect_notice = ""
+                self._set_error(UNREACHABLE_TEXT)
+            else:
+                self._reconnect_pending = result == "started"
+                self._reconnect_notice = result_text(result)
+            self.statusChanged.emit()
+            self.refresh()
+
+        self._run(self._backend.reconnect_phone, completed, busy=False)
+
+    def _follow_manual_reconnect(self) -> None:
+        """Turn the status outcome of a manual attempt into a clear message."""
+        if not self._reconnect_pending:
+            return
+        state = self._status.get("phone_reconnect_state")
+        if state in ("connected", "unreachable", "waiting"):
+            self._reconnect_pending = False
+            self._reconnect_notice = ""
+        if state == "unreachable":
+            self._set_error(UNREACHABLE_TEXT)
 
     @Property("QVariantMap", notify=statusChanged)
     def featureHints(self):
@@ -892,6 +930,7 @@ class BridgeController(QObject):
             self.threadsChanged.emit()
         if snapshot.status is not None or snapshot.status_error:
             self._status = self._state.status.to_dict()
+            self._follow_manual_reconnect()
             self.statusChanged.emit()
             self._sync_avatars()
             self._maybe_unlock_storage()

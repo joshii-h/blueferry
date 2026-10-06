@@ -24,11 +24,13 @@ from blueferry import companion_tools
 from blueferry import phone_overview as overview
 from blueferry.client import BackendError
 from blueferry.models import BackendStatus, CallHistoryEntry, phone_status_fields
+from blueferry.reconnect_view import reconnect_view, result_text
 from blueferry.tether_status import TetherStatus
 from blueferry.text_safety import terminal_text
 
 _MAX_ROWS = 50
 # Keys of the companion tools in the overview screen, by action.
+RECONNECT_KEY = "b"
 TOOL_KEYS = {"mirror": "m", "send": "f", "photos": "i", "eject": "e", "pair": "y"}
 
 
@@ -40,6 +42,8 @@ class PhoneClient(Protocol):
     def set_proximity_lock(self, enabled: bool, grace_seconds: int) -> dict: ...
 
     def set_mirror_notification_removals(self, enabled: bool) -> bool: ...
+
+    def reconnect_phone(self) -> str: ...
 
 
 def _plain(value: object) -> str:
@@ -88,6 +92,13 @@ def switches_text(
         state = "ON " if on_ else "OFF"
         text.append(f"[{key}] {state}  {label}\n", style="" if usable else "dim")
         text.append(f"      {_plain(hint)}\n", style="dim")
+    reconnect = reconnect_view(status)
+    if reconnect.available:
+        text.append(
+            f"[{RECONNECT_KEY}]      Reconnect iPhone\n",
+            style="" if reconnect.offered else "dim",
+        )
+        text.append(f"      {_plain(reconnect.hint)}\n", style="dim")
     return text
 
 
@@ -160,6 +171,7 @@ class PhoneScreen(ModalScreen[None]):
         Binding("escape,o", "close", "Close", show=False),
         Binding("l", "toggle_lock", "Lock when away", show=False),
         Binding("x", "toggle_mirror", "Sync notifications", show=False),
+        Binding(RECONNECT_KEY, "reconnect", "Reconnect iPhone", show=False),
         *[
             Binding(key, f"tool('{action}')", show=False)
             for action, key in TOOL_KEYS.items()
@@ -263,6 +275,31 @@ class PhoneScreen(ModalScreen[None]):
         self.app.call_from_thread(
             self.notify,
             "Notifications follow the iPhone" if enabled else "Notifications kept as history",
+        )
+        refresh = getattr(self.app, "action_refresh", None)
+        if refresh is not None:
+            self.app.call_from_thread(refresh)
+
+    def action_reconnect(self) -> None:
+        view = reconnect_view(self._status().to_dict())
+        if not view.offered:
+            self.notify(view.hint, severity="information")
+            return
+        self._reconnect()
+
+    @work(thread=True, group="phone-action", exit_on_error=False)
+    def _reconnect(self) -> None:
+        try:
+            result = self._client.reconnect_phone()
+        except BackendError as error:
+            self.app.call_from_thread(
+                self.notify, _plain(error), severity="error", markup=False,
+            )
+            return
+        self.app.call_from_thread(
+            self.notify, result_text(result),
+            severity="error" if result == "unreachable" else "information",
+            markup=False,
         )
         refresh = getattr(self.app, "action_refresh", None)
         if refresh is not None:

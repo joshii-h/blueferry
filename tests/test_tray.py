@@ -198,3 +198,17 @@ def test_mirror_toggle_follows_the_status_key() -> None:
     on = presenter.mirror_toggle({"mirror_iphone_removals": True})
     assert (on.visible, on.enabled, on.checked) == (True, True, True)
     assert presenter.mirror_toggle({"mirror_iphone_removals": False}).checked is False
+
+
+def test_reconnect_entry_follows_the_classic_state() -> None:
+    from blueferry.qt import tray_presenter as presenter
+
+    assert presenter.reconnect_entry(None).visible is False
+    down = presenter.reconnect_entry({
+        "daemon": True, "phone_reconnect_state": "unreachable",
+        "phone_reconnect_paused": True, "phone_reconnect_next_in_sec": 300,
+    })
+    assert down.visible and down.enabled and down.text == "Reconnect iPhone"
+    assert presenter.reconnect_entry({
+        "daemon": True, "phone_reconnect_state": "connected",
+    }).visible is False

@@ -69,6 +69,31 @@ Controls.ScrollView {
                     color: Kirigami.Theme.disabledTextColor
                     elide: Text.ElideRight
                 }
+                // Manual reconnect while the Classic link is down; the
+                // automatic backoff can wait up to ten minutes.
+                RowLayout {
+                    objectName: "reconnectRow"
+                    Layout.fillWidth: true
+                    Layout.topMargin: Kirigami.Units.smallSpacing
+                    visible: card.status.daemon === true
+                        && (card.bridge.reconnect || ({})).offered === true
+                    spacing: Kirigami.Units.smallSpacing
+                    Controls.Label {
+                        objectName: "reconnectHint"
+                        Layout.fillWidth: true
+                        text: (card.bridge.reconnect || ({})).hint || ""
+                        textFormat: Text.PlainText
+                        wrapMode: Text.Wrap
+                        color: Kirigami.Theme.disabledTextColor
+                        font: Kirigami.Theme.smallFont
+                    }
+                    Controls.Button {
+                        objectName: "reconnectButton"
+                        text: qsTr("Reconnect")
+                        icon.name: "view-refresh"
+                        onClicked: card.bridge.reconnectPhone()
+                    }
+                }
                 // Battery, signal and network from the optional HFP
                 // integration; the indicator only exists while a value is known.
                 Loader {

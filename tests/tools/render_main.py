@@ -90,6 +90,8 @@ QtObject {
     property var tether: ({available: true, state: "disconnected",
         summary: "Not sharing the iPhone's internet connection."})
     property var featureHints: ({})
+    property var reconnect: ({available: true, offered: false, hint: ""})
+    function reconnectPhone() {}
     property var phoneAudio: ({supported: true, available: true, onPc: true, pending: false,
         hint: "iPhone sound plays on this computer."})
     property string phoneName: "Joshua's iPhone"
@@ -173,11 +175,16 @@ def _render(scheme: str, out_dir: Path) -> None:
         print(path)
     # Narrow window with the folded card open while the hands-free modem
     # is still connecting: no battery or signal yet.
-    status = dict(STATUS, calls_state="connecting")
+    status = dict(STATUS, calls_state="connecting", map=False)
     for key in ("phone_battery_level", "phone_battery_percent", "phone_signal_strength"):
         del status[key]
     bridge.setProperty("status", status)
     bridge.setProperty("featureHints", {"phoneStatus": "Calls and battery: connecting to the iPhone…"})
+    # Classic link down and parked by the reconnect backoff.
+    bridge.setProperty("reconnect", {
+        "available": True, "offered": True,
+        "hint": "Waiting for the iPhone; next automatic try in 9 min.",
+    })
     window.resize(*SIZES[-1])
     window.findChild(QObject, "messagesPage").setProperty("cardOpen", True)
     QTest.qWait(300)

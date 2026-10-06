@@ -184,3 +184,19 @@ def test_tether_bucket_has_an_hourly_ceiling() -> None:
         now[0] += 61
     with pytest.raises(RateLimitError):
         guard.authorize(":1.20", "tether")
+
+
+def test_manual_reconnect_has_its_own_small_bucket() -> None:
+    now = [100.0]
+    guard = CallerGuard(
+        expected_uid=1000,
+        credential_provider=lambda _sender: {"UnixUserID": 1000},
+        clock=lambda: now[0],
+    )
+    for _ in range(6):
+        guard.authorize(":1.30", "reconnect")
+    with pytest.raises(RateLimitError):
+        guard.authorize(":1.30", "reconnect")
+    guard.authorize(":1.30", "settings")
+    now[0] += 61
+    guard.authorize(":1.30", "reconnect")

@@ -33,6 +33,9 @@ class _Backend:
                 "phone_battery_source": "ble",
                 "phone_battery_level": 60, "phone_signal_strength": 80,
                 "mirror_iphone_removals": self.mirror,
+                "phone_reconnect_state": "unreachable",
+                "phone_reconnect_paused": True,
+                "phone_reconnect_next_in_sec": 540,
             }
         return BackendStatus.from_dict({
             "daemon": True, "map": True, "calls_enabled": self.enabled, **extra,
@@ -67,6 +70,10 @@ class _Backend:
     def tether_disconnect(self) -> TetherStatus:
         self.requests.append(("tether", False))
         return TetherStatus(state="disconnecting")
+
+    def reconnect_phone(self) -> str:
+        self.requests.append(("reconnect",))
+        return "unreachable"
 
     def set_mirror_notification_removals(self, enabled: bool) -> bool:
         self.requests.append(("mirror", enabled))
@@ -152,6 +159,11 @@ def test_phone_screen_lists_calls_and_notifications_as_plain_text() -> None:
             assert "[x] ON   Sync notifications with iPhone" in _plain(app, "#phone-switches")
             await pilot.press("x")
             await _until(pilot, lambda: ("mirror", False) in backend.requests)
+            switches = _plain(app, "#phone-switches")
+            assert "[b]      Reconnect iPhone" in switches
+            assert "next automatic try in 9 min" in switches
+            await pilot.press("b")
+            await _until(pilot, lambda: ("reconnect",) in backend.requests)
             await pilot.press("escape")
             await _until(pilot, lambda: not isinstance(app.screen, PhoneScreen))
 

@@ -233,6 +233,7 @@ class BearerSupervisor:
         on_status: Callable[[], None] | None = None,
         on_le_state: ObserveLeState | None = None,
         on_le_dial: ObserveLeDial | None = None,
+        on_reconnect_state: Callable[[], None] | None = None,
         read_connected: ReadConnected | None = None,
         connect: Connect | None = None,
         disconnect: Disconnect | None = None,
@@ -248,6 +249,8 @@ class BearerSupervisor:
         self._on_status = on_status
         self._on_le_state = on_le_state
         self._on_le_dial = on_le_dial
+        self._on_reconnect_state = on_reconnect_state
+        self._published_reconnect: tuple[object, object] | None = None
         self._read_connected = read_connected or self._read_bluez_connected
         self._connect = connect or self._connect_bluez
         self._disconnect = disconnect or self._disconnect_bluez
@@ -321,6 +324,7 @@ class BearerSupervisor:
         self._own_le_disconnect_at: float | None = None
         # Reconnect damping: see CLASSIC_RESTING_AFTER_FAILURES.
         self._bredr_resting = False
+        self._bredr_last_failed = False
         self._presence_seen_at: float | None = None
 
     @property
@@ -432,6 +436,7 @@ class BearerSupervisor:
         self._le_link_up_at = None
         self._own_le_disconnect_at = None
         self._bredr_resting = False
+        self._bredr_last_failed = False
         self._presence_seen_at = None
         if self._on_le_state is not None:
             self._on_le_state(None)
@@ -488,6 +493,7 @@ class BearerSupervisor:
         self._stop_le_watch()
         self._stop_bredr_watch()
         self._bredr_resting = False
+        self._bredr_last_failed = False
         self._presence_seen_at = None
         if self._timer_id is not None:
             try:
@@ -512,13 +518,48 @@ class BearerSupervisor:
             "last_le_disconnect_reason": self._last_le_disconnect_reason,
         }
 
+    def reconnect_now(self) -> str:
+        """Forget the Classic backoff and page the phone once, right now.
+
+        Returns ``connected``, ``in-progress`` (an attempt is already
+        running; no second one is started), ``started`` or ``unreachable``
+        (the attempt failed before BlueZ accepted it). A started attempt can
+        still end unreachable; GetStatus reports that afterwards.
+        """
+        if not self._running:
+            return "unavailable"
+        if self._states["bredr"] is True:
+            return "connected"
+        if self._connecting & {"bredr", "le"}:
+            return "in-progress"
+        log.info("manual iPhone reconnect requested; clearing BR/EDR backoff")
+        self._bredr_resting = False
+        self._bredr_last_failed = False
+        self._failures["bredr"] = 0
+        self._next_attempt["bredr"] = 0.0
+        self._last_errors.pop("bredr", None)
+        self._request_connect("bredr", manual=True)
+        self._publish_reconnect()
+        if "bredr" in self._connecting:
+            return "started"
+        return "unreachable" if self._bredr_last_failed else "started"
+
+    def _publish_reconnect(self) -> None:
+        snapshot = self.reconnect_snapshot()
+        current = (snapshot["state"], snapshot["paused"])
+        if current == self._published_reconnect:
+            return
+        self._published_reconnect = current
+        if self._on_reconnect_state is not None:
+            self._on_reconnect_state()
+
     def reconnect_snapshot(self) -> dict[str, object]:
         """Content-free Classic reconnect state for GetStatus."""
         if self._states["bredr"] is True:
             state = "connected"
         elif "bredr" in self._connecting:
             state = "connecting"
-        elif self._failures["bredr"] > 0:
+        elif self._bredr_last_failed:
             state = "unreachable"
         else:
             state = "waiting"
@@ -803,6 +844,8 @@ class BearerSupervisor:
                 )
         if value is True and previous is not True:
             self._note_presence(f"iPhone {kind.upper()} connected")
+            if kind == "bredr":
+                self._bredr_last_failed = False
         if kind == "le" and previous is not True and value is True:
             if self._le_link_up_at is None:
                 self._le_link_up_at = self._clock()
@@ -828,6 +871,11 @@ class BearerSupervisor:
             self._on_le_state(value)
         if previous != value and self._on_status is not None:
             self._on_status()
+        if kind == "bredr":
+            # _on_status already published bearer transitions.
+            self._published_reconnect = (
+                self.reconnect_snapshot()["state"], self._bredr_resting,
+            )
         if kind == "le" and value is True:
             self._retarget_pending_classic_connect()
 
@@ -849,7 +897,7 @@ class BearerSupervisor:
         self._next_attempt["bredr"] = 0.0
         self._request_connect("bredr")
 
-    def _request_connect(self, kind: str) -> None:
+    def _request_connect(self, kind: str, *, manual: bool = False) -> None:
         if kind in self._connecting:
             return
         if kind == "bredr" and "le" in self._connecting:
@@ -858,6 +906,7 @@ class BearerSupervisor:
             return
         if (
             kind == "bredr"
+            and not manual
             and self._le_enabled
             and self._states["le"] is None
             and not self._classic_connect_should_be_targeted()
@@ -876,6 +925,8 @@ class BearerSupervisor:
             return
         if kind == "le":
             self._le_dial_spent = True
+        if kind == "bredr" and self._bredr_resting and not manual:
+            log.info("probing resting iPhone over BR/EDR")
         targeted = kind == "bredr" and self._classic_connect_should_be_targeted()
         self._connecting.add(kind)
         self._connect_request_serial += 1
@@ -928,7 +979,7 @@ class BearerSupervisor:
         # A successful method reply only means BlueZ accepted the request; it
         # does not mean the bearer connected. Keep widening the quiet window
         # until an observed Connected=true resets it.
-        delay = self._record_failure(kind)
+        delay = self._record_failure(kind, failed=False)
         log.info(
             "iPhone %s bearer connection requested successfully; "
             "waiting up to %ds for state change",
@@ -1109,9 +1160,16 @@ class BearerSupervisor:
             return CLASSIC_BACKOFF_CAP_SECONDS
         return BACKOFF_CAP_SECONDS
 
-    def _record_failure(self, kind: str) -> int:
-        """Count one unsuccessful attempt and return the next quiet window."""
+    def _record_failure(self, kind: str, *, failed: bool = True) -> int:
+        """Count one unsuccessful attempt and return the next quiet window.
+
+        ``failed`` is False when BlueZ accepted the request but the bearer has
+        not been observed connected yet; that still widens the window but is
+        not reported as "unreachable".
+        """
         self._failures[kind] += 1
+        if kind == "bredr":
+            self._bredr_last_failed = failed
         delay = min(
             POLL_SECONDS * (2 ** self._failures[kind]),
             self._backoff_cap(kind),
@@ -1125,6 +1183,8 @@ class BearerSupervisor:
         if kind == "bredr" and self._bredr_resting:
             delay = CLASSIC_BACKOFF_CAP_SECONDS
         self._next_attempt[kind] = self._clock() + delay
+        if kind == "bredr":
+            self._publish_reconnect()
         return delay
 
     # ---- reconnect damping ---------------------------------------------------
@@ -1149,6 +1209,7 @@ class BearerSupervisor:
             self._next_attempt["bredr"],
             self._clock() + CLASSIC_BACKOFF_CAP_SECONDS,
         )
+        self._publish_reconnect()
 
     def _note_presence(self, reason: str) -> None:
         """Fresh evidence that the phone is nearby ends the resting state."""
@@ -1161,6 +1222,7 @@ class BearerSupervisor:
         self._next_attempt["bredr"] = 0.0
         # The next health check pages the phone; no re-entrant dial from here.
         log.info("%s; resuming BR/EDR reconnects", reason)
+        self._publish_reconnect()
 
     def _start_bredr_watch(self) -> None:
         if self._watch_bredr is None or self._unwatch_bredr is not None:

@@ -1458,3 +1458,33 @@ def test_notification_failure_stays_in_the_tab(monkeypatch):
     assert controller.notifications == []
     assert "locked" in controller.notificationsInfo["error"]
     assert controller.errorText == ""
+
+
+def test_manual_reconnect_reports_an_unreachable_phone(monkeypatch):
+    from blueferry.reconnect_view import UNREACHABLE_TEXT
+
+    backend = _Backend()
+    results = iter(["unreachable", "started"])
+    backend.reconnect_phone = lambda: next(results)
+    controller = BridgeController(
+        backend=backend, setup=object(), subscribe=False, autostart=False,
+    )
+    monkeypatch.setattr(
+        controller, "_run",
+        lambda operation, on_done=None, *_args, **_kwargs: on_done(operation()),
+    )
+    monkeypatch.setattr(controller, "refresh", lambda: None)
+    controller._status = {
+        "daemon": True, "phone_reconnect_state": "waiting",
+        "phone_reconnect_next_in_sec": 120,
+    }
+    assert controller.reconnect["offered"] is True
+    controller.reconnectPhone()
+    assert controller.errorText == UNREACHABLE_TEXT
+    controller._set_error("")
+    controller.reconnectPhone()
+    assert controller.reconnect["hint"].startswith("Reconnecting")
+    # The started attempt later fails: the same clear message, once.
+    controller._status["phone_reconnect_state"] = "unreachable"
+    controller._follow_manual_reconnect()
+    assert controller.errorText == UNREACHABLE_TEXT

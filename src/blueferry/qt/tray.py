@@ -58,6 +58,7 @@ from blueferry.protocol import (
 )
 from blueferry.qt import tray_presenter as presenter
 from blueferry.qt.companion import CompanionTools
+from blueferry.reconnect_view import UNREACHABLE_TEXT, result_text
 from blueferry.tether_status import TetherStatus
 
 QT_CLIENT = next(client for client in CLIENTS if client.key == "qt")
@@ -151,6 +152,8 @@ class TrayController(QObject):
         self.mirror_action = QAction(self.menu)
         self.mirror_action.setCheckable(True)
         self.mirror_action.triggered.connect(self._mirror_triggered)
+        self.reconnect_action = QAction(self.menu)
+        self.reconnect_action.triggered.connect(self._reconnect_triggered)
         # UxPlay, LocalSend and iPhone photos: started here, no daemon involved.
         self.companion = companion or CompanionTools(parent=self)
         self.companion.changed.connect(self.render_tools)
@@ -167,6 +170,7 @@ class TrayController(QObject):
         self.menu.addAction(self.audio_action)
         self.menu.addAction(self.hotspot_action)
         self.menu.addAction(self.mirror_action)
+        self.menu.addAction(self.reconnect_action)
         self.menu.addSeparator()
         for action in self.tool_actions.values():
             self.menu.addAction(action)
@@ -379,6 +383,10 @@ class TrayController(QObject):
             action.setVisible(toggle.visible)
             action.setEnabled(toggle.enabled)
             action.setChecked(toggle.checked)
+        reconnect = presenter.reconnect_entry(self.status_raw)
+        self.reconnect_action.setText(reconnect.text)
+        self.reconnect_action.setVisible(reconnect.visible)
+        self.reconnect_action.setEnabled(reconnect.enabled)
         self.render_tools()
 
     def render_tools(self) -> None:
@@ -432,6 +440,29 @@ class TrayController(QObject):
 
     def _mirror_triggered(self, checked: bool) -> None:
         self._action(MESSAGES_IFACE, "SetMirrorNotificationRemovals", [bool(checked)])
+
+    def _reconnect_triggered(self) -> None:
+        def replied(args: list) -> None:
+            result = str(args[0]) if args else ""
+            if result != "started":
+                self.tray.showMessage(
+                    "BlueFerry", result_text(result),
+                    QSystemTrayIcon.MessageIcon.Warning
+                    if result == "unreachable"
+                    else QSystemTrayIcon.MessageIcon.Information,
+                    8000,
+                )
+            self._refresh_timer.start()
+
+        def failed(_name: str) -> None:
+            self.tray.showMessage(
+                "BlueFerry", UNREACHABLE_TEXT, QSystemTrayIcon.MessageIcon.Warning, 8000,
+            )
+
+        self._call(
+            BUS_NAME, MESSAGES_IFACE, "ReconnectPhone", [], replied, failed,
+            timeout=ACTION_TIMEOUT_MS,
+        )
 
     def _action(self, interface: str, method: str, args: list) -> None:
         def failed(_name: str) -> None:

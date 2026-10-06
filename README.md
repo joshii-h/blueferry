@@ -976,6 +976,7 @@ blueferry otp-status
 blueferry notifications open-map list
 blueferry doctor
 blueferry tether            # status; also: tether on, tether off
+blueferry reconnect         # page the iPhone now instead of waiting
 ```
 
 Ambiguous contact names are presented for you to choose from rather than
@@ -996,6 +997,14 @@ journalctl --user -u blueferry -f
 
 With the optional OpenRC user service, the backend log is
 `~/.local/state/blueferry/daemon.log`.
+
+When the iPhone has been away, BlueFerry retries the Classic connection with a
+growing pause (up to 10 minutes) and stops paging a phone that shows no sign of
+being nearby, for example after Bluetooth was switched off on the iPhone. To
+reconnect at once, use **Reconnect** on the phone card, **Reconnect iPhone** in
+the tray, key `b` on the terminal client's iPhone screen, or
+`blueferry reconnect`. If that fails with "iPhone not reachable", check that
+Bluetooth is on on the iPhone.
 
 If messages work but names do not, use **Sync Contacts** or run
 `blueferry contacts-sync`.

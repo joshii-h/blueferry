@@ -63,6 +63,8 @@ _RULES: dict[str, tuple[RateRule, ...]] = {
     # Each tether command pages the phone and may create a NetworkManager
     # profile; toggling is interactive, so allow bursts but not a stream.
     "tether": (RateRule(10, 60), RateRule(60, 3_600)),
+    # A manual reconnect pages the phone; a held button must not hammer it.
+    "reconnect": (RateRule(6, 60), RateRule(60, 3_600)),
 }
 
 

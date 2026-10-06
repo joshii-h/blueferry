@@ -191,7 +191,10 @@ def test_status_exposes_split_ancs_and_last_le_error(make_daemon, monkeypatch):
             "le": False,
             "last_le_error": "org.bluez.Error.Failed",
             "last_le_error_message": "le-connection-abort-by-local",
-        }
+        },
+        reconnect_snapshot=lambda: {
+            "state": "unreachable", "paused": True, "next_in_sec": 540,
+        },
     )
     instance.setup_verification = SimpleNamespace(verified=())
     monkeypatch.setattr(daemon_mod, "history_count", lambda **_kwargs: 0)
@@ -209,6 +212,20 @@ def test_status_exposes_split_ancs_and_last_le_error(make_daemon, monkeypatch):
     assert status["last_le_error"] == "org.bluez.Error.Failed"
     assert status["last_le_error_message"] == "le-connection-abort-by-local"
     assert status["_build_id"] == "0.6.0-6"
+    assert status["phone_reconnect_state"] == "unreachable"
+    assert status["phone_reconnect_paused"] is True
+    assert status["phone_reconnect_next_in_sec"] == 540
+
+
+def test_manual_reconnect_is_forwarded_to_the_bearer_supervisor(make_daemon):
+    from blueferry.errors import NotReadyError
+
+    instance = make_daemon()
+    results = iter(["started", "unavailable"])
+    instance.bearers = SimpleNamespace(reconnect_now=lambda: next(results))
+    assert instance._reconnect_phone() == "started"
+    with pytest.raises(NotReadyError):
+        instance._reconnect_phone()
 
 
 def test_failed_hardware_initialization_leaves_control_service_alive(make_daemon, monkeypatch):

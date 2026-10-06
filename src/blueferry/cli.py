@@ -20,6 +20,7 @@ from blueferry.cli_messages import sms_list, sms_send
 from blueferry.cli_notifications import notifications_app
 from blueferry.cli_otp import otp_check, otp_status
 from blueferry.cli_proximity import proximity_app
+from blueferry.cli_reconnect import reconnect
 from blueferry.cli_tether import tether
 from blueferry.cli_tools import tools
 
@@ -589,6 +590,7 @@ app.command("tools")(tools)
 app.command("audio")(audio)
 app.command("tether")(tether)
 app.add_typer(proximity_app, name="proximity-lock")
+app.command("reconnect")(reconnect)
 
 
 @app.command()

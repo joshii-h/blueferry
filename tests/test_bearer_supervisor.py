@@ -1945,3 +1945,66 @@ def test_absent_classic_backoff_is_capped_at_ten_minutes() -> None:
     supervisor._presence_seen_at = 0.0  # nearby, so not parked
     supervisor._failures["bredr"] = 20
     assert supervisor._record_failure("bredr") == bearer_supervisor.CLASSIC_BACKOFF_CAP_SECONDS == 600
+
+
+def test_manual_reconnect_clears_resting_and_pages_once() -> None:
+    state = {"bredr": False, "le": False}
+    attempts: list = []
+    now = [0.0]
+    published: list = []
+    supervisor, tick = _damped(state, attempts, now, {})
+    supervisor._on_reconnect_state = lambda: published.append(
+        supervisor.reconnect_snapshot()["state"]
+    )
+    for instant in (10.0, 30.0):
+        now[0] = instant
+        tick()
+    assert supervisor.reconnect_snapshot() == {
+        "state": "unreachable", "paused": True, "next_in_sec": 600,
+    }
+    now[0] = 40.0
+    # The fake connect fails synchronously: the user learns it at once.
+    assert supervisor.reconnect_now() == "unreachable"
+    assert attempts[-1] == ("bredr", 40.0)
+    snapshot = supervisor.reconnect_snapshot()
+    assert snapshot["state"] == "unreachable" and snapshot["paused"] is False
+    assert published  # GetStatus listeners were told
+    supervisor.stop()
+
+
+def test_manual_reconnect_does_not_start_a_second_attempt() -> None:
+    pending = []
+    supervisor = BearerSupervisor(
+        "/device",
+        le_enabled=False,
+        read_connected=lambda _kind: False,
+        connect=lambda kind, ok, err: pending.append((kind, ok, err)),
+        schedule=lambda *_a: 7,
+        cancel=lambda _id: None,
+        clock=lambda: 100.0,
+    )
+    supervisor.start()
+    assert len(pending) == 1
+    assert supervisor.reconnect_snapshot()["state"] == "connecting"
+    assert supervisor.reconnect_now() == "in-progress"
+    assert len(pending) == 1
+    # BlueZ accepted the request: waiting, not unreachable.
+    pending[0][1]()
+    assert supervisor.reconnect_snapshot()["state"] == "waiting"
+    assert supervisor.reconnect_now() == "started"
+    assert len(pending) == 2
+    supervisor.stop()
+
+
+def test_manual_reconnect_reports_connected_and_unavailable() -> None:
+    supervisor = BearerSupervisor(
+        "/device", read_connected=lambda _kind: True, connect=lambda *_a: None,
+        schedule=lambda *_a: 7, cancel=lambda _id: None, clock=lambda: 0.0,
+    )
+    assert supervisor.reconnect_now() == "unavailable"
+    supervisor.start()
+    assert supervisor.reconnect_now() == "connected"
+    assert supervisor.reconnect_snapshot() == {
+        "state": "connected", "paused": False, "next_in_sec": 0,
+    }
+    supervisor.stop()

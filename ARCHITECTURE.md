@@ -180,6 +180,8 @@ All paths are relative to `src/blueferry/` unless noted.
 | `cli_tether.py` | `blueferry tether [status\|on\|off]`. |
 | `companion_tools.py`, `cli_tools.py`, `qt/companion.py` | Client-only launchers for UxPlay screen mirroring, LocalSend and the iPhone camera roll over USB (ifuse); `blueferry tools`, the Qt card's Tools section and the tray menu. Not part of the daemon or its D-Bus API; which/Gio/subprocess are injectable. |
 | `cli_proximity.py` | `proximity-lock` status, dry run, enable, and disable. |
+| `cli_reconnect.py` | `reconnect`: manual Classic reconnect that waits for the outcome. |
+| `reconnect_view.py` | Toolkit-neutral texts for the manual reconnect (Qt card, tray, TUI, CLI). |
 | `tui.py` | Textual terminal client. |
 | `tui_launcher.py` | Launches the TUI with the package-private Textual bundle when present. |
 | `tui_calls.py` | Optional Textual calls panel. |
@@ -502,6 +504,12 @@ A change to these rules has to be made in both places.
   and probes only every 10 min until an inbound link, LE or a discovery
   sighting shows the phone again. Paging an absent phone once hung
   bluetoothd in `l2cap_chan_connect` (kernel 7.2.8), so fewer pages matter.
+  `Messages1.ReconnectPhone()` (own `reconnect` rate bucket, 6/min) clears
+  the backoff and pages once; it never starts a second attempt while one is
+  running. GetStatus reports `phone_reconnect_state`
+  (`connected`/`connecting`/`waiting`/`unreachable`), `phone_reconnect_paused`
+  and `phone_reconnect_next_in_sec`; `reconnect_view.py` turns them into the
+  same texts for every client.
 - **Media (opt-in):** `ams/client` never dials. It follows the bearer
   supervisor's LE observations and BlueZ owner changes, subscribes after the
   link settles, and resets without `StopNotify` on loss. `media` owns the

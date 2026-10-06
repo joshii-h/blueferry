@@ -54,7 +54,7 @@ from blueferry.contact_repository import ContactRepository
 from blueferry.contact_sync import ContactSync
 from blueferry.contacts import ContactsResolver
 from blueferry.dbus_service import MessagesService, claim_bus_name
-from blueferry.errors import BlueFerryError
+from blueferry.errors import BlueFerryError, NotReadyError
 from blueferry.event_dispatcher import EventDispatcher
 from blueferry.gio_dbus import GioDBus
 from blueferry.gio_dbus import system_bus as gio_system_bus
@@ -225,6 +225,7 @@ class Daemon:
             on_status=self._on_bearer_status,
             on_le_state=self._observe_le_state,
             on_le_dial=self.solicitation.set_dialing,
+            on_reconnect_state=self._emit_status,
             inbound_le_primed=self.solicitation.active,
         )
         # Calls-state and phone-status changes often arrive in bursts (a
@@ -543,10 +544,25 @@ class Daemon:
         self.proximity.bearer_changed()
         self._emit_status()
 
+    def _reconnect_phone(self) -> str:
+        result = self.bearers.reconnect_now()
+        log.info("manual iPhone reconnect: %s", result)
+        if result == "unavailable":
+            raise NotReadyError("no iPhone is being supervised")
+        return result
+
     def _emit_tether_changed(self) -> None:
         emit = getattr(self._dbus_service, "emit_tether_changed", None)
         if emit is not None:
             emit()
+
+    def _reconnect_status(self) -> dict[str, object]:
+        reconnect = self.bearers.reconnect_snapshot()
+        return {
+            "phone_reconnect_state": reconnect["state"],
+            "phone_reconnect_paused": reconnect["paused"],
+            "phone_reconnect_next_in_sec": reconnect["next_in_sec"],
+        }
 
     def _proximity_presence(self) -> bool | None:
         return presence_from_bearers(self.bearers.bredr_state, self.bearers.le_state)
@@ -643,6 +659,7 @@ class Daemon:
                 notification_log=self.notification_log,
                 notification_content=config.SHOW_NOTIFICATION_CONTENT,
                 set_proximity_lock=self._set_proximity_lock,
+                reconnect_phone=self._reconnect_phone,
             ),
         )
         self.events.set_dbus_service(self._dbus_service)
@@ -1237,6 +1254,7 @@ class Daemon:
             "ancs_authorized": bool(ancs and ancs.authorized),
             "ancs_actions": config.ancs_actions_active(),
             **self.bearers.snapshot(),
+            **self._reconnect_status(),
             **self.proximity.snapshot(),
             "contacts": self.contacts.count(),
             **self._contact_photo_status(),

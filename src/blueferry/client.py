@@ -392,6 +392,17 @@ class BackendClient:
         except dbus.exceptions.DBusException as error:
             raise BackendError(error.get_dbus_message() or str(error)) from error
 
+    def reconnect_phone(self) -> str:
+        """Clear the Classic backoff and page the iPhone once now."""
+        try:
+            return str(
+                self._iface(MESSAGES_IFACE).ReconnectPhone(
+                    timeout=POLICY_CALL_TIMEOUT_SEC
+                )
+            )
+        except dbus.exceptions.DBusException as error:
+            raise BackendError(error.get_dbus_message() or str(error)) from error
+
     def notifications(self, limit: int = 50) -> dict:
         """Recent iPhone app notifications (opt-in, memory only)."""
         try:
