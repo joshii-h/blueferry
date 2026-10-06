@@ -12,7 +12,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from blueferry.plugin_api import MAX_REPLY_BYTES
+from blueferry.plugin_api import API_MINOR, MAX_REPLY_BYTES
 from blueferry.plugin_api.client import PluginClient, PluginError
 from blueferry.plugin_api.manifest import (
     ManifestError,
@@ -448,7 +448,7 @@ def test_settings_round_trip_never_reveals_a_secret(cache) -> None:
     result = client.set_config({"url": "ftp://nope"})
     assert not result.ok and "url" in result.errors
     info = json.loads(service.GetInfo(sender=":1.9"))
-    assert info["api_minor"] == 1
+    assert info["api_minor"] == API_MINOR
 
 
 def test_settings_are_refused_without_a_schema_and_bad_replies_are_errors(cache) -> None:

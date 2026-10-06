@@ -18,11 +18,15 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from . import (
+    CARD_INTERFACE,
     MAX_RECENT_PHOTOS,
     MAX_REPLY_BYTES,
+    NOTIFY_INTERFACE,
     OBJECT_PATH,
     PHOTOS_INTERFACE,
     PLUGIN_INTERFACE,
+    SHARE_INTERFACE,
+    surfaces,
 )
 from .config import SECRET_MASK, ConfigError
 from .manifest import PluginManifest
@@ -32,6 +36,11 @@ LIST_TIMEOUT_SEC = 90.0
 FETCH_TIMEOUT_SEC = 600.0
 # SetConfig may check the new settings against the plugin's server.
 CONFIG_TIMEOUT_SEC = 60.0
+# ApiVersion 1.2 surfaces. SendFiles only starts a transfer; long ones
+# report progress on a card item.
+CARD_TIMEOUT_SEC = 15.0
+ACTION_TIMEOUT_SEC = 60.0
+SHARE_TIMEOUT_SEC = 60.0
 _ASSET_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _TIMESTAMP = re.compile(r"^[0-9T:.+\-Z ]{4,40}$")
 _PHOTO_TYPES = frozenset({"image", "video", "other"})
@@ -241,6 +250,66 @@ class PluginClient:
         if not reply["ok"] and not reasons:
             reasons = {"": "the plugin rejected the settings"}
         return ConfigResult(ok=bool(reply["ok"]), errors=reasons)
+
+    # ---- surfaces (ApiVersion 1.2) ------------------------------------------------
+
+    def _surface(self, parse: Callable[[object], Any], interface: str, method: str,
+                 signature: str, args: tuple, timeout: float) -> Any:
+        reply = self._call(interface, method, signature, args, timeout)
+        try:
+            return parse(reply)
+        except surfaces.SurfaceError as error:
+            raise PluginError(str(error)) from None
+
+    def card_items(self) -> list[surfaces.CardItem]:
+        """Card1.GetCardItems: at most 8 items, 3 actions each, plain text."""
+        return self._surface(
+            surfaces.parse_card_items, CARD_INTERFACE, "GetCardItems", "", (), CARD_TIMEOUT_SEC,
+        )
+
+    def invoke_action(
+        self, item_id: str, action_id: str, args: Mapping[str, object] | None = None,
+        *, notify: bool = False,
+    ) -> surfaces.ActionResult:
+        """InvokeAction on Card1 (or Notify1 for a popup button).
+
+        An ``open_uri`` that is neither http(s) nor a file in the plugin
+        cache is dropped.
+        """
+        if not surfaces.valid_id(item_id) or not surfaces.valid_id(action_id):
+            raise PluginError("not an action id")
+        try:
+            payload = surfaces.args_json(args)
+        except (TypeError, ValueError):
+            raise PluginError("invalid action arguments") from None
+        result = self._surface(
+            surfaces.parse_action_result, NOTIFY_INTERFACE if notify else CARD_INTERFACE,
+            "InvokeAction", "sss", (item_id, action_id, payload), ACTION_TIMEOUT_SEC,
+        )
+        uri = self.checked_open_uri(result.open_uri) if result.open_uri else None
+        return surfaces.ActionResult(result.ok, result.message, uri)
+
+    def share_targets(self) -> list[surfaces.ShareTarget]:
+        return self._surface(
+            surfaces.parse_share_targets, SHARE_INTERFACE, "ShareTargets", "", (),
+            CARD_TIMEOUT_SEC,
+        )
+
+    def send_files(self, target_id: str, paths: list[str]) -> surfaces.SendResult:
+        """Share1.SendFiles with absolute paths of existing regular files."""
+        if not surfaces.valid_id(target_id):
+            raise PluginError("not a share target")
+        try:
+            files = surfaces.checked_share_paths(paths)
+        except ValueError as error:
+            raise PluginError(str(error)) from None
+        return self._surface(
+            surfaces.parse_send_result, SHARE_INTERFACE, "SendFiles", "sas",
+            (target_id, files), SHARE_TIMEOUT_SEC,
+        )
+
+    def checked_open_uri(self, uri: object) -> str | None:
+        return surfaces.checked_open_uri(uri, self._cache_roots(), uid=self._uid)
 
     # ---- photos capability ---------------------------------------------------
 

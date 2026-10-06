@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import (
+    API_MINOR,
     BUS_NAME_PREFIX,
     KNOWN_CAPABILITIES,
     SUPPORTED_API_VERSIONS,
@@ -78,7 +79,7 @@ class PluginManifest:
     path: Path | None = None
     # Optional settings form (``[Config <key>]`` groups), in manifest order.
     config: tuple[ConfigField, ...] = ()
-    # Minor revision of the contract (``ApiVersion=1.1``); informational.
+    # Minor revision of the contract (``ApiVersion=1.2``); at most API_MINOR.
     api_minor: int = 0
 
     @property
@@ -191,6 +192,12 @@ def parse_manifest(
         supported = ", ".join(str(v) for v in sorted(SUPPORTED_API_VERSIONS))
         raise ManifestError(
             f"written for plugin API {api_version}; this BlueFerry supports {supported}"
+        )
+    if api_minor > API_MINOR:
+        # 1.x is accepted when this BlueFerry knows at least that minor.
+        raise ManifestError(
+            f"needs plugin API {api_version}.{api_minor}; this BlueFerry supports "
+            f"{api_version}.{API_MINOR}"
         )
     for key in ("Version", "MinBlueFerry"):
         if len(values[key]) > 40 or not _VERSION.fullmatch(values[key]):
