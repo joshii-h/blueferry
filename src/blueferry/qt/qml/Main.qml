@@ -415,6 +415,7 @@ Kirigami.ApplicationWindow {
 
     Kirigami.Page {
         id: messagesPage
+        objectName: "messagesPage"
         visible: false
         title: qsTr("BlueFerry")
         padding: 0
