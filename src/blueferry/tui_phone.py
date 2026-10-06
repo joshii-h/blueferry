@@ -180,7 +180,7 @@ class PhoneScreen(ModalScreen[None]):
         Binding("x", "toggle_mirror", "Sync notifications", show=False),
         Binding(RECONNECT_KEY, "reconnect", "Reconnect iPhone", show=False),
         Binding("s", "send_to", "Send to…", show=False),
-        Binding("r", "reload_plugins", "Refresh plugins", show=False),
+        Binding("r", "refresh", "Refresh", show=False),
         *[
             Binding(key, f"tool('{action}')", show=False)
             for action, key in TOOL_KEYS.items()
@@ -230,7 +230,7 @@ class PhoneScreen(ModalScreen[None]):
                 yield Static(design.section(design.NOTIFICATIONS), classes="section-title")
                 yield Static("", id="phone-notifications", classes="dialog-copy")
             yield Static(design.key_hints(
-                ("Enter", "plugin action"), ("s", "send to"), ("r", "refresh plugins"),
+                ("Enter", "plugin action"), ("s", "send to"), ("r", "refresh"),
                 ("letters", "switch or start"), ("Esc", "close"),
             ), classes="key-hints")
             with Horizontal(classes="dialog-actions"):
@@ -265,7 +265,13 @@ class PhoneScreen(ModalScreen[None]):
         options.clear_options()
         options.add_options(tui_plugins.card_options(self._cards))
 
-    def action_reload_plugins(self) -> None:
+    def action_refresh(self) -> None:
+        """r: everything on this screen, and the app's status like before."""
+        refresh = getattr(self.app, "action_refresh", None)
+        if refresh is not None:
+            refresh()
+        self.reload()
+        self.probe_tools()
         self.load_plugins()
 
     @on(OptionList.OptionSelected, "#phone-plugins")
