@@ -640,7 +640,10 @@ class LibnotifySink:
         actions: list[str] = []
         callback = getattr(self, "_on_plugin_action", None)
         if note.has_action and callback is not None:
+            # The label is plugin text too: neutral while content is hidden.
             label = _LABEL_MARKUP_RE.sub("", _LABEL_TAG_RE.sub("", note.action_label))
+            if not config.SHOW_NOTIFICATION_CONTENT:
+                label = "Open"
             actions = [_PLUGIN_ACTION, label or "Open"]
 
         def shown(nid) -> None:

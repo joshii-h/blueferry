@@ -26,6 +26,7 @@ class _Bus:
         self.uids = uids or {}
         self.receivers = []
         self.calls = []
+        self.default_uid = 1000
 
     def add_signal_receiver(self, callback, **kwargs):
         self.receivers.append((callback, kwargs))
@@ -41,7 +42,7 @@ class _Bus:
             owner = self.owners.get(args[0])
             return reply(owner) if owner else error(RuntimeError("no owner"))
         if method == "GetConnectionUnixUser":
-            return reply(self.uids.get(args[0], 1000))
+            return reply(self.uids.get(args[0], self.default_uid))
         if method == "InvokeAction":
             return self.invoke(reply, error)
         raise AssertionError(method)
@@ -97,13 +98,14 @@ def test_each_plugin_gets_a_few_popups_a_minute() -> None:
 
 def test_a_click_invokes_the_plugin_and_opens_only_safe_uris(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-    ics = tmp_path / "blueferry" / "cal" / "a.ics"
+    ics = tmp_path / "blueferry" / CALENDAR.id / "a.ics"
     ics.parent.mkdir(parents=True)
     ics.write_text("x")
     import os
 
     opened: list[str] = []
     bus = _Bus()
+    bus.default_uid = os.getuid()
     popups = PluginPopups(bus, show=lambda _p: None, plugins=lambda: [CALENDAR],
                           uid=os.getuid(), open_uri=opened.append)
     popup = PluginPopup(CALENDAR.id, "Calendar", CALENDAR.bus_name,
@@ -167,7 +169,7 @@ def test_sink_escapes_text_and_honours_the_content_switch(monkeypatch, content) 
         assert title == "&lt;b&gt;Dentist&lt;/b&gt;" and body == "10:00 &amp; more"
     else:
         assert title == "Calendar" and body == "New notification"
-    assert list(actions) == ["plugin-action", "Open now"]
+    assert list(actions) == ["plugin-action", "Open now" if content else "Open"]
     sink._on_action(51, "plugin-action")
     sink._on_action(51, "plugin-action")  # single use
     assert len(clicked) == 1 and clicked[0].note.action_id == "open"
@@ -217,3 +219,30 @@ def test_dispatcher_forwards_plugin_popups_and_the_click_hook() -> None:
     assert "on_plugin_action" in kwargs_seen[0]
     dispatcher.plugin_notification(_popup())
     assert len(seen) == 1
+
+
+def test_unverified_senders_are_rate_limited_and_verified_ones_remembered() -> None:
+    now = [0.0]
+    bus = _Bus(owners={CALENDAR.bus_name: ":1.7"})
+    shown: list[PluginPopup] = []
+    reads = []
+
+    def plugins():
+        reads.append(1)
+        return [CALENDAR]
+
+    popups = PluginPopups(bus, show=shown.append, plugins=plugins, uid=1000,
+                          clock=lambda: now[0])
+    popups.start()
+    for _ in range(40):
+        _emit(bus, "Spam", "x", sender=":1.66")
+    lookups = [call for call in bus.calls if call[2] == "GetNameOwner"]
+    assert len(lookups) == 12  # LOOKUPS_PER_MINUTE, then dropped unasked
+    assert len(reads) == 1  # manifests cached
+    _emit(bus, "Hi", "there")
+    asked = len(bus.calls)
+    # The plugin idles out; its next popup still counts as verified.
+    bus.owners.clear()
+    _emit(bus, "Again", "later")
+    assert [p.note.title for p in shown] == ["Hi", "Again"]
+    assert len(bus.calls) == asked

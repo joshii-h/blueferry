@@ -24,12 +24,13 @@ from dataclasses import dataclass
 from blueferry import __version__
 from blueferry.plugin_api import (
     CAPABILITY_NOTIFY,
+    MAX_REPLY_BYTES,
     METHOD_INVOKE_ACTION,
     OBJECT_PATH,
     SIGNAL_NOTIFY,
     SURFACES_INTERFACE,
 )
-from blueferry.plugin_api.client import default_cache_roots
+from blueferry.plugin_api.client import plugin_cache_roots
 from blueferry.plugin_api.manifest import PluginManifest, discover
 from blueferry.plugin_api.surfaces import (
     NOTIFY_ITEM_ID,
@@ -45,6 +46,13 @@ log = logging.getLogger(__name__)
 
 _DBUS = ("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus")
 POPUPS_PER_MINUTE = 6
+# Notify signals one sender may cause lookups for, before it is verified;
+# stops any session-bus client from making the daemon scan and ask the bus
+# in a loop.
+LOOKUPS_PER_MINUTE = 12
+# Manifests are re-read at most this often (files only, but on the loop).
+MANIFEST_TTL_SEC = 30.0
+MAX_VERIFIED_SENDERS = 64
 ACTION_TIMEOUT_SEC = 60.0
 LOOKUP_TIMEOUT_SEC = 2.0
 
@@ -55,6 +63,7 @@ class PluginPopup:
     plugin_name: str
     bus_name: str
     note: Notification
+    plugin_alias: str = ""
 
 
 def notify_plugins() -> list[PluginManifest]:
@@ -90,6 +99,13 @@ class PluginPopups:
         self._uid = os.getuid() if uid is None else uid
         self._clock = clock
         self._recent: dict[str, deque[float]] = {}
+        self._lookups: dict[str, deque[float]] = {}
+        self._manifests: list[PluginManifest] = []
+        self._manifests_at = float("-inf")
+        # Unique bus names are never reused within a bus session, so a
+        # sender verified once stays that plugin; this also keeps a popup
+        # from a plugin that emits and then idles out right away.
+        self._verified: dict[str, PluginManifest] = {}
         self._match = None
 
     def start(self) -> None:
@@ -119,12 +135,40 @@ class PluginPopups:
         note = parse_notification(title, body, icon, action_label, action_id)
         if note is None or not sender:
             return
-        try:
-            candidates = list(self._plugins())
-        except Exception:
-            log.debug("could not read plugin manifests", exc_info=True)
+        sender = str(sender)
+        known = self._verified.get(sender)
+        if known is not None:
+            if any(plugin.id == known.id for plugin in self._candidates()):
+                self._deliver(known, note)  # still enabled
             return
-        self._match_owner(str(sender), note, candidates)
+        if not self._admit(self._lookups, sender, LOOKUPS_PER_MINUTE):
+            log.info("ignoring repeated popups from an unverified sender")
+            return
+        self._match_owner(sender, note, self._candidates())
+
+    def _candidates(self) -> list[PluginManifest]:
+        now = self._clock()
+        if now - self._manifests_at >= MANIFEST_TTL_SEC:
+            try:
+                self._manifests = list(self._plugins())
+            except Exception:
+                log.debug("could not read plugin manifests", exc_info=True)
+                self._manifests = []
+            self._manifests_at = now
+        return list(self._manifests)
+
+    def _admit(self, table: dict[str, deque[float]], key: str, limit: int) -> bool:
+        now = self._clock()
+        window = table.setdefault(key, deque())
+        while window and now - window[0] > 60:
+            window.popleft()
+        if len(window) >= limit:
+            return False
+        window.append(now)
+        if len(table) > 256:
+            for stale in [name for name, times in table.items() if not times][:128]:
+                del table[stale]
+        return True
 
     def _match_owner(
         self, sender: str, note: Notification, candidates: list[PluginManifest],
@@ -152,6 +196,9 @@ class PluginPopups:
             if int(uid) != self._uid:
                 log.warning("ignoring a popup from a plugin run by another user")
                 return
+            self._verified[sender] = plugin
+            while len(self._verified) > MAX_VERIFIED_SENDERS:
+                self._verified.pop(next(iter(self._verified)))
             self._deliver(plugin, note)
 
         self._bus.call_async(
@@ -161,16 +208,11 @@ class PluginPopups:
         )
 
     def _deliver(self, plugin: PluginManifest, note: Notification) -> None:
-        now = self._clock()
-        window = self._recent.setdefault(plugin.id, deque())
-        while window and now - window[0] > 60:
-            window.popleft()
-        if len(window) >= POPUPS_PER_MINUTE:
+        if not self._admit(self._recent, plugin.id, POPUPS_PER_MINUTE):
             log.info("plugin popup rate limit reached; dropping one")
             return
-        window.append(now)
         try:
-            self._show(PluginPopup(plugin.id, plugin.name, plugin.bus_name, note))
+            self._show(PluginPopup(plugin.id, plugin.name, plugin.bus_name, note, plugin.alias))
         except Exception:
             log.exception("showing a plugin popup failed")
 
@@ -182,17 +224,23 @@ class PluginPopups:
             return
 
         def replied(text) -> None:
+            if not isinstance(text, str) or len(text.encode("utf-8", "surrogatepass")) > (
+                    MAX_REPLY_BYTES):
+                log.info("a plugin answered a popup click with an unusable reply")
+                return
             try:
-                result = parse_action_result(str(text))
+                result = parse_action_result(text)
             except SurfaceError:
                 log.info("a plugin answered a popup click with garbage")
                 return
-            uri = checked_open_uri(result.open_uri, default_cache_roots(), uid=self._uid)
+            uri = checked_open_uri(
+                result.open_uri, plugin_cache_roots(popup.plugin_id, popup.plugin_alias),
+                uid=self._uid,
+            )
             if result.ok and uri:
-                try:
-                    self._open_uri(uri)
-                except Exception:
-                    log.info("could not open what the plugin asked for")
+                # The answer came from whoever owns the name now (activation):
+                # open nothing for a plugin run by another user.
+                self._open_if_own(popup.bus_name, uri)
             elif result.open_uri and not uri:
                 log.info("refused a plugin open_uri outside http(s) and its cache")
 
@@ -204,4 +252,20 @@ class PluginPopups:
             popup.bus_name, OBJECT_PATH, SURFACES_INTERFACE, METHOD_INVOKE_ACTION, "sss",
             (NOTIFY_ITEM_ID, popup.note.action_id, "{}"), replied, failed,
             timeout=ACTION_TIMEOUT_SEC,
+        )
+
+    def _open_if_own(self, bus_name: str, uri: str) -> None:
+        def checked(uid) -> None:
+            if int(uid) != self._uid:
+                log.warning("ignoring a popup action answered by another user")
+                return
+            try:
+                self._open_uri(uri)
+            except Exception:
+                log.info("could not open what the plugin asked for")
+
+        self._bus.call_async(
+            *_DBUS, "GetConnectionUnixUser", "s", (bus_name,), checked,
+            lambda _error: log.debug("could not check who answered a popup action"),
+            timeout=LOOKUP_TIMEOUT_SEC,
         )
