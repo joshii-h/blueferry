@@ -1527,3 +1527,15 @@ def test_photos_load_only_while_watched_and_open_the_original(monkeypatch, tmp_p
     assert controller.photos["items"][0]["original"].endswith("/IMG_1.HEIC")
     controller.watchPhotos(False)
     assert controller.photos["items"] == []
+
+
+def test_photo_load_failure_stops_the_spinner(monkeypatch):
+    controller = BridgeController(
+        backend=_Backend(), setup=object(), subscribe=False, autostart=False,
+    )
+    monkeypatch.setattr(
+        controller, "_run",
+        lambda _operation, _on_done=None, on_failed=None, **_kwargs: on_failed("boom"),
+    )
+    controller.watchPhotos(True)
+    assert controller.photos["loaded"] is True and controller.photos["hint"] == "boom"

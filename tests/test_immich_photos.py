@@ -135,8 +135,12 @@ def test_cache_is_private_and_prunes_least_recently_used(tmp_path) -> None:
     assert cache.thumbnail("a") is None and cache.thumbnail("b") == second
     with pytest.raises(ValueError):
         cache.thumbnail("../x")
-    assert safe_file_name("../../evil\x1b.MOV", "id") == "evil_.MOV"
-    assert safe_file_name("...", "id") == "id"
+    assert safe_file_name("../../evil\x1b.MOV", "id", "video") == "evil_.mov"
+    assert safe_file_name("IMG_1.HEIC", "id") == "IMG_1.heic"
+    # The extension picks the program that opens it: only media survive.
+    assert safe_file_name("x.desktop", "id") == "x.jpg"
+    assert safe_file_name("page.html", "id", "video") == "page.mov"
+    assert safe_file_name("...", "id") == "id.jpg"
 
 
 def test_settings_fall_back_to_an_owner_only_key_file(tmp_path) -> None:
@@ -230,7 +234,7 @@ def test_recent_photos_and_originals_end_to_end(plugin) -> None:
     assert photos[0].thumbnail is not None and photos[0].thumbnail.read_bytes().startswith(b"thumb")
     assert photos[0].original is None
     path = client.fetch_original(ID_B)
-    assert path.name == "evil_.MOV" and path.read_bytes().startswith(b"original")
+    assert path.name == "evil_.mov" and path.read_bytes().startswith(b"original")
     assert client.status().server == "photos.example.org"
     # Cached: listing again neither refetches thumbnails nor the original.
     before = len(server.requests)
@@ -241,6 +245,22 @@ def test_recent_photos_and_originals_end_to_end(plugin) -> None:
     server.items.insert(0, {"id": "3f1c2d4e-0000-4000-8000-00000000000c", "type": "IMAGE"})
     client.list_recent(10)
     assert changed == [True]
+
+
+def test_original_of_an_unlisted_asset_asks_the_server_for_its_name(plugin) -> None:
+    store, server, service, client = plugin
+    store.save(Settings("https://photos.example.org", "keyring"), "k3y")
+    original_call = server.__call__
+
+    def answer(request, timeout):
+        if request.full_url.endswith(f"/api/assets/{ID_A}"):
+            return _Response(json.dumps({"id": ID_A, "type": "IMAGE",
+                                         "originalFileName": "IMG_9.PNG"}).encode())
+        return original_call(request, timeout)
+
+    service._client_factory = lambda url, key: ImmichClient(url, key, open_url=answer)
+    assert client.fetch_original(ID_A).name == "IMG_9.png"
+    assert service.in_flight == 0
 
 
 def test_server_errors_reach_the_client_as_text(plugin) -> None:

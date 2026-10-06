@@ -448,7 +448,15 @@ class BridgeController(QObject):
             }
             self.photosChanged.emit()
 
-        self._run(load, completed, busy=False)
+        def failed(message: str) -> None:
+            # Never leave the tab spinning: show why instead.
+            self._photos = {
+                "present": self._photos_plugin is not None, "ready": False, "loaded": True,
+                "hint": message or _("Photos unavailable"), "items": [],
+            }
+            self.photosChanged.emit()
+
+        self._run(load, completed, failed, busy=False)
 
     @Slot(str)
     def openPhoto(self, photo_id: str) -> None:

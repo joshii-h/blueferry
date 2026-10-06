@@ -141,7 +141,9 @@ class PluginClient:
         self.manifest = manifest
         self._transport = transport or DBusTransport()
         self._uid = os.getuid() if uid is None else uid
-        self._cache_root = cache_root or default_cache_root
+        self._cache_roots: Callable[[], tuple[Path, ...]] = (
+            (lambda: (cache_root(),)) if cache_root is not None else default_cache_roots
+        )
 
     def _call(self, interface: str, method: str, signature: str, args: tuple,
               timeout: float) -> str:
@@ -234,20 +236,22 @@ class PluginClient:
             return None
         try:
             resolved = path.resolve(strict=True)
-            root = self._cache_root().resolve()
+            roots = [root.resolve() for root in self._cache_roots()]
             info = os.lstat(resolved)
         except (OSError, RuntimeError):
             return None
-        if root not in resolved.parents:
+        if not any(root in resolved.parents for root in roots):
             return None
         if not stat.S_ISREG(info.st_mode) or info.st_uid != self._uid:
             return None
         return resolved
 
 
-def default_cache_root() -> Path:
-    """``$XDG_CACHE_HOME/blueferry``: the only place plugin files may live."""
-    cache_home = os.environ.get("XDG_CACHE_HOME") or os.path.join(
-        os.path.expanduser("~"), ".cache"
-    )
-    return Path(cache_home) / "blueferry"
+def default_cache_roots() -> tuple[Path, ...]:
+    """Where plugin files may live: ``$XDG_CACHE_HOME/blueferry``, and
+    ``~/.cache/blueferry`` because a bus-activated plugin inherits the bus
+    daemon's environment, which may lack the client's XDG_CACHE_HOME."""
+    roots = [Path(os.path.expanduser("~")) / ".cache" / "blueferry"]
+    if os.environ.get("XDG_CACHE_HOME"):
+        roots.insert(0, Path(os.environ["XDG_CACHE_HOME"]) / "blueferry")
+    return tuple(dict.fromkeys(roots))

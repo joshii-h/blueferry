@@ -79,6 +79,8 @@ class PluginService(dbus.service.Object):
         self._clock = clock
         self._calls: dict[str, deque[float]] = defaultdict(deque)
         self.last_activity = clock()
+        # Calls whose worker has not replied yet; run() never idles out then.
+        self.in_flight = 0
 
     # ---- hooks -----------------------------------------------------------
 
@@ -106,6 +108,12 @@ class PluginService(dbus.service.Object):
         error: Callable[[Exception], None],
     ) -> None:
         """Run ``work`` off the main loop and reply on it."""
+        self.in_flight += 1
+
+        def finish() -> None:
+            self.in_flight -= 1
+            self.last_activity = self._clock()
+
         def worker() -> None:
             try:
                 result = work()
@@ -116,10 +124,16 @@ class PluginService(dbus.service.Object):
                     type(failure).__name__
                 )
                 log.info("plugin call failed: %s", message)
-                self._to_main(lambda: error(PluginCallError(message)))
+
+                def failed() -> None:
+                    finish()
+                    error(PluginCallError(message))
+
+                self._to_main(failed)
                 return
+
             def done() -> None:
-                self.last_activity = self._clock()
+                finish()
                 reply(result)
 
             self._to_main(done)
@@ -205,7 +219,7 @@ def run(
     loop = GLib.MainLoop()
 
     def check_idle() -> bool:
-        if time.monotonic() - service.last_activity > idle_seconds:
+        if service.in_flight == 0 and time.monotonic() - service.last_activity > idle_seconds:
             loop.quit()
             return False
         return True

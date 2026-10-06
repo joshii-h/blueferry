@@ -90,12 +90,15 @@ Errors are D-Bus errors under `io.weirdware.BlueFerry.Plugin.Error.*`
 - Plugin data is **untrusted**: replies over 512 KiB are rejected, JSON is
   validated field by field, ids match `[A-Za-z0-9_-]{1,64}`, text is shown as
   plain text only, and a path is used only if it resolves (symlinks included)
-  to a regular file owned by the user below `$XDG_CACHE_HOME/blueferry/`.
+  to a regular file owned by the user below `$XDG_CACHE_HOME/blueferry/` or
+  `~/.cache/blueferry/` (a bus-activated plugin inherits the bus daemon's
+  environment, which may lack the client's `XDG_CACHE_HOME`).
 - Clients call plugins from worker threads with timeouts. A plugin that
   crashes, hangs or answers garbage produces an error message in the client,
   never a crash.
 - The base service rate-limits each caller (120 calls/min) and runs network
-  and disk work off its main loop.
+  and disk work off its main loop. `run()` exits after the idle time only
+  when no call is still in flight.
 - Secrets (API keys) belong to the plugin: keep them in the Secret Service
   keyring, or in a 0600 file as a fallback, never in the manifest.
 
