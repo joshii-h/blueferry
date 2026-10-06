@@ -254,6 +254,8 @@ class Daemon:
         self.notification_log: NotificationLog | None = (
             NotificationLog(
                 show_content=config.SHOW_NOTIFICATION_CONTENT, idle=GLib.idle_add,
+                mirror_removals=lambda: self.notification_policy.mirror_removals,
+                schedule=GLib.timeout_add_seconds, cancel=GLib.source_remove,
             )
             if config.NOTIFICATION_HISTORY else None
         )
@@ -841,6 +843,10 @@ class Daemon:
                 notification_actions=config.ancs_actions_active(),
                 on_notification_removed=self._ancs_notification_removed,
                 on_actions_reset=self._ancs_actions_reset,
+                on_removed=self._ancs_removed_on_iphone,
+                on_preexisting=self._ancs_preexisting,
+                on_session_reset=self._ancs_session_reset,
+                on_session_ready=self._ancs_session_ready,
             )
             # Publish before start(): its initial D-Bus sweep can dispatch
             # an owner change that must invalidate the in-progress scan.
@@ -1142,6 +1148,29 @@ class Daemon:
         if removed is not None:
             removed(notification_id)
 
+    # ---- following the iPhone's notification list (mirror_iphone_removals)
+
+    def _ancs_removed_on_iphone(self, notification_id: int) -> None:
+        if not self.notification_policy.mirror_removals:
+            return
+        if self.notification_log is not None:
+            self.notification_log.remove(notification_id)
+        self.events.ancs_mirror_removed(notification_id)
+
+    def _ancs_preexisting(self, notification_id: int) -> None:
+        if self.notification_log is not None:
+            self.notification_log.preexisting(notification_id)
+
+    def _ancs_session_reset(self) -> None:
+        # Always: UIDs of the ended session must never match the next one.
+        if self.notification_log is not None:
+            self.notification_log.session_reset()
+        self.events.ancs_session_reset()
+
+    def _ancs_session_ready(self) -> None:
+        if self.notification_log is not None:
+            self.notification_log.session_ready()
+
     def _ancs_actions_reset(self) -> None:
         """Close action popups whose UIDs died with the ANCS session."""
         reset = getattr(self.events, "ancs_actions_reset", None)
@@ -1223,6 +1252,7 @@ class Daemon:
             "contacts_only_notifications": (
                 self.notification_policy.contacts_only
             ),
+            "mirror_iphone_removals": self.notification_policy.mirror_removals,
             # Configuration only; codes themselves never cross the bus.
             "otp_autocopy": config.OTP_AUTOCOPY,
             "storage_policy": self.storage.status.policy,
@@ -1361,6 +1391,8 @@ class Daemon:
         self.contact_sync.stop()
         if self.call_history is not None:
             self.call_history.stop()
+        if self.notification_log is not None:
+            self.notification_log.close()
         for tid_attr in (
             "_release_check_id",
             "_target_config_check_id",

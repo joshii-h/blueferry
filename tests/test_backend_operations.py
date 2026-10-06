@@ -344,6 +344,11 @@ def test_notification_policy_is_backend_owned_and_notifies_status() -> None:
     class Policy:
         value = "messages"
         contacts_only = False
+        mirror_removals = True
+
+        def set_mirror_removals(self, enabled):
+            self.mirror_removals = enabled
+            return enabled
 
         def set(self, value):
             self.value = value
@@ -366,7 +371,10 @@ def test_notification_policy_is_backend_owned_and_notifies_status() -> None:
     assert operations.set_contacts_only_notifications(True) is True
     assert operations.get_contacts_only_notifications() is True
     assert operations.status()["contacts_only_notifications"] is True
-    assert changes == [True, True]
+    assert operations.status()["mirror_iphone_removals"] is True
+    assert operations.set_mirror_notification_removals(False) is False
+    assert operations.status()["mirror_iphone_removals"] is False
+    assert changes == [True, True, True]
 
 
 def test_notification_click_rules_are_validated_by_the_backend(tmp_path) -> None:

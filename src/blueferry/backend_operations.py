@@ -134,6 +134,11 @@ class NotificationPolicy(Protocol):
     def set_contacts_only(self, enabled: bool) -> bool: ...
 
     @property
+    def mirror_removals(self) -> bool: ...
+
+    def set_mirror_removals(self, enabled: bool) -> bool: ...
+
+    @property
     def open_map(self) -> dict[str, str]: ...
 
     def set_open_target(self, bundle_id: str, target: str) -> dict[str, str]: ...
@@ -782,6 +787,7 @@ class BackendOperations:
             "contacts_only_notifications": (
                 self.get_contacts_only_notifications()
             ),
+            "mirror_iphone_removals": self.get_mirror_notification_removals(),
             "contact_photos": bool(self.dependencies.contact_photos),
         }
         calls = self.dependencies.calls
@@ -1124,6 +1130,21 @@ class BackendOperations:
             selected = self.dependencies.notification_policy.set_contacts_only(
                 enabled
             )
+        except ValueError as error:
+            raise InvalidArgumentsError(str(error)) from error
+        if self.dependencies.on_notification_policy_changed is not None:
+            self.dependencies.on_notification_policy_changed()
+        return selected
+
+    def get_mirror_notification_removals(self) -> bool:
+        policy = self.dependencies.notification_policy
+        return True if policy is None else bool(policy.mirror_removals)
+
+    def set_mirror_notification_removals(self, enabled: bool) -> bool:
+        if self.dependencies.notification_policy is None:
+            raise NotReadyError("notification policy storage is unavailable")
+        try:
+            selected = self.dependencies.notification_policy.set_mirror_removals(enabled)
         except ValueError as error:
             raise InvalidArgumentsError(str(error)) from error
         if self.dependencies.on_notification_policy_changed is not None:

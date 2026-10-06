@@ -1935,3 +1935,44 @@ def test_rapid_le_bearer_cycles_are_logged_at_info_once_per_interval(caplog) -> 
         "iPhone LE bearer reconnected; rebuilding ANCS subscription "
         "(29 more since the last report)"
     )
+
+
+def test_session_lifecycle_reports_removals_preexisting_and_resets(monkeypatch) -> None:
+    from blueferry.ancs.constants import EventFlag
+
+    seen: list[tuple] = []
+    client, _cp, _emitted = _action_client(monkeypatch, enabled=False)
+    client._on_removed = lambda uid: seen.append(("removed", uid))
+    client._on_preexisting = lambda uid: seen.append(("preexisting", uid))
+    client._on_session_reset = lambda: seen.append(("reset",))
+    client._on_session_ready = lambda: seen.append(("ready",))
+
+    def ns(event_id, flags, uid):
+        client._on_ns_changed(
+            "org.bluez.GattCharacteristic1",
+            {"Value": struct.pack("<BBBBI", event_id, flags, 4, 1, uid)}, [],
+        )
+
+    # Every removal is reported, not only actionable ones.
+    ns(EventID.NotificationRemoved, 0, 5)
+    client.observe_bearer_state(False)
+    client._authorized = False
+    client._mark_authorized()
+    ns(EventID.NotificationAdded, EventFlag.PreExisting, 9)
+    assert seen == [("removed", 5), ("reset",), ("ready",), ("preexisting", 9)]
+
+
+def test_failing_session_callbacks_never_break_the_ancs_client(monkeypatch) -> None:
+    client, _cp, _emitted = _action_client(monkeypatch, enabled=False)
+
+    def boom(*_args):
+        raise RuntimeError("sink broke")
+
+    client._on_removed = boom
+    client._on_session_reset = boom
+    client._on_notification_removed = boom
+    client._on_ns_changed(
+        "org.bluez.GattCharacteristic1",
+        {"Value": struct.pack("<BBBBI", EventID.NotificationRemoved, 0, 1, 0, 3)}, [],
+    )
+    client.observe_bearer_state(False)

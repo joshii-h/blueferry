@@ -153,6 +153,9 @@ class LibnotifySink:
         self._on_ancs_action = on_ancs_action
         # desktop notification id -> ANCS uid for popups with iPhone actions.
         self._ancs_actions: dict[int, int] = {}
+        # desktop notification id -> ANCS uid for every ANCS popup of the
+        # current session, so a removal on the iPhone can close it.
+        self._ancs_popups: dict[int, int] = {}
         # Resolves an ANCS bundle ID to the user's click rule (or None).
         self._open_target = open_target
         self._on_open_target = on_open_target
@@ -389,6 +392,7 @@ class LibnotifySink:
             return
         if ancs_buttons:
             self._track_ancs_actions(int(nid), int(event.notification_id))
+        self._track_ancs_popup(int(nid), int(getattr(event, "notification_id", 0) or 0))
         if clickable:
             if not hasattr(self, "_open_apps"):
                 self._open_apps = {}
@@ -436,6 +440,32 @@ class LibnotifySink:
         for nid in [nid for nid, value in tracked.items() if value == uid]:
             tracked.pop(nid, None)
             self._close_async(nid)
+
+    def _track_ancs_popup(self, nid: int, uid: int) -> None:
+        tracked = getattr(self, "_ancs_popups", None)
+        if tracked is None:
+            tracked = self._ancs_popups = {}
+        tracked.pop(nid, None)
+        tracked[nid] = uid
+        while len(tracked) > MAX_ANCS_ACTION_POPUPS:
+            tracked.pop(next(iter(tracked)))
+
+    def close_removed_ancs_popup(self, uid: int) -> None:
+        """Mirror a removal on the iPhone: close every popup for this UID."""
+        tracked = getattr(self, "_ancs_popups", {})
+        actions = getattr(self, "_ancs_actions", {})
+        for nid in [nid for nid, value in tracked.items() if value == uid]:
+            tracked.pop(nid, None)
+            actions.pop(nid, None)
+            self._close_async(nid)
+
+    def forget_ancs_popups(self) -> None:
+        """The ANCS session ended; its UIDs may come back for other popups.
+
+        The popups themselves stay until they expire: their notifications
+        may still exist on the iPhone.
+        """
+        getattr(self, "_ancs_popups", {}).clear()
 
     def close_all_ancs_notifications(self) -> None:
         """Retire every action popup when the ANCS session (and UIDs) reset.

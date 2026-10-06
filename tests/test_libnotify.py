@@ -898,3 +898,21 @@ def test_click_trackers_are_bounded_and_released_on_close(monkeypatch) -> None:
     sink._match = sink._action_match = sink._token_match = None
     sink.close()
     assert sink._open_apps == {}
+
+
+def test_mirrored_removal_closes_any_ancs_popup_of_the_session(monkeypatch) -> None:
+    sink, server = _action_sink(monkeypatch, enabled=False, callback=None)
+    sink.handle_ancs(_call_event())
+    nid = _notify_calls(server)[0][1]
+
+    sink.close_removed_ancs_popup(999)
+    assert ("close", nid) not in server.calls
+    sink.close_removed_ancs_popup(42)
+    assert ("close", nid) in server.calls
+
+    # After a session reset the UID may belong to a new notification.
+    sink.handle_ancs(_call_event())
+    sink.forget_ancs_popups()
+    server.calls.clear()
+    sink.close_removed_ancs_popup(42)
+    assert server.calls == []

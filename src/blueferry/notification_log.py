@@ -7,6 +7,16 @@ most recent non-Messages ANCS notifications of the running daemon in memory
 only, for the clients' notification list. It is off unless
 ``BLUEFERRY_NOTIFICATION_HISTORY`` is set, stores titles and bodies only when
 ``BLUEFERRY_SHOW_NOTIFICATION_CONTENT`` is true, and is never written to disk.
+
+With ``mirror_iphone_removals`` (default on) the list follows the iPhone: an
+ANCS NotificationRemoved drops the record, and after a reconnect the records
+of the previous ANCS session that the iPhone does not report again as
+PreExisting within a short settle window are dropped too. ANCS UIDs are only
+unique within one session, so a removal only ever matches a record of the
+current session; old records are adopted into the new session when the
+iPhone reports their UID as PreExisting. Matching across a reconnect relies
+on iOS keeping a notification's UID while it exists. With the setting off,
+the list is a plain recent history.
 """
 from __future__ import annotations
 
@@ -18,6 +28,10 @@ from blueferry.ancs.constants import MESSAGES_APP_ID
 
 DEFAULT_CAPACITY = 200
 MAX_FIELD_CHARS = 512
+# How long after a new ANCS session is authorized the iPhone gets to report
+# its existing notifications before older records are reconciled.
+RECONCILE_SETTLE_SECONDS = 10
+_SESSION = "_session"
 
 
 def _bounded(value: object) -> str:
@@ -40,6 +54,9 @@ class NotificationLog:
         capacity: int = DEFAULT_CAPACITY,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         idle: Callable[[Callable[[], bool]], object] | None = None,
+        mirror_removals: Callable[[], bool] = lambda: False,
+        schedule: Callable[[int, Callable[[], bool]], object] | None = None,
+        cancel: Callable[[object], object] | None = None,
     ) -> None:
         self._show_content = show_content
         self._on_changed = on_changed
@@ -49,6 +66,13 @@ class NotificationLog:
         self._idle = idle
         self._emit_pending = False
         self._records: deque[dict[str, object]] = deque(maxlen=max(1, capacity))
+        self._mirror_removals = mirror_removals
+        self._schedule = schedule
+        self._cancel = cancel
+        # ANCS session counter; records carry the session they belong to.
+        self._session = 0
+        self._reconcile_pending = False
+        self._reconcile_id: object | None = None
 
     def set_listener(self, on_changed: Callable[[], None]) -> None:
         self._on_changed = on_changed
@@ -63,6 +87,7 @@ class NotificationLog:
         seen = getattr(event, "seen_at", None)
         when = seen if isinstance(seen, datetime) else self._clock()
         record: dict[str, object] = {
+            _SESSION: self._session,
             "id": int(getattr(event, "notification_id", 0) or 0),
             "app_id": _bounded(app_id),
             "app_name": _bounded(getattr(event, "app_name", "")),
@@ -78,6 +103,77 @@ class NotificationLog:
                 break
         else:
             self._records.append(record)
+        self._notify()
+
+    # ---- following removals on the iPhone ---------------------------------
+
+    def set_mirror_removals(self, mirror_removals: Callable[[], bool]) -> None:
+        self._mirror_removals = mirror_removals
+
+    def remove(self, notification_id: int) -> None:
+        """ANCS NotificationRemoved: drop this session's record for the UID."""
+        if not self._mirror_removals():
+            return
+        uid = int(notification_id)
+        kept = [
+            record for record in self._records
+            if not (record["id"] == uid and record[_SESSION] == self._session)
+        ]
+        if len(kept) != len(self._records):
+            self._replace(kept)
+
+    def session_reset(self) -> None:
+        """The ANCS session ended: its UIDs mean nothing to the next one."""
+        self._session += 1
+        self._cancel_reconcile()
+        self._reconcile_pending = any(
+            record[_SESSION] != self._session for record in self._records
+        )
+
+    def preexisting(self, notification_id: int) -> None:
+        """The iPhone still has this notification: keep the older record."""
+        if not self._reconcile_pending:
+            return
+        uid = int(notification_id)
+        for record in self._records:
+            if record["id"] == uid and record[_SESSION] != self._session:
+                record[_SESSION] = self._session
+
+    def session_ready(self) -> None:
+        """Notification access is back; reconcile after the settle window."""
+        if not self._reconcile_pending or self._reconcile_id is not None:
+            return
+        if self._schedule is None:
+            self.reconcile()
+            return
+
+        def fire() -> bool:
+            self._reconcile_id = None
+            self.reconcile()
+            return False
+
+        self._reconcile_id = self._schedule(RECONCILE_SETTLE_SECONDS, fire)
+
+    def reconcile(self) -> None:
+        """Drop older records the iPhone did not report again."""
+        self._cancel_reconcile()
+        pending, self._reconcile_pending = self._reconcile_pending, False
+        if not pending or not self._mirror_removals():
+            return
+        kept = [record for record in self._records if record[_SESSION] == self._session]
+        if len(kept) != len(self._records):
+            self._replace(kept)
+
+    def close(self) -> None:
+        self._cancel_reconcile()
+
+    def _cancel_reconcile(self) -> None:
+        source, self._reconcile_id = self._reconcile_id, None
+        if source is not None and self._cancel is not None:
+            self._cancel(source)
+
+    def _replace(self, records: list[dict[str, object]]) -> None:
+        self._records = deque(records, maxlen=self._records.maxlen)
         self._notify()
 
     def clear(self) -> None:
@@ -107,4 +203,7 @@ class NotificationLog:
     def snapshot(self, limit: int) -> list[dict[str, object]]:
         """Newest first, at most ``limit`` records (copies)."""
         bounded = max(0, int(limit))
-        return [dict(record) for record in list(reversed(self._records))[:bounded]]
+        return [
+            {key: value for key, value in record.items() if key != _SESSION}
+            for record in list(reversed(self._records))[:bounded]
+        ]

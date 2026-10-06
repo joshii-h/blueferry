@@ -52,6 +52,7 @@ class _Sessions:
 class _Policy:
     value = "messages"
     contacts_only = False
+    mirror_removals = True
 
     def set(self, value: str) -> str:
         self.value = value
@@ -59,6 +60,10 @@ class _Policy:
 
     def set_contacts_only(self, enabled: bool) -> bool:
         self.contacts_only = enabled
+        return enabled
+
+    def set_mirror_removals(self, enabled: bool) -> bool:
+        self.mirror_removals = enabled
         return enabled
 
     def set_proximity_lock(self, enabled: bool, grace: int) -> dict:
@@ -907,3 +912,29 @@ def test_contact_photo_crosses_the_bus_as_bounded_bytes(public_service, enabled)
     assert bytes(outcome["raw"]) == outcome["photo"]
     assert outcome["status"] is enabled
     assert outcome["invalid"].endswith(".InvalidArgs")
+
+
+def test_mirror_removals_setter_round_trips_and_reports_status(public_service) -> None:
+    name, _pending, policy, changes, _service = public_service
+    outcome = {}
+
+    def change() -> None:
+        connection, interface = _client(name)
+        try:
+            client = BackendClient(
+                interface_factory=lambda iface: dbus.Interface(interface.proxy_object, iface)
+            )
+            outcome["off"] = client.set_mirror_notification_removals(False)
+            outcome["status"] = client.status().extra.get("mirror_iphone_removals")
+            outcome["on"] = bool(interface.SetMirrorNotificationRemovals(True, timeout=5))
+        finally:
+            connection.close()
+
+    client_thread = threading.Thread(target=change)
+    client_thread.start()
+    _dispatch_until(lambda: not client_thread.is_alive())
+    client_thread.join(timeout=1)
+
+    assert outcome == {"off": False, "status": False, "on": True}
+    assert policy.mirror_removals is True
+    assert changes

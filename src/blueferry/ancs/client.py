@@ -188,6 +188,10 @@ class AncsClient:
         notification_actions: bool = False,
         on_notification_removed: Callable[[int], None] | None = None,
         on_actions_reset: Callable[[], None] | None = None,
+        on_removed: Callable[[int], None] | None = None,
+        on_preexisting: Callable[[int], None] | None = None,
+        on_session_reset: Callable[[], None] | None = None,
+        on_session_ready: Callable[[], None] | None = None,
         schedule: Callable[[int, Callable[[], bool]], int] = GLib.timeout_add_seconds,
         cancel: Callable[[int], object] = GLib.source_remove,
         clock: Callable[[], float] = time.monotonic,
@@ -207,6 +211,13 @@ class AncsClient:
         self._notification_actions = bool(notification_actions)
         self._on_notification_removed = on_notification_removed
         self._on_actions_reset = on_actions_reset
+        # Session lifecycle for clients that follow the iPhone's list: every
+        # removal, every PreExisting UID, the end of a session (its UIDs die)
+        # and the moment a new session is authorized.
+        self._on_removed = on_removed
+        self._on_preexisting = on_preexisting
+        self._on_session_reset = on_session_reset
+        self._on_session_ready = on_session_ready
         self._clock = clock
         # kind -> (last INFO time, cycles demoted to DEBUG since then)
         self._bearer_cycle_logs: dict[str, tuple[float, int]] = {}
@@ -906,6 +917,7 @@ class AncsClient:
         self._was_authorized = True
         self._cancel_authorization_retry()
         log.info("ANCS notification access authorized for %s", self.device_path)
+        self._session_callback(self._on_session_ready)
         if self.on_status is not None:
             self.on_status()
 
@@ -925,12 +937,14 @@ class AncsClient:
         if n.type == EventID.NotificationRemoved:
             log.debug("ANCS removed uid=%d", n.id)
             self._forget_actionable(n.id)
+            self._session_callback(self._on_removed, n.id)
             return
         # Skip pre-existing (notifications that already existed on the
         # iPhone at our connect time — too noisy on initial subscribe).
         if n.is_preexisting:
             log.debug("ANCS preexisting event uid=%d cat=%d — skipping",
                       n.id, n.category)
+            self._session_callback(self._on_preexisting, n.id)
             return
         # Added or Modified → identify the source app without content first.
         self._request_attrs(n)
@@ -1328,10 +1342,19 @@ class AncsClient:
         except Exception:
             log.exception("ANCS notification-removed callback raised")
 
+    def _session_callback(self, callback, *args) -> None:
+        if callback is None:
+            return
+        try:
+            callback(*args)
+        except Exception:
+            log.exception("ANCS session callback raised")
+
     def _reset_actions(self) -> None:
         self._actionable.clear()
         self._actions_in_flight.clear()
         self._action_session += 1
+        self._session_callback(self._on_session_reset)
         if not self._notification_actions or self._on_actions_reset is None:
             return
         # UIDs are session-scoped and may be reused by the next session, so

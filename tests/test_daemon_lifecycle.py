@@ -565,3 +565,30 @@ def test_ancs_action_timeout_is_a_bounded_local_setting(monkeypatch):
         assert config._env_int(
             "BLUEFERRY_ANCS_ACTION_TIMEOUT_MS", 30_000, 1_000, 120_000
         ) == expected
+
+
+def test_iphone_removals_follow_the_mirror_setting(make_daemon):
+    instance = make_daemon()
+    calls = []
+    instance.events = SimpleNamespace(
+        ancs_mirror_removed=lambda uid: calls.append(("popup", uid)),
+        ancs_session_reset=lambda: calls.append(("forget",)),
+    )
+    instance.notification_log = SimpleNamespace(
+        remove=lambda uid: calls.append(("log", uid)),
+        session_reset=lambda: calls.append(("log-reset",)),
+        session_ready=lambda: calls.append(("log-ready",)),
+        preexisting=lambda uid: calls.append(("log-keep", uid)),
+    )
+    assert instance.notification_policy.mirror_removals is True  # default on
+    instance._ancs_removed_on_iphone(5)
+    instance.notification_policy.set_mirror_removals(False)
+    instance._ancs_removed_on_iphone(6)
+    # Session bookkeeping happens either way, so UIDs never cross sessions.
+    instance._ancs_session_reset()
+    instance._ancs_preexisting(7)
+    instance._ancs_session_ready()
+    assert calls == [
+        ("log", 5), ("popup", 5), ("log-reset",), ("forget",), ("log-keep", 7), ("log-ready",),
+    ]
+    assert instance._status()["mirror_iphone_removals"] is False

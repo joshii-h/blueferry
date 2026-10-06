@@ -143,3 +143,14 @@ def test_hand_edited_open_rules_are_revalidated_on_load(tmp_path) -> None:
 
     assert store.open_map == {"com.apple.mobilemail": "org.mozilla.Thunderbird.desktop"}
     assert store.open_target("com.example.Evil") is None
+
+
+def test_mirroring_iphone_removals_defaults_on_and_persists(tmp_path) -> None:
+    path = tmp_path / "settings.json"
+    store = NotificationPolicyStore(path)
+    assert store.mirror_removals is True
+    assert store.set_mirror_removals(False) is False
+    assert NotificationPolicyStore(path).mirror_removals is False
+    assert '"mirror_iphone_removals": false' in path.read_text()
+    with pytest.raises(ValueError):
+        store.set_mirror_removals("no")  # type: ignore[arg-type]

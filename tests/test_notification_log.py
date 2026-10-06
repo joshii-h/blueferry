@@ -119,3 +119,135 @@ def test_change_signals_are_coalesced_through_the_idle_scheduler() -> None:
     log.clear()
     queued.pop()()
     assert changes == [1, 1]
+
+
+class _Loop:
+    """Inert idle/timeout scheduler: callbacks run only when told to."""
+
+    def __init__(self) -> None:
+        self.idle: list = []
+        self.timers: dict[int, tuple[int, object]] = {}
+        self.next_id = 1
+
+    def add_idle(self, callback) -> int:
+        self.idle.append(callback)
+        return len(self.idle)
+
+    def schedule(self, seconds: int, callback) -> int:
+        source = self.next_id
+        self.next_id += 1
+        self.timers[source] = (seconds, callback)
+        return source
+
+    def cancel(self, source: int) -> None:
+        self.timers.pop(source, None)
+
+    def run_idle(self) -> None:
+        pending, self.idle = self.idle, []
+        for callback in pending:
+            callback()
+
+    def run_timers(self) -> None:
+        pending, self.timers = self.timers, {}
+        for _seconds, callback in pending.values():
+            callback()
+
+
+def _mirrored(mirror: list[bool]) -> tuple[NotificationLog, _Loop, list[int]]:
+    loop = _Loop()
+    changes: list[int] = []
+    log = NotificationLog(
+        show_content=False, on_changed=lambda: changes.append(1), idle=loop.add_idle,
+        mirror_removals=lambda: mirror[0], schedule=loop.schedule, cancel=loop.cancel,
+    )
+    return log, loop, changes
+
+
+def _ids(log: NotificationLog) -> list[int]:
+    return [record["id"] for record in log.snapshot(50)]
+
+
+def test_removal_on_the_iphone_drops_the_record_only_when_mirroring() -> None:
+    mirror = [True]
+    log, loop, changes = _mirrored(mirror)
+    for uid in (1, 2):
+        log.handle_ancs(event(uid))
+    loop.run_idle()
+    changes.clear()
+    log.remove(1)
+    loop.run_idle()
+    assert _ids(log) == [2] and changes == [1]
+
+    mirror[0] = False
+    log.remove(2)
+    loop.run_idle()
+    assert _ids(log) == [2] and changes == [1]  # plain recent history
+    log.remove(99)  # unknown UID: nothing, no signal
+    assert loop.idle == []
+
+
+def test_clear_all_on_the_iphone_sends_one_signal() -> None:
+    log, loop, changes = _mirrored([True])
+    for uid in range(1, 31):
+        log.handle_ancs(event(uid))
+    loop.run_idle()
+    changes.clear()
+    for uid in range(1, 31):
+        log.remove(uid)
+    loop.run_idle()
+    assert _ids(log) == [] and changes == [1]
+
+
+def test_reconnect_keeps_what_the_iphone_reports_again_and_drops_the_rest() -> None:
+    log, loop, changes = _mirrored([True])
+    for uid in (1, 2, 3):
+        log.handle_ancs(event(uid))
+    loop.run_idle()
+    changes.clear()
+    log.session_reset()
+    log.session_reset()  # BlueZ often tears down twice
+    log.session_ready()
+    assert next(iter(loop.timers.values()))[0] == 10  # settle window
+    log.preexisting(1)
+    log.preexisting(3)
+    assert _ids(log) == [3, 2, 1]  # nothing dropped before the window ends
+    loop.run_timers()
+    loop.run_idle()
+    assert _ids(log) == [3, 1] and changes == [1]
+    # Adopted records belong to the new session: removals match them now.
+    log.remove(3)
+    assert _ids(log) == [1]
+
+
+def test_reconcile_waits_for_a_new_session_and_is_cancelled_by_another_reset() -> None:
+    log, loop, _changes = _mirrored([True])
+    log.handle_ancs(event(1))
+    log.session_reset()
+    log.session_ready()
+    log.session_reset()  # dropped again before the window ended
+    assert loop.timers == {}
+    log.session_ready()
+    loop.run_timers()
+    assert _ids(log) == []
+    log.close()
+
+
+def test_a_reused_uid_never_removes_a_record_of_an_older_session() -> None:
+    log, _loop, _changes = _mirrored([True])
+    log.handle_ancs(event(7, "com.example.mail"))
+    log.session_reset()
+    log.session_ready()
+    # The new session hands UID 7 to another notification and removes it.
+    log.handle_ancs(event(7, "com.example.chat"))
+    log.remove(7)
+    assert [r["app_id"] for r in log.snapshot(10)] == ["com.example.mail"]
+    assert all("_session" not in record for record in log.snapshot(10))
+
+
+def test_reconnect_without_mirroring_keeps_everything() -> None:
+    log, loop, _changes = _mirrored([False])
+    log.handle_ancs(event(1))
+    log.session_reset()
+    log.session_ready()
+    loop.run_timers()
+    assert _ids(log) == [1]

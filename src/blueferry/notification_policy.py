@@ -19,6 +19,10 @@ ALL_NOTIFICATIONS = "all"
 MESSAGES_ONLY = "messages"
 NO_NOTIFICATIONS = "none"
 DEFAULT_NOTIFICATION_POLICY = MESSAGES_ONLY
+# Notifications removed on the iPhone also leave BlueFerry's recent list
+# (and close their desktop popup). On unless the user turned it off.
+MIRROR_REMOVALS_KEY = "mirror_iphone_removals"
+DEFAULT_MIRROR_REMOVALS = True
 NOTIFICATION_POLICIES = frozenset({
     ALL_NOTIFICATIONS,
     MESSAGES_ONLY,
@@ -35,6 +39,8 @@ class NotificationPolicyStore:
         payload = self._load()
         self._value = self._load_policy(payload)
         self._contacts_only = payload.get("contacts_only_notifications") is True
+        mirror = payload.get(MIRROR_REMOVALS_KEY, DEFAULT_MIRROR_REMOVALS)
+        self._mirror_removals = mirror is not False
         self._open_map = normalize_open_map(payload.get(OPEN_MAP_SETTINGS_KEY))
 
     @property
@@ -44,6 +50,11 @@ class NotificationPolicyStore:
     @property
     def contacts_only(self) -> bool:
         return self._contacts_only
+
+    @property
+    def mirror_removals(self) -> bool:
+        """Whether iPhone-side removals also remove BlueFerry's copies."""
+        return self._mirror_removals
 
     @property
     def open_map(self) -> dict[str, str]:
@@ -85,6 +96,13 @@ class NotificationPolicyStore:
 
         self._settings.update(contacts_only_notifications=enabled)
         self._contacts_only = enabled
+        return enabled
+
+    def set_mirror_removals(self, enabled: bool) -> bool:
+        if not isinstance(enabled, bool):
+            raise ValueError("mirroring iPhone removals must be a boolean")
+        self._settings.update(**{MIRROR_REMOVALS_KEY: enabled})
+        self._mirror_removals = enabled
         return enabled
 
     def set_open_target(self, bundle_id: str, target: str) -> dict[str, str]:
