@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import ClassVar, Protocol
 
+from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
@@ -115,8 +116,8 @@ class CallsScreen(ModalScreen[None]):
     def _show(self, snapshot: CallsSnapshot) -> None:
         self.snapshot = snapshot
         state, calls = describe(snapshot)
-        self.query_one("#calls-state", Static).update(state)
-        self.query_one("#calls-list", Static).update(calls)
+        self.query_one("#calls-state", Static).update(Text(state))
+        self.query_one("#calls-list", Static).update(Text(calls))
         ready = snapshot.available
         self.query_one("#calls-dial", Button).disabled = not ready
         self.query_one("#calls-answer", Button).disabled = ringing_call(snapshot) is None
@@ -126,7 +127,7 @@ class CallsScreen(ModalScreen[None]):
         hangup.label = "Decline" if target is not None and target.ringing else "Hang up"
 
     def _show_error(self, message: str) -> None:
-        self.query_one("#calls-state", Static).update(terminal_text(message))
+        self.query_one("#calls-state", Static).update(Text(terminal_text(message)))
         for selector in ("#calls-dial", "#calls-answer", "#calls-hangup"):
             self.query_one(selector, Button).disabled = True
 
