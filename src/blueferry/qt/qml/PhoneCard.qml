@@ -229,6 +229,13 @@ Controls.ScrollView {
             }
         }
 
+        Kirigami.Separator { Layout.fillWidth: true; visible: pluginCards.visible }
+
+        PluginCardSection {
+            id: pluginCards
+            bridge: card.bridge
+        }
+
         Kirigami.Separator { Layout.fillWidth: true }
 
         CompanionToolsSection {

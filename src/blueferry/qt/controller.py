@@ -37,6 +37,7 @@ from blueferry.qt import phone_link
 from blueferry.qt.avatars import avatar_url
 from blueferry.qt.companion import CompanionTools
 from blueferry.qt.plugin_settings import PluginSettings
+from blueferry.qt.plugin_surfaces import PluginSurfaces
 from blueferry.qt.tasks import Task
 from blueferry.quirks_report import issue_report, issue_url
 from blueferry.reconnect_view import UNREACHABLE_TEXT, reconnect_view, result_text
@@ -88,6 +89,7 @@ class BridgeController(QObject):
     featuresChanged = Signal()
     doctorChanged = Signal()
     pluginSettingsChanged = Signal()
+    pluginSurfacesChanged = Signal()
 
     def __init__(
         self,
@@ -99,6 +101,7 @@ class BridgeController(QObject):
         parent: QObject | None = None,
         companion: CompanionTools | None = None,
         plugin_settings: PluginSettings | None = None,
+        plugin_surfaces: PluginSurfaces | None = None,
         doctor: Callable[[], DoctorReport] = run_doctor,
     ) -> None:
         super().__init__(parent)
@@ -210,6 +213,11 @@ class BridgeController(QObject):
         self.devicesChanged.connect(self.phoneIdentityChanged)
         self.configuredChanged.connect(self.phoneIdentityChanged)
         self._bus = QDBusConnection.sessionBus() if subscribe else None
+        # "From Plugins" and "Send to…" (PLUGINS.md 1.2), on their own pool.
+        self._plugin_surfaces = plugin_surfaces or PluginSurfaces(
+            bus=self._bus, parent=self,
+        )
+        self._plugin_surfaces.changed.connect(self.pluginSurfacesChanged)
         if subscribe:
             self._subscribe()
         if autostart:
@@ -543,6 +551,32 @@ class BridgeController(QObject):
     @Slot()
     def clearPluginMessage(self) -> None:
         self._plugin_settings.clear_message()
+
+    @Property("QVariantMap", notify=pluginSurfacesChanged)
+    def pluginSurfaces(self):
+        """cards (per plugin: name, ok, hint, items with actions), busy,
+        message, targets for "Send to…"; everything plain text."""
+        return self._plugin_surfaces.state()
+
+    @Slot()
+    def refreshPluginCards(self) -> None:
+        self._plugin_surfaces.reload()
+
+    @Slot(str, str, str)
+    def invokePluginAction(self, plugin_id: str, item_id: str, action_id: str) -> None:
+        self._plugin_surfaces.invoke(str(plugin_id), str(item_id), str(action_id))
+
+    @Slot()
+    def clearPluginCardMessage(self) -> None:
+        self._plugin_surfaces.clear_message()
+
+    @Slot()
+    def loadShareTargets(self) -> None:
+        self._plugin_surfaces.load_targets()
+
+    @Slot(str, "QVariantList")
+    def sendToTarget(self, key: str, urls: list) -> None:
+        self._plugin_surfaces.send(str(key), list(urls or []))
 
     @Property("QVariantMap", notify=companionToolsChanged)
     def companionTools(self):

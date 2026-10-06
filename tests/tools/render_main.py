@@ -151,6 +151,34 @@ _ALL_CALLS = [
     _call("Friday", "6:30 PM", "Familie Hirsig", "+41790000002", "outgoing", 2),
     _call("Sep 28", "10:00 AM", "Zahnarzt", "+41445550000", "incoming"),
 ]
+PLUGIN_SURFACES = {
+    "loaded": True, "busy": "", "message": "", "messageOk": True, "targetsLoaded": True,
+    "targetProblems": [],
+    "targets": [{"key": "io.weirdware.blueferry.localsend:iphone", "label": "iPhone (LocalSend)",
+                 "icon": "smartphone"},
+                {"key": "io.weirdware.blueferry.webdav:ablage", "label": "Ablage",
+                 "icon": "folder-cloud"}],
+    "cards": [
+        {"pluginId": "io.weirdware.blueferry.calendar", "name": "Calendar", "ok": True, "hint": "",
+         "items": [
+             {"id": "next", "icon": "view-calendar", "title": "Zahnarzt",
+              "subtitle": "Today 14:30 · in 25 min", "actions": [
+                  {"id": "open", "label": "Open", "icon": "", "primary": True},
+                  {"id": "snooze", "label": "Snooze", "icon": "alarm-symbolic",
+                   "primary": False}]},
+             {"id": "later", "icon": "view-calendar-day", "title": "Training",
+              "subtitle": "Tomorrow 18:00", "actions": []}]},
+        {"pluginId": "io.weirdware.blueferry.localsend", "name": "LocalSend", "ok": True,
+         "hint": "", "items": [
+             {"id": "job-1", "icon": "document-send", "title": "Sending 3 files to iPhone",
+              "subtitle": "42 % · 12 MB of 28 MB", "actions": [
+                  {"id": "cancel", "label": "Cancel", "icon": "dialog-cancel",
+                   "primary": False}]}]},
+        {"pluginId": "io.example.broken", "name": "Shortcuts", "ok": False,
+         "hint": "Unavailable: the plugin did not answer in time", "items": []},
+    ],
+}
+
 CALL_ROWS = {"all": _ALL_CALLS, "missed": [row for row in _ALL_CALLS if row["missed"]]}
 
 BRIDGE_QML = """
@@ -227,6 +255,12 @@ QtObject {
     property var doctor: ({running: false, ran: true, ok: true, warnings: true,
         text: "INFO doctor: Target MAC configured\nWARNING doctor: Adapter CoD = 0x6c010c"})
     property var pluginSettings: (%(plugins)s)
+    property var pluginSurfaces: (%(surfaces)s)
+    function refreshPluginCards() {}
+    function invokePluginAction(pluginId, itemId, actionId) {}
+    function clearPluginCardMessage() {}
+    function loadShareTargets() {}
+    function sendToTarget(key, urls) {}
     function loadFeatures() {}
     function setFeature(name, enabled) {}
     function runDoctor() {}
@@ -286,7 +320,7 @@ def _render(scheme: str, out_dir: Path) -> None:
     source = BRIDGE_QML % {
         "status": json.dumps(STATUS), "threads": json.dumps(THREADS),
         "features": json.dumps(FEATURES), "plugins": json.dumps(PLUGINS),
-        "call_rows": json.dumps(CALL_ROWS),
+        "call_rows": json.dumps(CALL_ROWS), "surfaces": json.dumps(PLUGIN_SURFACES),
     }
     bridge_component = QQmlComponent(engine)
     bridge_component.setData(source.encode(), QUrl())
@@ -320,6 +354,12 @@ def _render(scheme: str, out_dir: Path) -> None:
     window.findChild(QObject, "messagesPage").setProperty("cardOpen", True)
     QTest.qWait(300)
     path = out_dir / f"main-{scheme}-card-connecting.png"
+    window.grabWindow().save(str(path))
+    print(path)
+    # The whole card: From Plugins, Tools and Send to….
+    window.resize(SIZES[-1][0], 1400)
+    QTest.qWait(400)
+    path = out_dir / f"main-{scheme}-card-full.png"
     window.grabWindow().save(str(path))
     print(path)
     _render_photos(bridge, window, scheme, out_dir)
