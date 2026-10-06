@@ -20,8 +20,8 @@ Kirigami.ApplicationWindow {
     property string pendingMessageHandle: ""
 
     visible: true
-    width: 980
-    height: 680
+    width: Kirigami.Units.gridUnit * 62
+    height: Kirigami.Units.gridUnit * 38
     minimumWidth: 420
     minimumHeight: 480
     title: qsTr("BlueFerry")
@@ -60,6 +60,11 @@ Kirigami.ApplicationWindow {
             .replace(/&/g, "&amp;")
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;")
+    }
+
+    function previewLine(value) {
+        // One calm line per conversation, however the message is formatted.
+        return String(value || "").replace(/\s+/g, " ").trim()
     }
 
     function escapedRichText(value) {
@@ -414,7 +419,7 @@ Kirigami.ApplicationWindow {
         title: qsTr("BlueFerry")
         padding: 0
         // The phone card collapses behind a header button on small windows.
-        property bool compact: width < Kirigami.Units.gridUnit * 40
+        property bool compact: width < Kirigami.Units.gridUnit * 56
         property bool cardOpen: false
         property bool narrow: messagesSplit.width < Kirigami.Units.gridUnit * 30
         property var thread: root.selectedThread()
@@ -567,6 +572,7 @@ Kirigami.ApplicationWindow {
 
                             Controls.SplitView {
                                 id: messagesSplit
+                                objectName: "messagesSplit"
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
                                 orientation: Qt.Horizontal
@@ -583,6 +589,7 @@ Kirigami.ApplicationWindow {
                                 }
 
                                 ColumnLayout {
+                                    objectName: "threadPane"
                                     Controls.SplitView.fillWidth: messagesPage.narrow
                                     Controls.SplitView.preferredWidth: messagesPage.narrow
                                         ? messagesSplit.width : messagesSplit.width * 0.35
@@ -593,69 +600,141 @@ Kirigami.ApplicationWindow {
 
                                     Controls.ToolBar {
                                         Layout.fillWidth: true
+                                        // Both pane headers share one height so their lines meet.
+                                        Layout.preferredHeight: chatHeader.implicitHeight
 
-                                        contentItem: RowLayout {
-                                            Controls.Label {
-                                                Layout.fillWidth: true
-                                                text: qsTr("Conversations")
-                                                font.bold: true
-                                                leftPadding: Kirigami.Units.smallSpacing
-                                            }
+                                        contentItem: Kirigami.Heading {
+                                            level: 4
+                                            text: qsTr("Conversations")
+                                            leftPadding: Kirigami.Units.smallSpacing
+                                            verticalAlignment: Text.AlignVCenter
+                                            elide: Text.ElideRight
                                         }
                                     }
 
                                     ListView {
                                         id: threadList
+                                        objectName: "threadList"
                                         Layout.fillWidth: true
                                         Layout.fillHeight: true
                                         clip: true
                                         model: root.bridge.threads
                                         currentIndex: -1
+                                        topMargin: Kirigami.Units.smallSpacing
+                                        bottomMargin: Kirigami.Units.smallSpacing
+                                        leftMargin: Kirigami.Units.smallSpacing
+                                        rightMargin: Kirigami.Units.smallSpacing
+                                        spacing: Kirigami.Units.smallSpacing / 2
+                                        Controls.ScrollBar.vertical: Controls.ScrollBar {}
 
                                         delegate: Controls.ItemDelegate {
                                             id: threadDelegate
+                                            objectName: "threadDelegate"
                                             required property var modelData
-                                            width: threadList.width
+                                            readonly property var lastMessage: modelData.messages.length
+                                                ? modelData.messages[modelData.messages.length - 1] : null
+                                            readonly property bool unread: root.threadIsUnread(modelData)
+                                            width: threadList.width - threadList.leftMargin - threadList.rightMargin
                                             highlighted: root.selectedThreadKey === modelData.key
+                                            leftPadding: Kirigami.Units.largeSpacing
+                                            rightPadding: Kirigami.Units.smallSpacing
+                                            topPadding: Kirigami.Units.largeSpacing
+                                            bottomPadding: Kirigami.Units.largeSpacing
                                             Accessible.name: threadDelegate.modelData.name
                                             onClicked: root.selectedThreadKey = modelData.key
+
+                                            // A tint of the highlight colour instead of the full
+                                            // selection block keeps long lists calm.
+                                            background: Rectangle {
+                                                radius: Kirigami.Units.cornerRadius
+                                                color: threadDelegate.highlighted
+                                                    ? Qt.alpha(Kirigami.Theme.highlightColor, 0.25)
+                                                    : threadDelegate.hovered
+                                                        ? Qt.alpha(Kirigami.Theme.highlightColor, 0.1)
+                                                        : "transparent"
+                                                border.width: threadDelegate.visualFocus ? 1 : 0
+                                                border.color: Kirigami.Theme.focusColor
+                                            }
+
                                             contentItem: RowLayout {
-                                                spacing: Kirigami.Units.smallSpacing
+                                                spacing: Kirigami.Units.largeSpacing
 
                                                 ContactAvatar {
+                                                    Layout.preferredWidth: Kirigami.Units.iconSizes.medium
+                                                    Layout.preferredHeight: Kirigami.Units.iconSizes.medium
                                                     bridge: root.bridge
                                                     group: threadDelegate.modelData.is_group
                                                     address: !threadDelegate.modelData.is_group
                                                         && threadDelegate.modelData.recipients.length === 1
                                                         ? threadDelegate.modelData.recipients[0] : ""
                                                 }
-                                                ColumnLayout {
+                                                GridLayout {
                                                     Layout.fillWidth: true
-                                                    spacing: 0
+                                                    columns: 2
+                                                    rowSpacing: 0
+                                                    columnSpacing: Kirigami.Units.smallSpacing
+
                                                     Controls.Label {
-                                                        id: preview
+                                                        objectName: "threadName"
                                                         Layout.fillWidth: true
                                                         text: threadDelegate.modelData.name
                                                         textFormat: Text.PlainText
-                                                        font.bold: root.threadIsUnread(threadDelegate.modelData)
+                                                        font.bold: true
+                                                        color: Kirigami.Theme.textColor
                                                         elide: Text.ElideRight
+                                                        maximumLineCount: 1
                                                     }
                                                     Controls.Label {
+                                                        objectName: "threadTime"
+                                                        Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                                                        text: threadDelegate.lastMessage
+                                                            ? threadDelegate.lastMessage.display_timestamp || "" : ""
+                                                        textFormat: Text.PlainText
+                                                        font: Kirigami.Theme.smallFont
+                                                        color: threadDelegate.unread
+                                                            ? Kirigami.Theme.highlightColor
+                                                            : Kirigami.Theme.disabledTextColor
+                                                    }
+                                                    Controls.Label {
+                                                        id: preview
+                                                        objectName: "threadPreview"
                                                         Layout.fillWidth: true
-                                                        text: threadDelegate.modelData.messages.length
-                                                            ? threadDelegate.modelData.messages[threadDelegate.modelData.messages.length - 1].body
+                                                        text: threadDelegate.lastMessage
+                                                            ? root.previewLine(threadDelegate.lastMessage.body)
                                                             : qsTr("No Messages")
                                                         textFormat: Text.PlainText
-                                                        opacity: 0.7
+                                                        color: threadDelegate.unread
+                                                            ? Kirigami.Theme.textColor
+                                                            : Kirigami.Theme.disabledTextColor
                                                         elide: Text.ElideRight
+                                                        wrapMode: Text.NoWrap
+                                                        maximumLineCount: 1
+                                                    }
+                                                    Rectangle {
+                                                        objectName: "threadUnreadDot"
+                                                        Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                                                        implicitWidth: Kirigami.Units.smallSpacing * 2
+                                                        implicitHeight: implicitWidth
+                                                        radius: width / 2
+                                                        color: Kirigami.Theme.highlightColor
+                                                        visible: threadDelegate.unread
+                                                        Accessible.name: qsTr("Unread")
                                                     }
                                                 }
                                                 Controls.ToolButton {
+                                                    // Always present for keyboard and screen-reader
+                                                    // users; drawn only when starred or pointed at.
+                                                    opacity: threadDelegate.modelData.starred
+                                                        || threadDelegate.hovered || hovered || visualFocus ? 1 : 0
                                                     icon.name: threadDelegate.modelData.starred
                                                         ? "starred-symbolic" : "non-starred-symbolic"
-                                                    Accessible.name: threadDelegate.modelData.starred
+                                                    text: threadDelegate.modelData.starred
                                                         ? qsTr("Unstar Conversation")
                                                         : qsTr("Star Conversation")
+                                                    display: Controls.AbstractButton.IconOnly
+                                                    Accessible.name: text
+                                                    Controls.ToolTip.text: text
+                                                    Controls.ToolTip.visible: hovered
                                                     onClicked: root.bridge.setThreadStarred(
                                                         threadDelegate.modelData.key,
                                                         !threadDelegate.modelData.starred
@@ -695,6 +774,7 @@ Kirigami.ApplicationWindow {
                                 }
 
                                 ColumnLayout {
+                                    objectName: "chatPane"
                                     Controls.SplitView.fillWidth: true
                                     Controls.SplitView.minimumWidth: messagesPage.narrow
                                         ? 0 : Kirigami.Units.gridUnit * 18
@@ -702,9 +782,13 @@ Kirigami.ApplicationWindow {
                                     spacing: 0
 
                                     Controls.ToolBar {
+                                        id: chatHeader
+                                        objectName: "chatHeader"
                                         Layout.fillWidth: true
 
                                         contentItem: RowLayout {
+                                            spacing: Kirigami.Units.largeSpacing
+
                                             Controls.ToolButton {
                                                 visible: messagesPage.narrow
                                                 icon.name: "go-previous"
@@ -715,22 +799,39 @@ Kirigami.ApplicationWindow {
                                                 Controls.ToolTip.visible: hovered
                                                 onClicked: root.selectedThreadKey = ""
                                             }
+                                            ContactAvatar {
+                                                Layout.leftMargin: messagesPage.narrow ? 0 : Kirigami.Units.smallSpacing
+                                                Layout.preferredWidth: Kirigami.Units.iconSizes.medium
+                                                Layout.preferredHeight: Kirigami.Units.iconSizes.medium
+                                                visible: messagesPage.thread !== null
+                                                bridge: root.bridge
+                                                group: messagesPage.thread !== null && messagesPage.thread.is_group
+                                                address: messagesPage.thread !== null && !messagesPage.thread.is_group
+                                                    && messagesPage.thread.recipients.length === 1
+                                                    ? messagesPage.thread.recipients[0] : ""
+                                            }
                                             ColumnLayout {
                                                 Layout.fillWidth: true
-                                                Controls.Label {
+                                                Layout.leftMargin: messagesPage.thread === null
+                                                    ? Kirigami.Units.smallSpacing : 0
+                                                spacing: 0
+                                                Kirigami.Heading {
+                                                    objectName: "chatTitle"
                                                     Layout.fillWidth: true
+                                                    level: 4
                                                     text: messagesPage.thread ? messagesPage.thread.name : qsTr("Conversation")
                                                     textFormat: Text.PlainText
-                                                    font.bold: true
                                                     elide: Text.ElideRight
                                                 }
                                                 Controls.Label {
+                                                    objectName: "chatSubtitle"
                                                     Layout.fillWidth: true
                                                     visible: messagesPage.thread !== null && !messagesPage.thread.is_group
                                                     text: visible ? qsTr("Reply to: %1").arg(messagesPage.thread.recipients.join(", ")) : ""
                                                     textFormat: Text.PlainText
                                                     elide: Text.ElideRight
-                                                    opacity: 0.7
+                                                    font: Kirigami.Theme.smallFont
+                                                    color: Kirigami.Theme.disabledTextColor
                                                 }
                                             }
                                             Controls.ToolButton {
@@ -748,55 +849,70 @@ Kirigami.ApplicationWindow {
                                                 }
                                             }
                                         }
-                                        }
                                     }
 
                                     Controls.Label {
                                         Layout.fillWidth: true
+                                        Layout.leftMargin: Kirigami.Units.largeSpacing
+                                        Layout.rightMargin: Kirigami.Units.largeSpacing
+                                        Layout.topMargin: Kirigami.Units.smallSpacing
                                         visible: messagesPage.thread !== null
                                             && messagesPage.thread.messages_truncated === true
                                         text: qsTr("Showing recent messages. Older messages remain in local history.")
+                                        horizontalAlignment: Text.AlignHCenter
                                         wrapMode: Text.Wrap
+                                        font: Kirigami.Theme.smallFont
+                                        color: Kirigami.Theme.disabledTextColor
                                     }
 
                                     ListView {
                                         id: messageList
+                                        objectName: "messageList"
                                         Layout.fillWidth: true
                                         Layout.fillHeight: true
                                         clip: true
-                                        spacing: Kirigami.Units.smallSpacing
+                                        spacing: Kirigami.Units.largeSpacing
+                                        bottomMargin: Kirigami.Units.largeSpacing
+                                        // Short conversations sit just above the composer, like
+                                        // a phone's message view.
+                                        topMargin: Math.max(
+                                            Kirigami.Units.largeSpacing,
+                                            height - contentHeight - bottomMargin
+                                        )
                                         model: messagesPage.thread ? messagesPage.thread.messages : []
-                                        verticalLayoutDirection: ListView.TopToBottom
+                                        Controls.ScrollBar.vertical: Controls.ScrollBar {}
 
                                         delegate: Item {
                                             id: messageDelegate
                                             required property var modelData
                                             width: messageList.width
-                                            implicitHeight: bubble.implicitHeight + Kirigami.Units.smallSpacing * 2
+                                            implicitHeight: bubble.implicitHeight
 
                                             MessageBubble {
                                                 id: bubble
                                                 message: messageDelegate.modelData
-                                                availableWidth: messageList.width
+                                                availableWidth: messageList.width - Kirigami.Units.largeSpacing * 2
                                                 showSender: messagesPage.thread !== null
                                                     && messagesPage.thread.is_group
                                                 anchors.right: messageDelegate.modelData.outgoing ? parent.right : undefined
                                                 anchors.left: messageDelegate.modelData.outgoing ? undefined : parent.left
-                                                anchors.margins: Kirigami.Units.largeSpacing
+                                                anchors.leftMargin: Kirigami.Units.largeSpacing
+                                                anchors.rightMargin: Kirigami.Units.largeSpacing * 2
                                             }
                                         }
 
                                         Kirigami.PlaceholderMessage {
                                             anchors.centerIn: parent
                                             width: parent.width - Kirigami.Units.largeSpacing * 4
-                                            visible: messagesPage.thread === null
-                                            text: qsTr("Select a Conversation")
+                                            visible: messagesPage.thread === null || messageList.count === 0
+                                            icon.name: "dialog-messages"
+                                            text: messagesPage.thread === null
+                                                ? qsTr("Select a Conversation") : qsTr("No Messages")
                                         }
 
-                                        onCountChanged: positionViewAtEnd()
+                                        onCountChanged: Qt.callLater(positionViewAtEnd)
+                                        onModelChanged: Qt.callLater(positionViewAtEnd)
                                     }
-
-                                    Kirigami.Separator { Layout.fillWidth: true }
 
                                     Kirigami.InlineMessage {
                                         Layout.fillWidth: true
@@ -827,12 +943,17 @@ Kirigami.ApplicationWindow {
                                         }]
                                     }
 
+                                    Kirigami.Separator { Layout.fillWidth: true }
+
                                     RowLayout {
+                                        objectName: "composerRow"
                                         Layout.fillWidth: true
-                                        Layout.margins: Kirigami.Units.smallSpacing
+                                        Layout.margins: Kirigami.Units.largeSpacing
+                                        spacing: Kirigami.Units.smallSpacing
 
                                         ExpandingMessageComposer {
                                             id: composer
+                                            objectName: "messageComposer"
                                             Connections {
                                                 target: root.bridge
                                                 function onThreadSendSucceeded(key: string, body: string): void {
@@ -849,6 +970,7 @@ Kirigami.ApplicationWindow {
                                         }
                                         Controls.Button {
                                             id: sendButton
+                                            objectName: "sendButton"
                                             Layout.alignment: Qt.AlignBottom
                                             text: qsTr("Send")
                                             icon.name: "document-send"
@@ -862,6 +984,7 @@ Kirigami.ApplicationWindow {
                                                 )
                                             }
                                         }
+                                    }
                                 }
                             }
 

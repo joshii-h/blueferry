@@ -2658,3 +2658,58 @@ def test_tether_failure_is_shown_as_a_warning(qml_engine) -> None:
     assert warning.property("visible") is True
     assert warning.property("text") == "Turn on Personal Hotspot"
     section.deleteLater()
+
+
+def _delegate_value(engine, window, list_name, child, expression):
+    # Delegates are visual children only; findChild cannot see them.
+    engine.globalObject().setProperty("delegateList", engine.newQObject(
+        _settings_object(window, list_name)))
+    return _evaluate(engine, f"""(function () {{
+        const delegate = delegateList.itemAtIndex(0)
+        function find(item) {{
+            if (item.objectName === "{child}") return item
+            for (const next of item.children) {{
+                const found = find(next)
+                if (found) return found
+            }}
+            return null
+        }}
+        const item = find(delegate)
+        return {expression}
+    }})()""")
+
+
+def test_conversation_list_shows_one_preview_line_and_chat_fills_its_pane(
+    qml_engine, settings_window
+):
+    window, bridge = settings_window
+    window.resize(1500, 700)
+    body = "DPD  Paketbestätigung\n\nGegen 9.33 Uhr\n\nbin ich angekommen."
+    bridge.setProperty("threads", [{
+        "key": "dpd", "name": "+212786524411", "recipients": ["+212786524411"],
+        "is_group": False, "unread": False, "starred": False, "reply_ready": True,
+        "messages": [{"handle": "1", "body": body, "outgoing": False,
+                      "display_timestamp": "Today 09:41"}],
+    }])
+    window.setProperty("selectedThreadKey", "dpd")
+    QTest.qWait(50)
+
+    def value(child, expression):
+        return _delegate_value(qml_engine, window, "threadList", child, expression)
+
+    assert value("threadPreview", "item.text") == (
+        "DPD Paketbestätigung Gegen 9.33 Uhr bin ich angekommen."
+    )
+    assert value("threadPreview", "item.lineCount") == 1
+    assert value("threadTime", "item.text") == "Today 09:41"
+    # Two text lines plus padding, never the whole message.
+    lines = value("threadName", "item.height") + value("threadPreview", "item.height")
+    assert value("threadDelegate", "delegate.height") < lines * 2
+
+    pane = _settings_object(window, "chatPane")
+    for name in ("chatHeader", "messageList", "messageComposer", "sendButton"):
+        assert pane.isAncestorOf(_settings_object(window, name)), name
+    header = _settings_object(window, "chatHeader")
+    assert header.mapToItem(pane, QPointF(0, 0)).y() == 0
+    assert _settings_object(window, "messageComposer").width() > pane.width() * 0.7
+    assert _settings_object(window, "messageList").height() > pane.height() * 0.5
