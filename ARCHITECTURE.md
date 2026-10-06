@@ -187,6 +187,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `plugin_settings_view.py` | Toolkit-free plugin rows, store cards and settings forms for Qt and the TUI (`qt/plugin_settings.py`, `tui_settings.py`). |
 | `features.py` | The local.env switches clients may store in settings.json (`Messages1.GetFeatures/SetFeature`). |
 | `cli_plugins.py` | `plugins list` and `plugins ALIAS …` (exec of the plugin's own CLI). |
+| `profile_reset.py` | Detects HFP power-ups (oFono Timedout) and A2DP ConnectProfile (InProgress) that bluetoothd keeps stuck and asks the bearer supervisor for one rate-limited Disconnect/Connect of the device. |
 | `bluez_health.py` | Detects a bluetoothd that no longer answers D-Bus (NoReply streak, Peer.Ping, /proc state) and pauses BlueFerry's own Bluetooth work. |
 | `cli_reconnect.py` | `reconnect`: manual Classic reconnect that waits for the outcome. |
 | `reconnect_view.py` | Toolkit-neutral texts for the manual reconnect (Qt card, tray, TUI, CLI). |
@@ -535,6 +536,22 @@ A change to these rules has to be made in both places.
   the next start, an explicit process environment still wins.
   `GetFeatures()` reports value, running value, source and whether a restart
   is pending. Pairing target, adapter and ANCS itself stay local.env-only.
+- **Profile reset:** `profile_reset` counts two symptoms seen on 2026-10-06:
+  oFono's `Modem.Powered=true` failing with `org.ofono.Error.Timedout` twice
+  in a row (bluetoothd's own hfp plugin held the RFCOMM channel; doctor
+  recommends `-P hfp`), and `ConnectProfile(A2DP Source)` answering
+  `InProgress` for 20 s or three attempts. It then asks
+  `BearerSupervisor.reset_profiles()` for `Device1.Disconnect`, 3 s pause,
+  `Device1.Connect`; the supervisor's health tick and the manual reconnect
+  stand aside meanwhile. Only with BR/EDR up, never while bluetoothd is
+  unresponsive, during a call (oFono reports one) or during the adapter
+  recovery; at most one automatic reset per 10 min, doubling up to 60 min
+  until a profile works again. Opt-out: `BLUEFERRY_AUTO_PROFILE_RESET`, or
+  `auto_profile_reset` in settings.json. While a profile stays stuck on a
+  live link, `ReconnectPhone` performs the reset and answers `profile-reset`.
+  GetStatus: `profile_reset_auto`, `profile_reset_suggested` (reason token),
+  `profile_reset_last` (`hfp_powered_timeout`/`a2dp_in_progress`/`manual`),
+  `profile_reset_last_at` (Unix time) and `profile_reset_last_auto`.
 - **BlueZ health:** `bluez_health` marks bluetoothd unresponsive after two
   unanswered asynchronous `Peer.Ping`s 15 s apart (pinged every 30 s; a
   NoReply from a bearer read only triggers an early ping). While unresponsive the bearer supervisor and the

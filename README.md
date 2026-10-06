@@ -1060,6 +1060,39 @@ terminal client say "The system Bluetooth service is not responding";
 restarting the computer is then the only fix. BlueFerry resumes on its own
 once bluetoothd answers again or is restarted.
 
+If the iPhone is connected but calls or iPhone sound on this computer stay
+stuck, bluetoothd may be holding a profile connection half-open. Two cases
+are known (BlueZ 5.87, oFono 2.18):
+
+- **Calls (HFP) never become available after a reboot.** bluetoothd's own
+  `hfp` plugin took the iPhone's call-audio channel before oFono, so oFono's
+  modem power-up keeps timing out (`org.ofono.Error.Timedout` in the log).
+  The lasting fix is to start bluetoothd without that plugin. On OpenRC add
+  `-P hfp` to `BLUETOOTH_OPTS` in `/etc/conf.d/bluetooth` and run
+  `sudo rc-service bluetooth restart`; with systemd add `-P hfp` to
+  bluetoothd's `ExecStart` in a drop-in (`sudo systemctl edit
+  bluetooth.service`). `blueferry doctor` warns while oFono runs next to a
+  bluetoothd that still loads the plugin.
+- **Switching iPhone sound to this computer keeps failing** with "Bluetooth is
+  still changing the iPhone's audio connection", typically after bluetoothd
+  was restarted. BlueZ answers `InProgress` for minutes.
+
+In both cases BlueFerry heals the connection itself: after two HFP power-up
+timeouts in a row, or an A2DP `InProgress` that lasts 20 seconds or repeats
+three times, it disconnects the iPhone, waits three seconds and connects it
+again. It does this only while the Classic link is up, never during a call,
+while bluetoothd does not answer, or during an adapter recovery, and at most
+once every ten minutes (longer if the reset did not help). Otherwise
+**Reconnect** is offered on the phone card, in the tray and in the terminal
+client, and `blueferry reconnect` performs the same reset on request.
+`blueferry doctor` shows the last reset. To switch the automatic reset off,
+set `BLUEFERRY_AUTO_PROFILE_RESET=false` in `~/.config/blueferry/local.env`, or
+`"auto_profile_reset": false` in `~/.config/blueferry/settings.json` (which
+takes precedence), and restart the backend.
+
+If an action answers "Please wait a moment, then try again", BlueFerry's
+request limit for that action was reached; it clears within a minute.
+
 If messages work but names do not, use **Sync Contacts** or run
 `blueferry contacts-sync`.
 

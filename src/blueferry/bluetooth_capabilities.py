@@ -1,6 +1,7 @@
 """Bluetooth controller capability probing and packaged BlueZ activation."""
 from __future__ import annotations
 
+import fnmatch
 import re
 import time
 from collections.abc import Callable
@@ -345,6 +346,64 @@ def _running_bluetoothd_argv(proc_root: Path) -> list[bytes] | None:
     Known limit: with /proc mounted ``hidepid=1`` or ``2`` another user's
     bluetoothd is invisible, so experimental mode reads as inactive.
     """
+    return _running_argv(proc_root, "bluetoothd")
+
+
+def _noplugins(argv: list[bytes]) -> set[str]:
+    """Plugin names bluetoothd was told not to load (-P/--noplugin)."""
+    names: set[str] = set()
+    values: list[bytes] = []
+    args = iter(argv[1:])
+    for arg in args:
+        if arg in (b"-P", b"--noplugin"):
+            values.append(next(args, b""))
+        elif arg.startswith(b"--noplugin="):
+            values.append(arg.split(b"=", 1)[1])
+        elif arg.startswith(b"-P"):
+            values.append(arg[2:])
+    for value in values:
+        for name in value.decode("utf-8", "replace").split(","):
+            if name.strip():
+                names.add(name.strip())
+    return names
+
+
+OPENRC_HFP_PLUGIN_HINT = (
+    'Add "-P hfp" to BLUETOOTH_OPTS in /etc/conf.d/bluetooth, then run '
+    '"sudo rc-service bluetooth restart".'
+)
+SYSTEMD_HFP_PLUGIN_HINT = (
+    'Add "-P hfp" to bluetoothd\'s ExecStart in a drop-in '
+    "(sudo systemctl edit bluetooth.service: an empty ExecStart= line, then "
+    "the full command line with -P hfp), then run "
+    '"sudo systemctl restart bluetooth".'
+)
+
+
+def hfp_plugin_conflict(proc_root: Path = Path("/proc")) -> bool | None:
+    """True when oFono runs next to a bluetoothd that loads its hfp plugin.
+
+    BlueZ's own HFP plugin and oFono then race for the iPhone's RFCOMM
+    channel; when bluetoothd wins, oFono's Modem.Powered times out (seen with
+    BlueZ 5.87 and oFono 2.18 on 2026-10-06). ``None`` when either process is
+    not visible, which includes the ``hidepid`` limit above.
+    """
+    if _running_argv(proc_root, "ofonod") is None:
+        return None
+    argv = _running_bluetoothd_argv(proc_root)
+    if argv is None:
+        return None
+    # bluetoothd matches -P values as glob patterns.
+    return not any(fnmatch.fnmatchcase("hfp", pattern) for pattern in _noplugins(argv))
+
+
+def hfp_plugin_hint() -> str:
+    if service_manager.init_system() == service_manager.SYSTEMD:
+        return SYSTEMD_HFP_PLUGIN_HINT
+    return OPENRC_HFP_PLUGIN_HINT
+
+
+def _running_argv(proc_root: Path, comm: str) -> list[bytes] | None:
     try:
         entries = sorted(
             (entry for entry in proc_root.iterdir() if entry.name.isdigit()),
@@ -354,7 +413,7 @@ def _running_bluetoothd_argv(proc_root: Path) -> list[bytes] | None:
         return None
     for entry in entries:
         try:
-            if (entry / "comm").read_text(encoding="utf-8").strip() != "bluetoothd":
+            if (entry / "comm").read_text(encoding="utf-8").strip() != comm:
                 continue
             argv = (entry / "cmdline").read_bytes().split(b"\0")
         except (OSError, UnicodeError):

@@ -78,6 +78,7 @@ from blueferry.obex.sessions import SessionManager
 from blueferry.obex.worker import ObexWorker
 from blueferry.pair_setup import bond_status
 from blueferry.phone_audio_route import PhoneAudioRoute
+from blueferry.profile_reset import ProfileResetController, auto_reset_enabled
 from blueferry.profile_supervisor import ProfileSessions, ProfileSupervisor
 from blueferry.protocol import BUS_NAME
 from blueferry.proximity_lock import (
@@ -244,6 +245,18 @@ class Daemon:
         # StatusChanged into one per main-loop iteration.
         self._status_emit_pending = False
         self._idle_add: Callable[..., int] = GLib.idle_add
+        # Heal HFP/A2DP bring-ups that bluetoothd keeps stuck with one
+        # device reset, through the bearer supervisor so it never overlaps a
+        # reconnect. Inert until a symptom is reported.
+        self.profile_reset = ProfileResetController(
+            enabled=auto_reset_enabled(),
+            reset=self.bearers.reset_profiles,
+            peer_connected=lambda: self.bearers.bredr_connected,
+            bluez_blocked=lambda: self.bluez_health.unresponsive,
+            call_active=lambda: self.calls.call_active,
+            recovering=lambda: self.recovery.active,
+            on_changed=self._emit_status_soon,
+        )
         # Optional HFP calls through oFono. Inert unless explicitly enabled;
         # construction performs no I/O. oFono is only asked to page the phone
         # (Modem.Powered) while the Classic bearer is up.
@@ -261,6 +274,8 @@ class Daemon:
             on_event=self._on_call_event,
             phone_reachable=lambda: self.bearers.bredr_connected,
             on_phone_status=self._on_phone_status,
+            on_powered_failed=self.profile_reset.hfp_powered_failed,
+            on_powered=self.profile_reset.hfp_powered,
         )
         # Opt-in, memory-only list of recent iPhone app notifications.
         self.notification_log: NotificationLog | None = (
@@ -282,6 +297,8 @@ class Daemon:
             cancel=GLib.source_remove,
             was_playing=self._iphone_playing,
             resume_playback=self._resume_iphone_playback,
+            on_in_progress=self.profile_reset.a2dp_in_progress,
+            on_connected=self.profile_reset.a2dp_ok,
         )
         # Opt-in sub-feature of calls: one low-battery warning per cycle.
         self.low_battery = LowBatteryMonitor(config.PHONE_BATTERY_LOW_PERCENT)
@@ -552,12 +569,19 @@ class Daemon:
             candidate.stop()
 
     def _on_bearer_status(self) -> None:
+        if self.bearers.bredr_state is False:
+            self.profile_reset.peer_lost()
         self.calls.poke()
         self.proximity.bearer_changed()
         self._emit_status()
 
     def _reconnect_phone(self) -> str:
         result = self.bearers.reconnect_now()
+        if result == "connected" and self.profile_reset.suggested:
+            # The link is up but a profile is stuck: "Reconnect" then means
+            # the same device reset the automatic path would do.
+            if self.profile_reset.manual_reset() == "started":
+                result = "profile-reset"
         if result == "bluez-unresponsive" and (
             self.bluez_health.snapshot()["bluez_unresponsive_reason"] == "kernel"
         ):
@@ -1287,6 +1311,7 @@ class Daemon:
             "ancs_actions": config.ancs_actions_active(),
             **self.bearers.snapshot(),
             **self._reconnect_status(),
+            **self.profile_reset.snapshot(),
             **self.bluez_health.snapshot(),
             **self.proximity.snapshot(),
             "contacts": self.contacts.count(),

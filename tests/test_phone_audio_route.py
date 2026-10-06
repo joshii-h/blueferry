@@ -250,7 +250,7 @@ def test_in_progress_maps_to_not_ready_with_a_retry_hint() -> None:
     errors: list[Exception] = []
     subject.set_route("pc", pytest.fail, errors.append)
     bus.held.pop()[1](DBusCallError("org.bluez.Error.InProgress", "x"))
-    assert isinstance(errors[0], NotReadyError) and "try again" in str(errors[0])
+    assert isinstance(errors[0], NotReadyError) and "try again" in str(errors[0]).casefold()
 
     class Audio:
         def snapshot(self):

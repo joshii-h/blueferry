@@ -40,6 +40,7 @@ LOCAL_ENV_KEYS = frozenset({
     "BLUEFERRY_PROXIMITY_LOCK",
     "BLUEFERRY_NOTIFICATION_HISTORY",
     "BLUEFERRY_PROXIMITY_LOCK_GRACE_SEC",
+    "BLUEFERRY_AUTO_PROFILE_RESET",
 })
 CONFIG_DIR: Path = Path(
     os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")
@@ -395,6 +396,15 @@ PROXIMITY_LOCK_GRACE_SEC: int = _env_int(
     "BLUEFERRY_PROXIMITY_LOCK_GRACE_SEC", 60, 10, 3600
 )
 """Seconds the iPhone must stay continuously disconnected before locking."""
+
+AUTO_PROFILE_RESET: bool = _env_bool("BLUEFERRY_AUTO_PROFILE_RESET", True)
+"""Reset the iPhone's Bluetooth connection once when a profile is stuck.
+
+On by default: it only acts on a connected phone whose HFP or A2DP bring-up
+bluetoothd keeps failing, at most once per ten minutes. A boolean
+``auto_profile_reset`` in settings.json takes precedence; see
+``profile_reset.auto_reset_enabled``.
+"""
 
 CALL_HISTORY_ENABLED: bool = _env_bool("BLUEFERRY_CALL_HISTORY_ENABLED", False)
 """Opt-in: pull the iPhone's recent calls over PBAP and retain them locally.

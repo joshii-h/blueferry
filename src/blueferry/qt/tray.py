@@ -58,7 +58,12 @@ from blueferry.protocol import (
 )
 from blueferry.qt import tray_presenter as presenter
 from blueferry.qt.companion import CompanionTools
-from blueferry.reconnect_view import reconnect_error_text, result_text
+from blueferry.reconnect_view import (
+    RATE_LIMITED_TEXT,
+    is_rate_limited,
+    reconnect_error_text,
+    result_text,
+)
 from blueferry.tether_status import TetherStatus
 
 QT_CLIENT = next(client for client in CLIENTS if client.key == "qt")
@@ -466,10 +471,18 @@ class TrayController(QObject):
         )
 
     def _action(self, interface: str, method: str, args: list) -> None:
-        def failed(_name: str) -> None:
+        def failed(name: str) -> None:
+            if is_rate_limited(name):
+                text = RATE_LIMITED_TEXT
+            elif method == "SetPhoneAudioRoute" and name.endswith(".NotReady"):
+                text = _(
+                    "Bluetooth is still changing the iPhone's audio connection. "
+                    "Try again shortly; if this keeps happening, use Reconnect."
+                )
+            else:
+                text = _("The iPhone did not accept the change.")
             self.tray.showMessage(
-                "BlueFerry", _("The iPhone did not accept the change."),
-                QSystemTrayIcon.MessageIcon.Warning, 5000,
+                "BlueFerry", text, QSystemTrayIcon.MessageIcon.Warning, 5000,
             )
             self._refresh_timer.start()
 
