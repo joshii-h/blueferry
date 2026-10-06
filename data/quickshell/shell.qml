@@ -340,6 +340,8 @@ ShellRoot {
       } else if (method === "unlock_storage") {
         root.storageUnlockBusy = false
         root.errorText = message
+      } else if (phoneControls.phoneMethods.indexOf(method) >= 0) {
+        // QuickshellPhoneControls reports its own failures.
       } else {
         root.statusBusy = false
         root.threadsRequestId = 0
@@ -451,6 +453,14 @@ ShellRoot {
             color: theme.muted
             font.pixelSize: theme.captionSize
           }
+        }
+
+        QuickshellPhoneControls {
+          id: phoneControls
+          Layout.fillWidth: true
+          ferryTheme: theme
+          bridge: backendBridge
+          visible: root.backendStatus.map === true
         }
 
         FerryLabel {

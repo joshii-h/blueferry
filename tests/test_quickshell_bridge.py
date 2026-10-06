@@ -328,3 +328,96 @@ def test_host_info_is_computed_once_and_needs_no_daemon(monkeypatch) -> None:
         "event": "host",
         "data": {"bluetooth_restart_command": "sudo rc-service bluetooth restart"},
     }
+
+
+class _PhoneClient(FakeClient):
+    def __init__(self, *, old_backend: bool = False) -> None:
+        super().__init__()
+        self.old_backend = old_backend
+
+    def status(self):
+        return SimpleNamespace(to_dict=lambda: {
+            "daemon": True, "phone_audio_route": "phone", "proximity_lock": "present",
+            "proximity_lock_enabled": True, "proximity_lock_grace_sec": 15,
+        })
+
+    def now_playing(self):
+        if self.old_backend:
+            from blueferry.client import BackendError
+
+            raise BackendError("no media control")
+        return {
+            "enabled": True, "available": True, "player": {"state": "playing"},
+            "track": {"title": "<b>Song</b>"}, "supported_commands": ["next", "toggle"],
+        }
+
+    def tether_state(self):
+        if self.old_backend:
+            from blueferry.client import TetherUnsupportedError
+
+            raise TetherUnsupportedError("old")
+        from blueferry.tether_status import TetherStatus
+
+        return TetherStatus(state="connected")
+
+    def send_media_command(self, command):
+        self.calls.append(("media", command))
+
+    def set_phone_audio_route(self, route):
+        self.calls.append(("route", route))
+        return route
+
+    def tether_connect(self):
+        self.calls.append(("tether", True))
+
+    def tether_disconnect(self):
+        self.calls.append(("tether", False))
+
+    def set_proximity_lock(self, enabled, grace):
+        self.calls.append(("lock", enabled, grace))
+        return {}
+
+
+def _replies(bridge: QuickshellBridge, output: io.StringIO, *lines: str) -> list[dict]:
+    for line in lines:
+        bridge.handle_line(line)
+    return [json.loads(line) for line in output.getvalue().splitlines()]
+
+
+def test_bridge_phone_overview_reduces_state_for_the_shell() -> None:
+    output = io.StringIO()
+    bridge = QuickshellBridge(_PhoneClient(), output)  # type: ignore[arg-type]
+    (reply,) = _replies(bridge, output, '{"id":1,"method":"phone_overview","args":{}}')
+    result = reply["result"]
+    assert result["media"]["title"] == "<b>Song</b>"  # QML renders PlainText
+    assert result["media"]["commands"] == ["next", "toggle"]
+    assert result["audio"]["available"] and not result["audio"]["on_pc"]
+    assert result["tether"]["active"] and result["proximity"]["grace"] == 15
+
+    output = io.StringIO()
+    old = QuickshellBridge(_PhoneClient(old_backend=True), output)  # type: ignore[arg-type]
+    (reply,) = _replies(old, output, '{"id":2,"method":"phone_overview","args":{}}')
+    assert reply["ok"] is True
+    assert reply["result"]["media"]["available"] is False
+    assert reply["result"]["tether"]["available"] is False
+
+
+def test_bridge_phone_actions_validate_arguments() -> None:
+    output = io.StringIO()
+    client = _PhoneClient()
+    bridge = QuickshellBridge(client, output)  # type: ignore[arg-type]
+    replies = _replies(
+        bridge, output,
+        '{"id":1,"method":"media_command","args":{"command":"toggle"}}',
+        '{"id":2,"method":"media_command","args":{"command":"volume-up"}}',
+        '{"id":3,"method":"set_phone_audio_route","args":{"route":"pc"}}',
+        '{"id":4,"method":"set_phone_audio_route","args":{"route":"speaker"}}',
+        '{"id":5,"method":"set_tether","args":{"enabled":true}}',
+        '{"id":6,"method":"set_tether","args":{"enabled":"yes"}}',
+        '{"id":7,"method":"set_proximity_lock","args":{"enabled":false,"grace_seconds":15}}',
+        '{"id":8,"method":"set_proximity_lock","args":{"enabled":true,"grace_seconds":-1}}',
+    )
+    assert [reply["ok"] for reply in replies] == [True, False] * 4
+    assert client.calls == [
+        ("media", "toggle"), ("route", "pc"), ("tether", True), ("lock", False, 15),
+    ]

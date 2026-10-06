@@ -2713,3 +2713,61 @@ def test_conversation_list_shows_one_preview_line_and_chat_fills_its_pane(
     assert header.mapToItem(pane, QPointF(0, 0)).y() == 0
     assert _settings_object(window, "messageComposer").width() > pane.width() * 0.7
     assert _settings_object(window, "messageList").height() > pane.height() * 0.5
+
+
+def test_quickshell_phone_status_prefers_an_exact_battery_percent(qml_engine) -> None:
+    component = _component(qml_engine, "data/quickshell/QuickshellPhoneStatus.qml")
+    shown = component.createWithInitialProperties({
+        "ferryTheme": _BubbleTheme(),
+        "status": {"phone_battery_level": 60, "phone_battery_percent": 57},
+    })
+    assert shown.property("text") == "BATTERY 57 %"
+
+
+_FAKE_BRIDGE = b"""
+import QtQuick
+QtObject {
+  signal response(string method, int requestId, var result)
+  signal failure(string method, int requestId, string message)
+  signal eventReceived(string name, var data)
+  property var calls: []
+  function request(method, args) { calls = calls.concat([[method, args]]); return 1 }
+  function requestLatest(method, args) { calls = calls.concat([[method, args]]) }
+}
+"""
+
+
+def test_quickshell_phone_controls_render_overview_and_send_actions(qml_engine) -> None:
+    bridge_component = QQmlComponent(qml_engine)
+    bridge_component.setData(_FAKE_BRIDGE, QUrl())
+    bridge = bridge_component.create()
+    theme = _component(qml_engine, "data/quickshell/ThemePalette.qml").create()
+    component = _component(qml_engine, "data/quickshell/QuickshellPhoneControls.qml")
+    controls = component.createWithInitialProperties({"ferryTheme": theme, "bridge": bridge})
+    assert controls is not None, component.errors()
+    try:
+        assert [call[0] for call in bridge.property("calls").toVariant()] == ["phone_overview"]
+        overview = {
+            "media": {"available": True, "playing": True, "title": "<b>Song</b>",
+                      "commands": ["toggle"], "hint": ""},
+            "audio": {"available": True, "on_pc": False, "hint": "On the iPhone."},
+            "tether": {"available": False, "active": False, "hint": "Update the backend."},
+            "proximity": {"available": True, "enabled": False, "grace": 15, "hint": "Off."},
+        }
+        bridge.response.emit("phone_overview", 1, overview)
+        title = controls.findChild(QObject, "phoneMediaTitle")
+        assert title.property("text") == "<b>Song</b>"
+        tether = controls.findChild(QObject, "phoneTetherSwitch")
+        assert tether.property("enabled") is False
+        assert "Update the backend." in tether.property("text")
+
+        audio = controls.findChild(QObject, "phoneAudioSwitch")
+        assert QMetaObject.invokeMethod(audio, "toggle")
+        assert QMetaObject.invokeMethod(audio, "toggled")
+        assert bridge.property("calls").toVariant()[-1] == [
+            "set_phone_audio_route", {"route": "pc"},
+        ]
+        assert audio.property("checked") is False  # follows the backend, not the click
+    finally:
+        controls.deleteLater()
+        QGuiApplication.processEvents()
