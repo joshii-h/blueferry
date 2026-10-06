@@ -21,6 +21,7 @@ from blueferry.cli_notifications import notifications_app
 from blueferry.cli_otp import otp_check, otp_status
 from blueferry.cli_proximity import proximity_app
 from blueferry.cli_tether import tether
+from blueferry.cli_tools import tools
 
 app = typer.Typer(
     add_completion=False,
@@ -584,6 +585,7 @@ app.command("otp-status")(otp_status)
 app.command("otp-check")(otp_check)
 app.add_typer(notifications_app, name="notifications")
 app.command("media")(media)
+app.command("tools")(tools)
 app.command("audio")(audio)
 app.command("tether")(tether)
 app.add_typer(proximity_app, name="proximity-lock")
