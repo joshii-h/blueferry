@@ -18,10 +18,10 @@ from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Input, ListItem, ListView, Static, TextArea
 
-from blueferry import config
+from blueferry import config, phone_overview
 from blueferry.backend_lifecycle import BackendLifecycleError, ensure_backend_current
 from blueferry.bus import get_session_bus
-from blueferry.client import BackendClient, BackendError
+from blueferry.client import BackendClient, BackendError, TetherUnsupportedError
 from blueferry.conversation_state import (
     ConversationSnapshot,
     ConversationState,
@@ -30,17 +30,20 @@ from blueferry.conversation_state import (
 )
 from blueferry.models import (
     BackendStatus,
+    CallHistoryEntry,
     CallsSnapshot,
     Thread,
     ThreadMessage,
     phone_status_fields,
 )
 from blueferry.onboarding import ancs_unavailable_detail
-from blueferry.protocol import BUS_NAME, EVENTS_IFACE, OBJECT_PATH
+from blueferry.protocol import BUS_NAME, EVENTS_IFACE, OBJECT_PATH, TETHER_IFACE
 from blueferry.recipients import participant_lines
+from blueferry.tether_status import TetherStatus
 from blueferry.text_safety import terminal_text
 from blueferry.time_display import format_message_timestamp
 from blueferry.tui_calls import CallsScreen
+from blueferry.tui_phone import PhoneScreen, media_text, phone_text
 
 _REFRESH_SECONDS = 15.0
 _SIGNAL_PUMP_SECONDS = 0.2
@@ -78,6 +81,24 @@ class _Client(Protocol):
     def answer_call(self, call_id: str) -> None: ...
 
     def hangup_call(self, call_id: str) -> None: ...
+
+    def now_playing(self) -> dict: ...
+
+    def send_media_command(self, command: str) -> None: ...
+
+    def set_phone_audio_route(self, route: str) -> str: ...
+
+    def tether_state(self) -> TetherStatus: ...
+
+    def tether_connect(self) -> TetherStatus: ...
+
+    def tether_disconnect(self) -> TetherStatus: ...
+
+    def set_proximity_lock(self, enabled: bool, grace_seconds: int) -> dict: ...
+
+    def call_history(self, limit: int = 200) -> list[CallHistoryEntry]: ...
+
+    def notifications(self, limit: int = 50) -> dict: ...
 
 
 class _Monitor(Protocol):
@@ -204,6 +225,7 @@ class _EventMonitor:
         self.handles: deque[str] = deque()
         self.invalidated = False
         self.calls_changed = False
+        self.phone_changed = False
         self._context = GLib.MainContext.default()
         bus = get_session_bus()
         common = {
@@ -233,6 +255,16 @@ class _EventMonitor:
                 signal_name="CallsChanged",
                 **common,
             ),
+            bus.add_signal_receiver(
+                self._phone_changed,
+                signal_name="NowPlayingChanged",
+                **common,
+            ),
+            bus.add_signal_receiver(
+                self._phone_changed,
+                signal_name="TetherChanged",
+                **{**common, "dbus_interface": TETHER_IFACE},
+            ),
         ]
 
     def _calls_changed(self) -> None:
@@ -240,6 +272,13 @@ class _EventMonitor:
 
     def take_calls_changed(self) -> bool:
         changed, self.calls_changed = self.calls_changed, False
+        return changed
+
+    def _phone_changed(self) -> None:
+        self.phone_changed = True
+
+    def take_phone_changed(self) -> bool:
+        changed, self.phone_changed = self.phone_changed, False
         return changed
 
     def _invalidate(self) -> None:
@@ -535,6 +574,9 @@ class HelpScreen(ModalScreen[None]):
             "[bold #7dd3fc]Star conversation[/]  s\n"
             "[bold #7dd3fc]Delete conversation[/]  Delete\n"
             "[bold #7dd3fc]Phone calls (optional)[/]  c\n"
+            "[bold #7dd3fc]iPhone: calls, notifications[/]  o\n"
+            "[bold #7dd3fc]Play/Pause · prev · next[/]  p [ ]\n"
+            "[bold #7dd3fc]Sound PC/iPhone · hotspot[/]  a t\n"
             "[bold #7dd3fc]Commands[/]  Ctrl+P\n"
             "[bold #7dd3fc]Refresh[/]  r\n"
             "[bold #7dd3fc]Back[/]  Esc\n"
@@ -569,6 +611,12 @@ class BlueFerryApp(App[None]):
         Binding("s", "toggle_star", "Star"),
         Binding("delete", "delete_thread", "Delete"),
         Binding("c", "calls", "Calls", show=False),
+        Binding("o", "phone", "iPhone"),
+        Binding("p", "media('toggle')", "Play/Pause", show=False),
+        Binding("right_square_bracket", "media('next')", "Next track", show=False),
+        Binding("left_square_bracket", "media('previous')", "Previous track", show=False),
+        Binding("a", "phone_audio", "Sound PC/iPhone", show=False),
+        Binding("t", "tether", "Hotspot", show=False),
         Binding("escape", "return_to_list", "Back", show=False),
     ]
 
@@ -586,6 +634,8 @@ class BlueFerryApp(App[None]):
         self._sending = False
         self._deleting = False
         self._announced_calls: set[str] = set()
+        self.now_playing: dict = {}
+        self.tether: TetherStatus | None = None
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="masthead"):
@@ -597,6 +647,9 @@ class BlueFerryApp(App[None]):
             yield Static("CONTACTS  …", id="pbap-status", classes="status-pill")
             yield Static("NOTIFICATIONS  …", id="ancs-status", classes="status-pill")
             yield Static("STORAGE  …", id="storage-status", classes="status-pill")
+        with Horizontal(id="phone-strip"):
+            yield Static("", id="phone-status")
+            yield Static("", id="now-playing")
         with Horizontal(id="workspace"):
             with Vertical(id="sidebar"):
                 with Horizontal(id="sidebar-heading"):
@@ -670,6 +723,9 @@ class BlueFerryApp(App[None]):
         take_calls = getattr(self._monitor, "take_calls_changed", None)
         if take_calls is not None and take_calls():
             self._calls_changed()
+        take_phone = getattr(self._monitor, "take_phone_changed", None)
+        if take_phone is not None and take_phone():
+            self._load_phone()
         if handle:
             self._pending_open_handle = handle
             if self.state.select_message(handle):
@@ -707,8 +763,42 @@ class BlueFerryApp(App[None]):
         self._update_notice()
         self._maybe_mark_selected_read()
 
+    @work(thread=True, exclusive=True, group="phone", exit_on_error=False)
+    def _load_phone(self) -> None:
+        client = self.state.client
+        try:
+            playing = client.now_playing()
+        except BackendError:
+            playing = {"enabled": True, "available": False}
+        tether = self.tether
+        try:
+            tether = client.tether_state()
+        except TetherUnsupportedError:
+            tether = None
+        except BackendError:
+            pass
+        self.call_from_thread(self._phone_loaded, playing, tether)
+
+    def _phone_loaded(self, playing: dict, tether: TetherStatus | None) -> None:
+        self.now_playing, self.tether = playing, tether
+        self._update_phone_strip()
+        if isinstance(self.screen, PhoneScreen):
+            self.screen.render_phone()
+
+    def _update_phone_strip(self) -> None:
+        if not self.is_running:
+            return
+        try:
+            self.query_one("#phone-status", Static).update(phone_text(self.state.status))
+            self.query_one("#now-playing", Static).update(
+                media_text(phone_overview.now_playing(self.now_playing))
+            )
+        except NoMatches:
+            return
+
     @work(thread=True, exclusive=True, group="refresh", exit_on_error=False)
     def _load_data(self) -> None:
+        self.call_from_thread(self._load_phone)
         snapshot = self.state.fetch_snapshot()
         try:
             self.call_from_thread(self._schedule_snapshot, snapshot)
@@ -741,6 +831,8 @@ class BlueFerryApp(App[None]):
         if self.state.status != previous_status:
             self._update_status()
             self._update_notice()
+            if isinstance(self.screen, PhoneScreen):
+                self.screen.render_phone()
         elif self.state.error != previous_error:
             self._update_notice()
         if threads_changed:
@@ -900,6 +992,7 @@ class BlueFerryApp(App[None]):
         storage = self.query_one("#storage-status", Static)
         storage.update(f"STORAGE  {status.storage_state.upper()}")
         storage.set_classes(f"status-pill {'ok' if storage_ok else 'warn'}")
+        self._update_phone_strip()
 
     def _set_pill(self, selector: str, label: str, active: bool) -> None:
         pill = self.query_one(selector, Static)
@@ -1066,6 +1159,65 @@ class BlueFerryApp(App[None]):
             )
             return
         self.push_screen(CallsScreen(self.state.client))
+
+    def _shortcut_blocked(self) -> bool:
+        return isinstance(self.focused, Input | TextArea)
+
+    def action_phone(self) -> None:
+        if self._shortcut_blocked() or isinstance(self.screen, PhoneScreen):
+            return
+        self.push_screen(
+            PhoneScreen(self.state.client, lambda: self.state.status, lambda: self.tether)
+        )
+
+    def action_media(self, command: str) -> None:
+        if self._shortcut_blocked():
+            return
+        view = phone_overview.now_playing(self.now_playing)
+        if command not in view["commands"]:
+            self.notify(view["hint"] or "The iPhone player does not offer this", severity="warning")
+            return
+        self._phone_request(lambda: self.state.client.send_media_command(command), "")
+
+    def action_phone_audio(self) -> None:
+        if self._shortcut_blocked():
+            return
+        audio = phone_overview.phone_audio(self.state.status.to_dict())
+        if not audio["available"]:
+            self.notify(audio["hint"], severity="warning")
+            return
+        route = "phone" if audio["on_pc"] else "pc"
+        self._phone_request(
+            lambda: self.state.client.set_phone_audio_route(route),
+            "iPhone sound on this computer" if route == "pc" else "iPhone sound on the iPhone",
+        )
+
+    def action_tether(self) -> None:
+        if self._shortcut_blocked():
+            return
+        hotspot = phone_overview.tether(self.tether)
+        if not hotspot["available"]:
+            self.notify(hotspot["hint"], severity="warning")
+            return
+        client = self.state.client
+        if hotspot["active"]:
+            self._phone_request(client.tether_disconnect, "Disconnecting the hotspot…")
+        else:
+            self._phone_request(client.tether_connect, "Connecting to the hotspot…")
+
+    @work(thread=True, group="phone-action", exit_on_error=False)
+    def _phone_request(self, request: Callable[[], object], done: str) -> None:
+        try:
+            request()
+        except BackendError as error:
+            self.call_from_thread(
+                self.notify, terminal_text(error).replace("\n", " "),
+                severity="error", markup=False,
+            )
+        else:
+            if done:
+                self.call_from_thread(self.notify, done)
+        self.call_from_thread(self._load_phone)
 
     def action_toggle_star(self) -> None:
         focused = self.focused
