@@ -415,11 +415,13 @@ Kirigami.ApplicationWindow {
 
     GroupConfirmationDialog {
         id: confirmGroupDialog
+        objectName: "confirmGroupDialog"
         bridge: root.bridge
     }
 
     NewMessageDialog {
         id: newMessageDialog
+        objectName: "newMessageDialog"
         bridge: root.bridge
     }
 

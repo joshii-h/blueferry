@@ -326,6 +326,7 @@ def _render(scheme: str, out_dir: Path) -> None:
     _render_settings(bridge, window, scheme, out_dir)
     _render_calls(bridge, window, scheme, out_dir)
     _render_notifications(bridge, window, scheme, out_dir)
+    _render_dialogs(bridge, window, scheme, out_dir)
     window.deleteLater()
     application.processEvents()
 
@@ -466,6 +467,36 @@ def _render_notifications(bridge, window, scheme: str, out_dir: Path) -> None:
     path = out_dir / f"notifications-{scheme}-off.png"
     window.grabWindow().save(str(path))
     print(path)
+
+
+def _render_dialogs(bridge, window, scheme: str, out_dir: Path) -> None:
+    """New message with suggestions, group confirmation and pairing code."""
+    from PySide6.QtCore import QObject
+    from PySide6.QtTest import QTest
+
+    window.resize(*SIZES[0])
+    window.setProperty("currentTab", 0)
+    shots = [
+        ("new-message", "newMessageDialog", lambda dialog: (
+            dialog.setProperty("recipient", "An"), bridge.setProperty("contactResults", [
+                {"name": "Anna Muster", "address": "41790000001"},
+                {"name": "Andreas Beispiel", "address": "andreas@example.com"}]))),
+        ("group", "confirmGroupDialog", lambda dialog: bridge.groupConfirmationRequested.emit(
+            "family", "Hallo zusammen", "+41790000002\n+41790000003\npapa@example.com")),
+        ("pairing", "pairingConfirmationDialog",
+         lambda dialog: bridge.pairingConfirmationRequested.emit("482913")),
+    ]
+    for name, object_name, prepare in shots:
+        dialog = window.findChild(QObject, object_name)
+        dialog.open()
+        QTest.qWait(300)
+        prepare(dialog)
+        QTest.qWait(300)
+        path = out_dir / f"dialog-{scheme}-{name}.png"
+        window.grabWindow().save(str(path))
+        print(path)
+        dialog.close()
+        QTest.qWait(300)
 
 
 def main() -> None:

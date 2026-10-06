@@ -195,24 +195,16 @@ GridLayout {
                 clip: true
                 model: (callsTab.bridge.contactResults || [])
                     .filter(result => String(result.address).indexOf("@") < 0)
-                delegate: Controls.ItemDelegate {
+                delegate: ListRow {
                     id: suggestion
                     required property var modelData
-                    width: ListView.view.width
-                    contentItem: ColumnLayout {
-                        spacing: 0
-                        Controls.Label {
-                            Layout.fillWidth: true
-                            text: suggestion.modelData.name
-                            textFormat: Text.PlainText
-                            elide: Text.ElideRight
-                        }
-                        Controls.Label {
-                            Layout.fillWidth: true
-                            text: "+" + suggestion.modelData.address
-                            textFormat: Text.PlainText
-                            font: Kirigami.Theme.smallFont
-                            opacity: 0.7
+                    density: "compact"
+                    title: suggestion.modelData.name
+                    subtitle: "+" + suggestion.modelData.address
+                    leading: Component {
+                        ContactAvatar {
+                            bridge: callsTab.bridge
+                            address: suggestion.modelData.address
                         }
                     }
                     onClicked: {
