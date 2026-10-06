@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import atexit
 import functools
+import importlib.util
 import os
+import pathlib
 import shutil
 import sys
 import tempfile
@@ -24,6 +26,7 @@ for _variable, _child in (
     os.environ[_variable] = os.path.join(_scratch_home, _child)
 
 import dbus  # noqa: E402
+import dbus.connection  # noqa: E402
 import pytest  # noqa: E402
 from gi.repository import GLib  # noqa: E402
 
@@ -148,6 +151,109 @@ def glib_source_guard():
             f"GLib.{name}({getattr(callback, '__qualname__', None) or repr(callback)})"
             for _id, name, callback in leaked
         )
+    )
+
+
+def _load_mainloop_lint():
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "tools", "lint_mainloop.py",
+    )
+    spec = importlib.util.spec_from_file_location("_blueferry_lint_mainloop", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # dataclasses resolve their module
+    spec.loader.exec_module(module)
+    return module
+
+
+# Synchronous dbus-python method calls from daemon code on the main thread
+# stall the GLib loop. tools/lint_mainloop.py finds the literal ones; this
+# guard catches what only shows up at run time (a getattr'd method, a helper
+# that blocks). Every blocking proxy call ends in Connection.call_blocking,
+# so wrap that and attribute it to the first caller outside dbus-python.
+# Tests may call synchronously on the private bus; only frames in daemon
+# modules count, and the lint's allowlist and known-debt list apply.
+_mainloop_lint = _load_mainloop_lint()
+_DAEMON_MODULES = frozenset(_mainloop_lint.daemon_modules(_mainloop_lint.load_sources()))
+_SYNC_DBUS_EXEMPT = frozenset(
+    (module, function)
+    for module, function, rule in (
+        *_mainloop_lint.ALLOWLIST, *_mainloop_lint.KNOWN_DEBT,
+    )
+    if rule == "sync-dbus"
+)
+_PACKAGE_DIR = str(_mainloop_lint.PACKAGE_DIR)
+_DBUS_DIR = os.path.dirname(os.path.abspath(dbus.__file__))
+_sync_dbus_calls: list[str] | None = None
+
+
+def sync_dbus_caller(frame) -> str | None:
+    """``module:function`` of the daemon code behind a blocking call, if any."""
+    while frame is not None and os.path.abspath(frame.f_code.co_filename).startswith(_DBUS_DIR):
+        frame = frame.f_back
+    if frame is None or threading.current_thread() is not threading.main_thread():
+        return None
+    filename = os.path.abspath(frame.f_code.co_filename)
+    if not filename.startswith(_PACKAGE_DIR + os.sep):
+        return None
+    module = _mainloop_lint.module_name(pathlib.Path(filename))
+    function = frame.f_code.co_qualname.replace(".<locals>", "")
+    if module not in _DAEMON_MODULES or (module, function) in _SYNC_DBUS_EXEMPT:
+        return None
+    return f"{module}:{function}"
+
+
+# dbus-python itself makes blocking calls to the bus daemon: AddMatch and
+# RemoveMatch for add_signal_receiver/match.remove(), GetNameOwner when
+# get_object resolves a well-known name. Those round trips are local and
+# every proxy and signal watch in the daemon depends on them; they go away
+# module by module with the Gio.DBus migration. The same methods called
+# directly from daemon code are still reported.
+_IMPLICIT_BUS_DAEMON_CALLS = frozenset({"AddMatch", "RemoveMatch", "GetNameOwner"})
+
+
+def _record_sync_dbus(original):
+    @functools.wraps(original)
+    def call_blocking(self, bus_name, object_path, dbus_interface, method, *args, **kwargs):
+        record = _sync_dbus_calls
+        frame = sys._getframe(1)
+        if record is not None and not (
+            bus_name == "org.freedesktop.DBus"
+            and method in _IMPLICIT_BUS_DAEMON_CALLS
+            and os.path.abspath(frame.f_code.co_filename).startswith(_DBUS_DIR)
+        ):
+            caller = sync_dbus_caller(frame)
+            if caller is not None:
+                record.append(f"{caller} -> {method}")
+        return original(self, bus_name, object_path, dbus_interface, method, *args, **kwargs)
+
+    return call_blocking
+
+
+dbus.connection.Connection.call_blocking = _record_sync_dbus(
+    dbus.connection.Connection.call_blocking
+)
+
+
+@pytest.fixture(autouse=True)
+def sync_dbus_guard():
+    """Fail a test in which daemon code made a blocking D-Bus call.
+
+    Only real connections reach ``call_blocking``, so in practice this covers
+    private-bus tests. Fix the call (``blueferry.dbus_call.call_async``) or,
+    for worker-thread or CLI code the lint cannot tell apart, add a reasoned
+    ``ALLOWLIST`` entry in tools/lint_mainloop.py.
+    """
+    global _sync_dbus_calls
+    calls: list[str] = []
+    _sync_dbus_calls = calls
+    try:
+        yield calls
+    finally:
+        _sync_dbus_calls = None
+    assert not calls, (
+        "daemon code made blocking D-Bus calls on the main thread: " + ", ".join(calls)
     )
 
 
