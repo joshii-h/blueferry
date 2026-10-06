@@ -17,7 +17,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtDBus import QDBusConnection
 
-from blueferry import __version__
+from blueferry import __version__, photos_view
 from blueferry.backend_lifecycle import ensure_backend_current, restart_backend
 from blueferry.bluetooth_devices import iphone_candidates
 from blueferry.client import BackendClient, TetherUnsupportedError
@@ -30,6 +30,7 @@ from blueferry.conversation_state import (
 from blueferry.i18n import _
 from blueferry.models import BackendStatus, CallsSnapshot
 from blueferry.onboarding import OnboardingState, effective_compatibility
+from blueferry.plugin_api.client import Photo
 from blueferry.protocol import BUS_NAME, EVENTS_IFACE, OBJECT_PATH, TETHER_IFACE
 from blueferry.qt import phone_link
 from blueferry.qt.avatars import avatar_url
@@ -79,6 +80,7 @@ class BridgeController(QObject):
     nowPlayingChanged = Signal()
     tetherChanged = Signal()
     notificationsChanged = Signal()
+    photosChanged = Signal()
     phoneIdentityChanged = Signal()
     companionToolsChanged = Signal()
 
@@ -172,6 +174,12 @@ class BridgeController(QObject):
         self._notifications: list[dict] = []
         self._notifications_info: dict = {"enabled": False, "content": False, "error": ""}
         self._notifications_watched = False
+        # Photos plugin (see PLUGINS.md): discovered and loaded only while
+        # the Photos tab is shown.
+        self._photos_watched = False
+        self._photos_plugin: object = None
+        self._photos: dict = {"present": False, "ready": False, "loaded": False,
+                              "hint": "", "items": []}
         self._notifications_timer = QTimer(self)
         self._notifications_timer.setSingleShot(True)
         self._notifications_timer.setInterval(150)
@@ -400,6 +408,72 @@ class BridgeController(QObject):
     @Slot()
     def clearCompanionMessage(self) -> None:
         self._companion.clear_message()
+
+    @Property("QVariantMap", notify=photosChanged)
+    def photos(self):
+        """present, ready, loaded, hint and items (id, label, video, thumbnail, original)."""
+        return self._photos
+
+    @Slot(bool)
+    def watchPhotos(self, watched: bool) -> None:
+        """The Photos tab became visible (load) or hidden (forget the list)."""
+        self._photos_watched = bool(watched)
+        if self._photos_watched:
+            self.refreshPhotos()
+            return
+        if self._photos["items"]:
+            self._photos = {**self._photos, "items": []}
+            self.photosChanged.emit()
+
+    @Slot()
+    def refreshPhotos(self) -> None:
+        if not self._photos_watched:
+            return
+
+        def load():
+            manifest = photos_view.find_plugin()
+            return manifest, photos_view.load_recent(manifest)
+
+        def completed(value: object) -> None:
+            manifest, snapshot = value  # type: ignore[misc]
+            self._photos_plugin = manifest
+            if not self._photos_watched:
+                return
+            self._photos = {
+                "present": snapshot.present,
+                "ready": snapshot.ready,
+                "loaded": True,
+                "hint": snapshot.hint,
+                "items": [_photo_item(photo) for photo in snapshot.photos],
+            }
+            self.photosChanged.emit()
+
+        self._run(load, completed, busy=False)
+
+    @Slot(str)
+    def openPhoto(self, photo_id: str) -> None:
+        """Download the original (plugin) and open it in the default viewer."""
+        manifest = self._photos_plugin
+        if manifest is None:
+            return
+
+        def completed(value: object) -> None:
+            from PySide6.QtCore import QUrl
+            from PySide6.QtGui import QDesktopServices
+
+            url = QUrl.fromLocalFile(str(value))
+            items = [
+                {**item, "original": url.toString()} if item["id"] == photo_id else item
+                for item in self._photos["items"]
+            ]
+            self._photos = {**self._photos, "items": items}
+            self.photosChanged.emit()
+            QDesktopServices.openUrl(url)
+
+        self._run(
+            lambda: photos_view.fetch_original(manifest, str(photo_id)),  # type: ignore[arg-type]
+            completed,
+        )
 
     @Property("QVariantList", notify=notificationsChanged)
     def notifications(self):
@@ -1527,3 +1601,19 @@ class BridgeController(QObject):
 
         adapter = self._configuration.adapter.strip() or None
         self._run(lambda: self._setup.forget(mac, adapter=adapter), completed)
+
+
+def _photo_item(photo: Photo) -> dict[str, object]:
+    """One grid cell; paths become file URLs, text stays plain."""
+    from PySide6.QtCore import QUrl
+
+    def url(path: object) -> str:
+        return QUrl.fromLocalFile(str(path)).toString() if path else ""
+
+    return {
+        "id": photo.id,
+        "label": photos_view.label(photo),
+        "video": photo.type == "video",
+        "thumbnail": url(photo.thumbnail),
+        "original": url(photo.original),
+    }

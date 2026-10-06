@@ -585,6 +585,15 @@ ModalScreen {
     width: 84;
 }
 
+#photos-dialog {
+    width: 72;
+}
+
+#photos-list {
+    height: auto;
+    max-height: 24;
+}
+
 #phone-body {
     height: auto;
     max-height: 30;

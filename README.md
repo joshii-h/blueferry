@@ -909,6 +909,32 @@ blueferry tools pair       # ask the iPhone to trust this computer
 Only verified with fakes so far; the launches and the USB mount are not
 tested against hardware.
 
+## Photos from Immich (plugin, optional)
+
+BlueFerry can show the newest photos and videos from a self-hosted
+[Immich](https://immich.app) server. This runs as a separate plugin process
+(see [PLUGINS.md](PLUGINS.md)); the backend is not involved.
+
+1. In Immich, create an API key with `asset.read`, `asset.view` and
+   `asset.download`.
+2. Run `blueferry plugins immich setup --url https://photos.example.org` and
+   paste the key (not echoed). It is stored in the desktop keyring, or in an
+   owner-only file without one.
+
+Then use the **Photos** tab in the Qt client (click opens the original in
+the default viewer; an opened photo can be dragged into other apps), key `g`
+in the terminal client (Enter opens, `c` copies the path), or:
+
+```bash
+blueferry photos recent --limit 20
+blueferry photos open <id>            # --print-path only downloads
+blueferry plugins list
+```
+
+Thumbnails and opened originals are cached owner-only in
+`~/.cache/blueferry/immich` (200 MB and 2 GB, least recently used first).
+Only checked with a fake server so far.
+
 ## Lock when the iPhone goes away
 
 BlueFerry can lock your desktop session after the paired iPhone has been

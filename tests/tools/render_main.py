@@ -92,6 +92,10 @@ QtObject {
     property var featureHints: ({})
     property var reconnect: ({available: true, offered: false, hint: ""})
     function reconnectPhone() {}
+    property var photos: ({})
+    function watchPhotos(watched) {}
+    function refreshPhotos() {}
+    function openPhoto(photoId) {}
     property var phoneAudio: ({supported: true, available: true, onPc: true, pending: false,
         hint: "iPhone sound plays on this computer."})
     property string phoneName: "Joshua's iPhone"
@@ -191,8 +195,50 @@ def _render(scheme: str, out_dir: Path) -> None:
     path = out_dir / f"main-{scheme}-card-connecting.png"
     window.grabWindow().save(str(path))
     print(path)
+    _render_photos(bridge, window, scheme, out_dir)
     window.deleteLater()
     application.processEvents()
+
+
+def _render_photos(bridge, window, scheme: str, out_dir: Path) -> None:
+    """The Photos tab with fake thumbnails, then without a plugin."""
+    from PySide6.QtCore import QObject, QUrl
+    from PySide6.QtGui import QColor, QImage
+    from PySide6.QtTest import QTest
+
+    items = []
+    for index, hue in enumerate((10, 60, 120, 200, 260, 320, 30, 170)):
+        path = out_dir / f"thumb-{index}.png"
+        image = QImage(256, 192, QImage.Format.Format_RGB32)
+        image.fill(QColor.fromHsv(hue, 120, 200))
+        image.save(str(path))
+        items.append({
+            "id": f"p{index}", "label": f"2026-10-0{6 - index % 3} 18:2{index}  "
+            + ("Video" if index % 4 == 1 else "Photo"),
+            "video": index % 4 == 1, "thumbnail": QUrl.fromLocalFile(str(path)).toString(),
+            "original": "",
+        })
+    window.findChild(QObject, "messagesPage").setProperty("cardOpen", False)
+    window.resize(*SIZES[0])
+    window.setProperty("currentTab", 3)
+    bridge.setProperty("photos", {
+        "present": True, "ready": True, "loaded": True,
+        "hint": "8 recent items from photos.joshuahirsig.xyz", "items": items,
+    })
+    QTest.qWait(500)
+    path = out_dir / f"main-{scheme}-photos.png"
+    window.grabWindow().save(str(path))
+    print(path)
+    bridge.setProperty("photos", {
+        "present": False, "ready": False, "loaded": True,
+        "hint": "No photo plugin is installed. Set up Immich photos with: "
+        "blueferry plugins immich setup --url https://your-immich-server",
+        "items": [],
+    })
+    QTest.qWait(300)
+    path = out_dir / f"main-{scheme}-photos-missing.png"
+    window.grabWindow().save(str(path))
+    print(path)
 
 
 def main() -> None:

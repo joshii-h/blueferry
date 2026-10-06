@@ -45,6 +45,7 @@ from blueferry.text_safety import terminal_text
 from blueferry.time_display import format_message_timestamp
 from blueferry.tui_calls import CallsScreen
 from blueferry.tui_phone import PhoneScreen, media_text, phone_text
+from blueferry.tui_photos import PhotosScreen
 
 _REFRESH_SECONDS = 15.0
 _SIGNAL_PUMP_SECONDS = 0.2
@@ -580,6 +581,7 @@ class HelpScreen(ModalScreen[None]):
             "[bold #7dd3fc]Delete conversation[/]  Delete\n"
             "[bold #7dd3fc]Phone calls (optional)[/]  c\n"
             "[bold #7dd3fc]iPhone: calls, notifications[/]  o\n"
+            "[bold #7dd3fc]Photos (plugin)[/]  g\n"
             "[bold #7dd3fc]Play/Pause · prev · next[/]  p [ ]\n"
             "[bold #7dd3fc]Sound PC/iPhone · hotspot[/]  a t\n"
             "[bold #7dd3fc]Commands[/]  Ctrl+P\n"
@@ -617,6 +619,7 @@ class BlueFerryApp(App[None]):
         Binding("delete", "delete_thread", "Delete"),
         Binding("c", "calls", "Calls", show=False),
         Binding("o", "phone", "iPhone"),
+        Binding("g", "photos", "Photos", show=False),
         Binding("p", "media('toggle')", "Play/Pause", show=False),
         Binding("right_square_bracket", "media('next')", "Next track", show=False),
         Binding("left_square_bracket", "media('previous')", "Previous track", show=False),
@@ -1180,6 +1183,11 @@ class BlueFerryApp(App[None]):
                 tools_system=self.companion_system,
             )
         )
+
+    def action_photos(self) -> None:
+        if self._shortcut_blocked() or isinstance(self.screen, PhotosScreen):
+            return
+        self.push_screen(PhotosScreen(system=self.companion_system))
 
     def action_media(self, command: str) -> None:
         if self._shortcut_blocked():

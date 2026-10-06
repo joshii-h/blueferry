@@ -713,6 +713,8 @@ def settings_window(qml_engine):
             property string callHistoryError: ""
             property var companionTools: ({})
             property int companionRefreshes: 0
+            property var photos: ({})
+            property var reconnect: ({})
             signal pairingConfirmationRequested(string passkey)
             signal messageOpenRequested(string handle)
             signal messageSendSucceeded(string recipient, string body)
@@ -746,6 +748,10 @@ def settings_window(qml_engine):
             function sendMediaCommand(command) { record("sendMediaCommand", [command]); }
             function setPhoneAudioRoute(route) { record("setPhoneAudioRoute", [route]); }
             function watchNotifications(watched) { record("watchNotifications", [watched]); }
+            function watchPhotos(watched) { record("watchPhotos", [watched]); }
+            function refreshPhotos() { record("refreshPhotos", []); }
+            function openPhoto(photoId) { record("openPhoto", [photoId]); }
+            function reconnectPhone() { record("reconnectPhone", []); }
             function setThreadStarred(key, starred) { record("setThreadStarred", [key, starred]); }
             function markThreadRead(key) { record("markThreadRead", [key]); }
             function refreshCompanionTools() { companionRefreshes += 1; }
@@ -2452,6 +2458,61 @@ def test_notifications_tab_loads_while_shown_and_renders_plain_text(qml_engine, 
     assert _evaluate(qml_engine, "testBridge.calls")[-1] == {
         "method": "watchNotifications", "args": [False],
     }
+
+
+def test_photos_tab_loads_while_shown_and_hints_without_a_plugin(qml_engine, settings_window):
+    window, _bridge = settings_window
+    _evaluate(qml_engine, "testWindow.currentTab = testWindow.photosTab")
+    QGuiApplication.processEvents()
+    assert _evaluate(qml_engine, "testBridge.calls") == [
+        {"method": "watchPhotos", "args": [True]},
+    ]
+    _evaluate(qml_engine, """testBridge.photos = {
+        present: false, ready: false, loaded: true,
+        hint: "Set up Immich photos with: blueferry plugins immich setup --url https://x"
+    }""")
+    QGuiApplication.processEvents()
+    placeholder = _settings_object(window, "photosPlaceholder")
+    assert placeholder.property("visible") is True
+    assert placeholder.property("enabled") is False
+    assert "plugins immich setup" in placeholder.property("explanation")
+    assert _settings_object(window, "photosGrid").property("visible") is False
+
+    _evaluate(qml_engine, """testBridge.photos = {
+        present: true, ready: true, loaded: true, hint: "2 recent items",
+        items: [{id: "a", label: "<b>2026</b>", video: false, thumbnail: "", original: ""},
+                {id: "b", label: "x", video: true, thumbnail: "", original: "file:///tmp/b.mov"}]
+    }""")
+    QGuiApplication.processEvents()
+    assert placeholder.property("visible") is False
+    assert _settings_object(window, "photosGrid").property("count") == 2
+    source = (ROOT / "src/blueferry/qt/qml/PhotosTab.qml").read_text()
+    assert source.count("Controls.Label {") == source.count("textFormat: Text.PlainText")
+    _click_control(window, _settings_object(window, "photosRefresh"))
+    assert _evaluate(qml_engine, "testBridge.calls")[-1] == {"method": "refreshPhotos", "args": []}
+
+    _evaluate(qml_engine, "testWindow.currentTab = testWindow.messagesTab")
+    QGuiApplication.processEvents()
+    assert _evaluate(qml_engine, "testBridge.calls")[-1] == {
+        "method": "watchPhotos", "args": [False],
+    }
+
+
+def test_phone_card_offers_reconnect_while_classic_is_down(qml_engine, settings_window):
+    window, _bridge = settings_window
+    _evaluate(qml_engine, """testBridge.status = {daemon: true}""")
+    _evaluate(qml_engine, """testBridge.reconnect = {
+        available: true, offered: true, hint: "Waiting for the iPhone; next automatic try in 9 min."
+    }""")
+    QGuiApplication.processEvents()
+    row = _settings_object(window, "reconnectRow")
+    assert row.property("visible") is True
+    assert "9 min" in _settings_object(window, "reconnectHint").property("text")
+    _click_control(window, _settings_object(window, "reconnectButton"))
+    assert _evaluate(qml_engine, "testBridge.calls")[-1] == {"method": "reconnectPhone", "args": []}
+    _evaluate(qml_engine, """testBridge.reconnect = {available: true, offered: false, hint: ""}""")
+    QGuiApplication.processEvents()
+    assert row.property("visible") is False
 
 
 def test_settings_page_keeps_the_former_menu_entries(qml_engine, settings_window):

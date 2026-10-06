@@ -19,6 +19,7 @@ from blueferry.cli_media import media
 from blueferry.cli_messages import sms_list, sms_send
 from blueferry.cli_notifications import notifications_app
 from blueferry.cli_otp import otp_check, otp_status
+from blueferry.cli_photos import photos_app
 from blueferry.cli_plugins import PLUGINS_CONTEXT, plugins
 from blueferry.cli_proximity import proximity_app
 from blueferry.cli_reconnect import reconnect
@@ -593,6 +594,7 @@ app.command("tether")(tether)
 app.add_typer(proximity_app, name="proximity-lock")
 app.command("reconnect")(reconnect)
 app.command("plugins", context_settings=PLUGINS_CONTEXT)(plugins)
+app.add_typer(photos_app, name="photos")
 
 
 @app.command()

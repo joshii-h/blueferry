@@ -35,3 +35,5 @@ src/blueferry/ui/phone_presenter.py
 src/blueferry/qt/companion.py
 src/blueferry/qt/qml/CompanionToolsSection.qml
 src/blueferry/reconnect_view.py
+src/blueferry/photos_view.py
+src/blueferry/qt/qml/PhotosTab.qml

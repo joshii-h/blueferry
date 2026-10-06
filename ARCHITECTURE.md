@@ -181,6 +181,8 @@ All paths are relative to `src/blueferry/` unless noted.
 | `companion_tools.py`, `cli_tools.py`, `qt/companion.py` | Client-only launchers for UxPlay screen mirroring, LocalSend and the iPhone camera roll over USB (ifuse); `blueferry tools`, the Qt card's Tools section and the tray menu. Not part of the daemon or its D-Bus API; which/Gio/subprocess are injectable. |
 | `cli_proximity.py` | `proximity-lock` status, dry run, enable, and disable. |
 | `plugin_api/` | Plugin contract: manifest parser and discovery, validating `PluginClient`, `PluginService`/`PhotosService` base, test harness. Imports nothing else from `blueferry`. |
+| `photos_view.py`, `cli_photos.py`, `tui_photos.py`, `qt/qml/PhotosTab.qml` | Client side of the `photos` capability: plugin lookup, blocking loads for worker threads, plain-text labels; `blueferry photos`, the TUI Photos screen (`g`) and the Qt Photos tab (loaded only while shown). |
+| `plugins/immich_photos/` (repository root) | Bundled Immich plugin, laid out as its own package; imports only `plugin_api`. |
 | `cli_plugins.py` | `plugins list` and `plugins ALIAS …` (exec of the plugin's own CLI). |
 | `cli_reconnect.py` | `reconnect`: manual Classic reconnect that waits for the outcome. |
 | `reconnect_view.py` | Toolkit-neutral texts for the manual reconnect (Qt card, tray, TUI, CLI). |
