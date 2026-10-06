@@ -217,7 +217,12 @@ def phone_status_fields(
     e.g. for a compact header. Shared by the CLI and the TUI.
     """
     fields: list[tuple[str, str]] = []
-    if status.phone_battery_level is not None:
+    exact = _percent(
+        getattr(status, "phone_battery_percent", status.extra.get("phone_battery_percent"))
+    )
+    if exact is not None:
+        fields.append((_("Battery"), _("{percent} %").format(percent=exact)))
+    elif status.phone_battery_level is not None:
         # HFP reports the battery in 20 % steps, hence "about".
         fields.append((
             _("Battery"),
