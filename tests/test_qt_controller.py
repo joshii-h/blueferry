@@ -1318,3 +1318,115 @@ def test_proximity_lock_setting_is_forwarded_and_merged_into_status(monkeypatch)
     assert controller.status["proximity_lock_enabled"] is True
     assert controller.status["proximity_lock_grace_sec"] == 120
     assert changes == [True]
+
+
+# ---- phone overview (card and tabs) -------------------------------------
+
+
+class _PhoneLinkBackend:
+    def __init__(self, *, fail_notifications=False):
+        self.routes = []
+        self.notification_calls = 0
+        self.fail_notifications = fail_notifications
+
+    def set_phone_audio_route(self, route):
+        self.routes.append(route)
+        return route
+
+    def notifications(self, limit=50):
+        self.notification_calls += 1
+        if self.fail_notifications:
+            raise BackendError("local history is locked")
+        return {"enabled": True, "content": False, "notifications": [
+            {"id": 1, "app_id": "com.example.chat", "app_name": "",
+             "time": "2026-10-06T10:00:00+00:00"},
+        ]}
+
+
+def _inline_controller(monkeypatch, backend):
+    controller = BridgeController(backend=backend, setup=object(), subscribe=False, autostart=False)
+
+    def run_inline(operation, on_done=None, on_failed=None, *, busy=True):
+        assert busy is False
+        try:
+            value = operation()
+        except Exception as error:
+            on_failed(str(error))
+        else:
+            if on_done is not None:
+                on_done(value)
+
+    monkeypatch.setattr(controller, "_run", run_inline)
+    return controller
+
+
+def test_phone_audio_switch_follows_status_and_sends_only_valid_routes(monkeypatch):
+    backend = _PhoneLinkBackend()
+    controller = _inline_controller(monkeypatch, backend)
+    assert controller.phoneAudio["supported"] is False  # older daemon: no keys
+
+    controller._status = {
+        "phone_audio_route": "unavailable",
+        "phone_audio_reason": "keep_phone_audio_on_phone",
+    }
+    audio = controller.phoneAudio
+    assert audio["available"] is False
+    assert "BLUEFERRY_KEEP_PHONE_AUDIO_ON_PHONE=false" in audio["hint"]
+
+    controller._status = {"phone_audio_route": "pc", "phone_audio_pending": ""}
+    assert controller.phoneAudio["onPc"] is True and controller.phoneAudio["available"] is True
+
+    controller.setPhoneAudioRoute("speaker")
+    controller.setPhoneAudioRoute("phone")
+    assert backend.routes == ["phone"]
+
+
+def test_feature_hints_name_the_local_env_setting_for_each_opt_in():
+    controller = BridgeController(backend=object(), setup=object(), subscribe=False, autostart=False)
+    controller._status = {"proximity_lock": "idle"}
+    hints = controller.featureHints
+    assert "BLUEFERRY_MEDIA_CONTROL_ENABLED=true" in hints["media"]
+    assert "BLUEFERRY_CALLS_ENABLED=true" in hints["calls"]
+    assert "BLUEFERRY_CALL_HISTORY_ENABLED=true" in hints["callHistory"]
+    assert "BLUEFERRY_NOTIFICATION_HISTORY=true" in hints["notifications"]
+    assert "proximity" not in hints
+
+    controller._status = {
+        "media_control_enabled": True, "calls_enabled": True, "phone_battery_level": 50,
+        "call_history_enabled": True, "notification_history_enabled": True,
+        "proximity_lock": "idle",
+    }
+    assert controller.featureHints == {}
+
+
+def test_phone_name_comes_from_the_configured_device():
+    controller = BridgeController(backend=object(), setup=object(), subscribe=False, autostart=False)
+    assert controller.phoneName == "iPhone"
+    controller._configuration = ConfigurationState.from_dict({"configured": True, "mac": "AA"})
+    controller._devices = [{"mac": "BB", "name": "Other"}, {"mac": "AA", "name": "Josh's iPhone"}]
+    assert controller.phoneName == "Josh's iPhone"
+
+
+def test_notifications_are_fetched_only_while_watched_and_forgotten_after(monkeypatch):
+    backend = _PhoneLinkBackend()
+    controller = _inline_controller(monkeypatch, backend)
+    controller.refreshNotifications()
+    controller._notificationsInvalidated()
+    assert backend.notification_calls == 0
+
+    controller.watchNotifications(True)
+    assert backend.notification_calls == 1
+    assert controller.notifications[0]["app"] == "com.example.chat"
+    assert controller.notifications[0]["body"] == ""
+    assert controller.notificationsInfo == {"enabled": True, "content": False, "error": ""}
+
+    controller.watchNotifications(False)
+    assert controller.notifications == []
+
+
+def test_notification_failure_stays_in_the_tab(monkeypatch):
+    controller = _inline_controller(monkeypatch, _PhoneLinkBackend(fail_notifications=True))
+    controller.watchNotifications(True)
+    assert controller.notifications == []
+    assert "locked" in controller.notificationsInfo["error"]
+    assert controller.errorText == ""

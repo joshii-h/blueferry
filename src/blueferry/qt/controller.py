@@ -31,6 +31,7 @@ from blueferry.i18n import _
 from blueferry.models import BackendStatus, CallsSnapshot
 from blueferry.onboarding import OnboardingState, effective_compatibility
 from blueferry.protocol import BUS_NAME, EVENTS_IFACE, OBJECT_PATH, TETHER_IFACE
+from blueferry.qt import phone_link
 from blueferry.qt.avatars import avatar_url
 from blueferry.qt.tasks import Task
 from blueferry.quirks_report import issue_report, issue_url
@@ -75,6 +76,8 @@ class BridgeController(QObject):
     avatarsChanged = Signal()
     nowPlayingChanged = Signal()
     tetherChanged = Signal()
+    notificationsChanged = Signal()
+    phoneIdentityChanged = Signal()
 
     def __init__(
         self,
@@ -159,6 +162,16 @@ class BridgeController(QObject):
         self._tether_timer.setSingleShot(True)
         self._tether_timer.setInterval(100)
         self._tether_timer.timeout.connect(self.refreshTether)
+        # Opt-in app-notification list: fetched only while its tab is shown.
+        self._notifications: list[dict] = []
+        self._notifications_info: dict = {"enabled": False, "content": False, "error": ""}
+        self._notifications_watched = False
+        self._notifications_timer = QTimer(self)
+        self._notifications_timer.setSingleShot(True)
+        self._notifications_timer.setInterval(150)
+        self._notifications_timer.timeout.connect(self.refreshNotifications)
+        self.devicesChanged.connect(self.phoneIdentityChanged)
+        self.configuredChanged.connect(self.phoneIdentityChanged)
         self._bus = QDBusConnection.sessionBus() if subscribe else None
         if subscribe:
             self._subscribe()
@@ -311,6 +324,87 @@ class BridgeController(QObject):
     @Property("QVariantMap", notify=tetherChanged)
     def tether(self):
         return self._tether
+
+    @Property("QVariantMap", notify=statusChanged)
+    def phoneAudio(self):
+        return phone_link.phone_audio(self._status)
+
+    @Property("QVariantMap", notify=statusChanged)
+    def featureHints(self):
+        return phone_link.feature_hints(self._status)
+
+    @Property(str, notify=phoneIdentityChanged)
+    def phoneName(self) -> str:
+        mac = self._configuration.mac
+        for device in self._devices:
+            if mac and device.get("mac") == mac and device.get("name"):
+                return str(device["name"])
+        return "iPhone"
+
+    @Property("QVariantList", notify=notificationsChanged)
+    def notifications(self):
+        return self._notifications
+
+    @Property("QVariantMap", notify=notificationsChanged)
+    def notificationsInfo(self):
+        return self._notifications_info
+
+    @Slot(str)
+    def setPhoneAudioRoute(self, route: str) -> None:
+        """Explicit user action: move the iPhone's sound here or back."""
+        selected = str(route or "")
+        if selected not in ("pc", "phone"):
+            return
+
+        def done(_value: object) -> None:
+            self._refresh_timer.start()
+
+        self._run(
+            lambda: self._backend.set_phone_audio_route(selected), done, busy=False,
+        )
+
+    @Slot(bool)
+    def watchNotifications(self, watched: bool) -> None:
+        """The Notifications tab became visible (load) or hidden (forget)."""
+        self._notifications_watched = bool(watched)
+        if self._notifications_watched:
+            self.refreshNotifications()
+            return
+        self._notifications_timer.stop()
+        if self._notifications:
+            self._notifications = []
+            self.notificationsChanged.emit()
+
+    @Slot()
+    def refreshNotifications(self) -> None:
+        if not self._notifications_watched:
+            return
+
+        def completed(value: object) -> None:
+            if not self._notifications_watched:
+                return
+            snapshot = value if isinstance(value, dict) else {}
+            self._notifications = phone_link.notification_rows(snapshot.get("notifications"))
+            self._notifications_info = {
+                "enabled": snapshot.get("enabled") is True,
+                "content": snapshot.get("content") is True,
+                "error": "",
+            }
+            self.notificationsChanged.emit()
+
+        def failed(message: str) -> None:
+            self._notifications = []
+            self._notifications_info = {
+                **self._notifications_info, "error": message or _("Notifications are unavailable"),
+            }
+            self.notificationsChanged.emit()
+
+        self._run(lambda: self._backend.notifications(100), completed, failed, busy=False)
+
+    @Slot()
+    def _notificationsInvalidated(self) -> None:
+        if self._notifications_watched:
+            self._notifications_timer.start()
 
     @Property("QVariantList", notify=devicesChanged)
     def devices(self):
@@ -494,6 +588,14 @@ class BridgeController(QObject):
         self._bus.connect(
             BUS_NAME,
             OBJECT_PATH,
+            EVENTS_IFACE,
+            "NotificationsChanged",
+            self,
+            SLOT("_notificationsInvalidated()"),
+        )
+        self._bus.connect(
+            BUS_NAME,
+            OBJECT_PATH,
             TETHER_IFACE,
             "TetherChanged",
             self,
@@ -560,6 +662,8 @@ class BridgeController(QObject):
     @Slot("QVariantMap")
     def _historyChanged(self, _revision) -> None:
         self._refresh_timer.start()
+        # ClearHistory also empties the notification list.
+        self._notificationsInvalidated()
 
     @Slot()
     def _statusInvalidated(self) -> None:
