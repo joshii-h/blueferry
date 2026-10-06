@@ -13,10 +13,11 @@ import threading
 from collections.abc import Callable, Mapping
 from typing import Any, TextIO
 
+from blueferry import phone_overview
 from blueferry.bus import get_session_bus
-from blueferry.client import BackendClient
+from blueferry.client import BackendClient, BackendError, TetherUnsupportedError
 from blueferry.client_activation import record_client_use
-from blueferry.protocol import BUS_NAME, EVENTS_IFACE, OBJECT_PATH
+from blueferry.protocol import BUS_NAME, EVENTS_IFACE, OBJECT_PATH, TETHER_IFACE
 from blueferry.service_manager import bluetooth_restart_command
 
 MAX_REQUEST_CHARS = 1_048_576
@@ -55,6 +56,13 @@ def _boolean(args: Mapping[str, Any], name: str) -> bool:
     return value
 
 
+def _grace(args: Mapping[str, Any]) -> int:
+    value = args.get("grace_seconds")
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise RequestError("grace_seconds must be a non-negative integer")
+    return value
+
+
 class QuickshellBridge:
     """Decode local requests and dispatch them through ``BackendClient``."""
 
@@ -86,6 +94,29 @@ class QuickshellBridge:
 
     def emit_event(self, name: str, data: object = None) -> None:
         self.emit({"event": name, "data": data})
+
+    def phone_overview(self) -> dict[str, Any]:
+        """Now playing and the three switches, already reduced to UI state.
+
+        Each part degrades on its own: an older backend without Media1 or
+        Tether1 greys out that control instead of failing the whole card.
+        """
+        status = self.client.status().to_dict()
+        try:
+            playing = self.client.now_playing()
+        except BackendError:
+            playing = {"enabled": True, "available": False}
+        try:
+            tether = self.client.tether_state()
+        except (TetherUnsupportedError, BackendError):
+            tether = None
+        media = phone_overview.now_playing(playing)
+        return {
+            "media": {**media, "commands": sorted(media["commands"])},
+            "audio": phone_overview.phone_audio(status),
+            "tether": phone_overview.tether(tether),
+            "proximity": phone_overview.proximity(status),
+        }
 
     def dispatch(self, method: str, args: Mapping[str, Any]) -> object:
         if method == "client_active" and self.desktop_client:
@@ -137,6 +168,28 @@ class QuickshellBridge:
             return self.client.set_storage_policy(_text(args, "policy"))
         if method == "unlock_storage":
             return self.client.unlock_storage()
+        if method == "phone_overview":
+            return self.phone_overview()
+        if method == "media_command":
+            command = _text(args, "command")
+            if command not in phone_overview.MEDIA_BUTTONS:
+                raise RequestError("unsupported media command")
+            self.client.send_media_command(command)
+            return None
+        if method == "set_phone_audio_route":
+            route = _text(args, "route")
+            if route not in ("pc", "phone"):
+                raise RequestError("route must be pc or phone")
+            return self.client.set_phone_audio_route(route)
+        if method == "set_tether":
+            if _boolean(args, "enabled"):
+                self.client.tether_connect()
+            else:
+                self.client.tether_disconnect()
+            return None
+        if method == "set_proximity_lock":
+            self.client.set_proximity_lock(_boolean(args, "enabled"), _grace(args))
+            return None
         raise RequestError(f"unsupported method: {method}")
 
     def handle_line(self, line: str) -> None:
@@ -226,6 +279,16 @@ def _install_signal_receivers(bridge: QuickshellBridge) -> list[object]:
             lambda handle: bridge.emit_event("open-message", str(handle)),
             signal_name="OpenMessageRequested",
             **common,
+        ),
+        bus.add_signal_receiver(
+            lambda: bridge.emit_event("phone-changed"),
+            signal_name="NowPlayingChanged",
+            **common,
+        ),
+        bus.add_signal_receiver(
+            lambda: bridge.emit_event("phone-changed"),
+            signal_name="TetherChanged",
+            **{**common, "dbus_interface": TETHER_IFACE},
         ),
     ]
 

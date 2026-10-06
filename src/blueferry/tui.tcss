@@ -562,3 +562,30 @@ ModalScreen {
 #workspace.narrow .message-bubble {
     max-width: 92%;
 }
+
+#phone-strip {
+    height: 1;
+    padding: 0 2;
+    background: #0d1425;
+    color: #cbd5e1;
+}
+
+#phone-status {
+    width: auto;
+    margin-right: 4;
+}
+
+#now-playing {
+    width: 1fr;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+#phone-dialog {
+    width: 84;
+}
+
+#phone-body {
+    height: auto;
+    max-height: 30;
+}

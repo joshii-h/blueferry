@@ -13,12 +13,13 @@ from gi.repository import GLib, GObject
 
 from blueferry.backend_lifecycle import ensure_backend_current
 from blueferry.bus import get_session_bus
-from blueferry.client import BackendClient, CompatibilityCache
+from blueferry.client import BackendClient, CompatibilityCache, TetherUnsupportedError
 from blueferry.models import BackendStatus
 from blueferry.protocol import (
     BUS_NAME,
     EVENTS_IFACE,
     OBJECT_PATH,
+    TETHER_IFACE,
 )
 from blueferry.setup_client import SetupClient
 
@@ -54,6 +55,8 @@ class DaemonClient(GObject.Object):
         "status-invalidated": (GObject.SignalFlags.RUN_FIRST, None, ()),
         "availability-changed": (GObject.SignalFlags.RUN_FIRST, None, (bool,)),
         "open-message-requested": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
+        # Content-free: now playing, the hotspot or the call history changed.
+        "phone-changed": (GObject.SignalFlags.RUN_FIRST, None, ()),
     }
 
     def __init__(self) -> None:
@@ -108,6 +111,21 @@ class DaemonClient(GObject.Object):
                 path=OBJECT_PATH,
             )
         )
+
+        for signal_name, interface in (
+            ("NowPlayingChanged", EVENTS_IFACE),
+            ("CallHistoryChanged", EVENTS_IFACE),
+            ("TetherChanged", TETHER_IFACE),
+        ):
+            self._matches.append(
+                self._bus.add_signal_receiver(
+                    lambda: self.emit("phone-changed"),
+                    dbus_interface=interface,
+                    signal_name=signal_name,
+                    bus_name=BUS_NAME,
+                    path=OBJECT_PATH,
+                )
+            )
 
     def stop(self) -> None:
         self._stopped = True
@@ -390,6 +408,88 @@ class DaemonClient(GObject.Object):
     def unlock_storage_async(self, on_ok, on_err) -> None:
         self._submit(
             lambda: self._call_backend(lambda backend: backend.unlock_storage()),
+            on_ok,
+            on_err,
+            mutation=True,
+        )
+
+    # ---- phone overview (Media1, Tether1, Presence1, call history) --------
+
+    def now_playing_async(self, on_ok, on_err=None) -> None:
+        self._submit(
+            lambda: self._call_backend(lambda backend: backend.now_playing()),
+            on_ok,
+            on_err,
+        )
+
+    def send_media_command_async(self, command: str, on_ok, on_err) -> None:
+        self._submit(
+            lambda: self._call_backend(
+                lambda backend: backend.send_media_command(command)
+            ),
+            on_ok,
+            on_err,
+            mutation=True,
+        )
+
+    def set_phone_audio_route_async(self, route: str, on_ok, on_err) -> None:
+        self._submit(
+            lambda: self._call_backend(
+                lambda backend: backend.set_phone_audio_route(route)
+            ),
+            on_ok,
+            on_err,
+            mutation=True,
+        )
+
+    @staticmethod
+    def _tether(request: Callable[[], T]) -> T | None:
+        """None when the running backend has no Tether1."""
+        try:
+            return request()
+        except TetherUnsupportedError:
+            return None
+
+    def tether_state_async(self, on_ok, on_err=None) -> None:
+        self._submit(
+            lambda: self._call_backend(
+                lambda backend: self._tether(backend.tether_state)
+            ),
+            on_ok,
+            on_err,
+        )
+
+    def set_tether_async(self, enabled: bool, on_ok, on_err) -> None:
+        def request(backend: BackendClient):
+            method = backend.tether_connect if enabled else backend.tether_disconnect
+            return self._tether(method)
+
+        self._submit(
+            lambda: self._call_backend(request), on_ok, on_err, mutation=True,
+        )
+
+    def set_proximity_lock_async(
+        self, enabled: bool, grace_seconds: int, on_ok, on_err,
+    ) -> None:
+        self._submit(
+            lambda: self._call_backend(
+                lambda backend: backend.set_proximity_lock(enabled, grace_seconds)
+            ),
+            on_ok,
+            on_err,
+            mutation=True,
+        )
+
+    def call_history_async(self, on_ok, on_err=None, limit: int = 100) -> None:
+        self._submit(
+            lambda: self._call_backend(lambda backend: backend.call_history(limit)),
+            on_ok,
+            on_err,
+        )
+
+    def dial_async(self, number: str, on_ok, on_err) -> None:
+        self._submit(
+            lambda: self._call_backend(lambda backend: backend.dial(number)),
             on_ok,
             on_err,
             mutation=True,

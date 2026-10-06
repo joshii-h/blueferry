@@ -28,3 +28,6 @@ src/blueferry/qt/tray_presenter.py
 src/blueferry/qt/qml/PhoneCard.qml
 src/blueferry/qt/qml/CallsTab.qml
 src/blueferry/qt/qml/NotificationsTab.qml
+src/blueferry/phone_overview.py
+src/blueferry/ui/phone.py
+src/blueferry/ui/phone_presenter.py

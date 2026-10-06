@@ -10,7 +10,10 @@ FerryLabel {
 
   required property var status
 
-  readonly property var batteryLevel: root.validPercent(root.status.phone_battery_level)
+  // An exact phone_battery_percent wins over the HFP level (20 % steps).
+  readonly property var batteryLevel: root.validPercent(root.status.phone_battery_percent) !== null
+    ? root.validPercent(root.status.phone_battery_percent)
+    : root.validPercent(root.status.phone_battery_level)
   readonly property var signalStrength: root.validPercent(root.status.phone_signal_strength)
   readonly property string summary: root.summaryText()
 
