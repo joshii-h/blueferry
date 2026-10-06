@@ -12,7 +12,7 @@ from PySide6.QtGui import QAction, QGuiApplication, QIcon, QWindow
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from blueferry.client_activation import record_client_use
+from blueferry.client_activation import TRAY_BUS_NAME, record_client_use
 from blueferry.qt.activation import ClientActivation
 from blueferry.qt.avatars import AVATAR_PROVIDER, AvatarImageProvider
 from blueferry.qt.controller import BridgeController
@@ -90,12 +90,24 @@ def _present_window(window: QWindow, token: str | None = None) -> None:
     record_client_use("qt")
 
 
+def _standalone_tray_running() -> bool:
+    from PySide6.QtDBus import QDBusConnection
+
+    from blueferry.qt.tray import name_registered
+
+    return name_registered(QDBusConnection.sessionBus(), TRAY_BUS_NAME)
+
+
 def _create_system_tray(
         application: QApplication,
         window: QWindow,
         ) -> QSystemTrayIcon | None:
-    """Expose the KDE/desktop status-notifier item for the Qt client."""
-    if not QSystemTrayIcon.isSystemTrayAvailable():
+    """Expose the KDE/desktop status-notifier item for the Qt client.
+
+    The standalone ``blueferry-tray`` item replaces it while it runs, so the
+    panel never shows two phones; closing the window then quits the client.
+    """
+    if not QSystemTrayIcon.isSystemTrayAvailable() or _standalone_tray_running():
         return None
 
     icon = QIcon.fromTheme("smartphone-symbolic")
