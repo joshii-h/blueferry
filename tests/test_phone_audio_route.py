@@ -1,12 +1,13 @@
 """Hermetic tests for routing the iPhone's A2DP playback (fake bus, fake timers)."""
 from __future__ import annotations
 
-import dbus.exceptions
 import pytest
+from gi.repository import GLib
 
 from blueferry.backend_operations import BackendDependencies, BackendOperations
 from blueferry.cli_audio import describe_route
 from blueferry.errors import InvalidArgumentsError, NotReadyError, OperationFailedError
+from blueferry.gio_dbus import DBusCallError
 from blueferry.phone_audio_route import (
     A2DP_SINK_UUID,
     A2DP_SOURCE_UUID,
@@ -43,17 +44,24 @@ class Bus:
         self.held: list[tuple] = []
         self.receivers: dict[str, object] = {}
         self.removed = 0
+        self.types: list[tuple[str, str]] = []
 
-    def call_async(self, bus_name, path, interface, method, signature, args,
-                   reply_handler, error_handler, timeout=-1.0):
+    def call(self, bus_name, path, interface, method, signature, args,
+             reply_type, on_reply, on_error, *, timeout):
+        # The real GioDBus builds exactly this variant; a type mismatch
+        # between signature and args raises here as it would there.
+        GLib.Variant(f"({signature})", args)
+        assert GLib.VariantType.string_is_valid(reply_type)
         self.calls.append((path, interface, method, args))
+        self.types.append((signature, reply_type))
         if method == "GetManagedObjects":
-            reply_handler(self.tree)
+            on_reply(self.tree)
         else:
-            self.held.append((reply_handler, error_handler))
+            self.held.append((on_reply, on_error))
 
-    def add_signal_receiver(self, handler, signal_name=None, **kwargs):
-        self.receivers[signal_name] = handler
+    def subscribe(self, sender, interface, member, handler, *, path=None, arg0=None):
+        assert sender == "org.bluez"
+        self.receivers[member] = handler
         bus = self
 
         class Match:
@@ -77,7 +85,7 @@ def route(bus, *, allowed=True):
     timers = Timers()
     changes: list[int] = []
     subject = PhoneAudioRoute(
-        lambda: bus, DEV, allowed=allowed, on_changed=lambda: changes.append(1),
+        bus, DEV, allowed=allowed, on_changed=lambda: changes.append(1),
         schedule=timers.schedule, cancel=timers.cancel,
     )
     return subject, timers, changes
@@ -167,8 +175,7 @@ def test_switch_to_phone_treats_not_connected_as_success() -> None:
     accepted: list[str] = []
     subject.set_route("phone", accepted.append, pytest.fail)
     assert bus.calls[-1][2] == "DisconnectProfile"
-    bus.held.pop()[1](dbus.exceptions.DBusException(
-        "x", name="org.bluez.Error.NotConnected"))
+    bus.held.pop()[1](DBusCallError("org.bluez.Error.NotConnected", "x"))
     assert accepted == ["phone"]
 
 
@@ -178,7 +185,7 @@ def test_failure_is_reported_and_clears_pending() -> None:
     subject.start()
     errors: list[Exception] = []
     subject.set_route("pc", pytest.fail, errors.append)
-    bus.held.pop()[1](dbus.exceptions.DBusException("x", name="org.bluez.Error.Failed"))
+    bus.held.pop()[1](DBusCallError("org.bluez.Error.Failed", "x"))
     assert len(errors) == 1
     assert subject.snapshot()["phone_audio_pending"] == ""
 
@@ -242,7 +249,7 @@ def test_in_progress_maps_to_not_ready_with_a_retry_hint() -> None:
     subject.start()
     errors: list[Exception] = []
     subject.set_route("pc", pytest.fail, errors.append)
-    bus.held.pop()[1](dbus.exceptions.DBusException("x", name="org.bluez.Error.InProgress"))
+    bus.held.pop()[1](DBusCallError("org.bluez.Error.InProgress", "x"))
     assert isinstance(errors[0], NotReadyError) and "try again" in str(errors[0])
 
     class Audio:
@@ -262,7 +269,7 @@ def _resuming_route(bus, *, playing: bool):
     timers = Timers()
     resumed: list[int] = []
     subject = PhoneAudioRoute(
-        lambda: bus, DEV, allowed=True, on_changed=lambda: None,
+        bus, DEV, allowed=True, on_changed=lambda: None,
         schedule=timers.schedule, cancel=timers.cancel,
         was_playing=lambda: playing, resume_playback=lambda: resumed.append(1),
     )
@@ -307,3 +314,23 @@ def test_switch_to_pc_never_resumes_and_stop_cancels_a_pending_resume() -> None:
     subject.stop()
     timers.fire()
     assert resumed == []
+
+
+def test_calls_state_their_wire_types() -> None:
+    bus = Bus(tree())
+    subject, _timers, _changes = route(bus)
+    subject.start()
+    subject.set_route("pc", lambda _route: None, pytest.fail)
+    assert bus.types == [("", "(a{oa{sa{sv}}})"), ("s", "()")]
+
+
+def test_failure_message_keeps_the_dbus_error_format() -> None:
+    bus = Bus(tree())
+    subject, _timers, _changes = route(bus)
+    subject.start()
+    seen: list[Exception] = []
+    ops = BackendOperations(object(), BackendDependencies(phone_audio=subject))  # type: ignore[arg-type]
+    ops.set_phone_audio_route("pc", pytest.fail, seen.append)
+    bus.held.pop()[1](DBusCallError("org.bluez.Error.Failed", "br-connection-refused"))
+    assert isinstance(seen[0], OperationFailedError)
+    assert str(seen[0]) == "org.bluez.Error.Failed: br-connection-refused"

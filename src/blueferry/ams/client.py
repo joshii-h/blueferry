@@ -30,6 +30,7 @@ import dbus
 import dbus.exceptions
 from gi.repository import GLib
 
+from blueferry import dbus_call
 from blueferry.ams.constants import (
     AMS_CHAR_UUIDS,
     AMS_ERROR_NAMES,
@@ -251,8 +252,9 @@ class AmsClient:
         def failed(error) -> None:
             log.warning("AMS object sweep failed: %s", _error_name(error))
 
-        bus.get_object(_BLUEZ, "/", introspect=False).GetManagedObjects(
-            dbus_interface=_OBJECT_MANAGER,
+        dbus_call.call_async(
+            bus.get_object(_BLUEZ, "/", introspect=False),
+            _OBJECT_MANAGER, "GetManagedObjects", "",
             reply_handler=swept,
             error_handler=failed,
             timeout=DBUS_CALL_TIMEOUT_SECONDS,
@@ -390,8 +392,8 @@ class AmsClient:
         def start() -> None:
             if generation != self._generation:
                 return  # reset while BlueZ answered the Notifying query
-            characteristic.StartNotify(
-                dbus_interface=_GATT_CHAR,
+            dbus_call.call_async(
+                characteristic, _GATT_CHAR, "StartNotify", "",
                 reply_handler=started,
                 error_handler=fail,
                 timeout=DBUS_CALL_TIMEOUT_SECONDS,
@@ -412,9 +414,8 @@ class AmsClient:
             else:
                 start()
 
-        characteristic.Get(
-            _GATT_CHAR, "Notifying",
-            dbus_interface=_PROPERTIES,
+        dbus_call.call_async(
+            characteristic, _PROPERTIES, "Get", "ss", (_GATT_CHAR, "Notifying"),
             reply_handler=notifying,
             error_handler=lambda _error: start(),
             timeout=DBUS_CALL_TIMEOUT_SECONDS,
@@ -501,10 +502,9 @@ class AmsClient:
         return self._bus_factory().get_object(_BLUEZ, path, introspect=False)
 
     def _write(self, path: str, packet: bytes, ok: Success, fail: Failure) -> None:
-        self._characteristic(path).WriteValue(
-            dbus.Array([dbus.Byte(value) for value in packet], signature="y"),
-            dbus.Dictionary({}, signature="sv"),
-            dbus_interface=_GATT_CHAR,
+        dbus_call.call_async(
+            self._characteristic(path), _GATT_CHAR, "WriteValue", "aya{sv}",
+            (dbus_call.byte_array(packet), dbus_call.options()),
             reply_handler=ok,
             error_handler=fail,
             timeout=DBUS_CALL_TIMEOUT_SECONDS,
@@ -610,9 +610,9 @@ class AmsClient:
             def read_back() -> None:
                 if generation != self._generation:
                     return  # the link was reset between write and read
-                self._characteristic(path).ReadValue(
-                    dbus.Dictionary({}, signature="sv"),
-                    dbus_interface=_GATT_CHAR,
+                dbus_call.call_async(
+                    self._characteristic(path), _GATT_CHAR, "ReadValue", "a{sv}",
+                    (dbus_call.options(),),
                     reply_handler=lambda value: received(value, ok, fail),
                     error_handler=fail,
                     timeout=DBUS_CALL_TIMEOUT_SECONDS,

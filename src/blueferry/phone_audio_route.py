@@ -15,6 +15,9 @@ plays is up to the phone. None of the iOS behaviour is verified on hardware.
 Only meaningful when BlueFerry does not forbid the sink role, i.e. with
 ``BLUEFERRY_KEEP_PHONE_AUDIO_ON_PHONE=false``; otherwise the WirePlumber policy
 strips ``a2dp_sink`` and the route is reported as unavailable.
+
+This module is the pilot for GDBus (``blueferry.gio_dbus``): every call states
+its argument and reply types, and nothing here can block the main loop.
 """
 from __future__ import annotations
 
@@ -23,7 +26,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from blueferry.errors import InvalidArgumentsError, NotReadyError
-from blueferry.tether import AsyncBus, dbus_error_name
+from blueferry.gio_dbus import GioBus, error_name
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +35,7 @@ DEVICE_IFACE = "org.bluez.Device1"
 TRANSPORT_IFACE = "org.bluez.MediaTransport1"
 OBJECT_MANAGER_IFACE = "org.freedesktop.DBus.ObjectManager"
 PROPERTIES_IFACE = "org.freedesktop.DBus.Properties"
+MANAGED_OBJECTS_REPLY = "(a{oa{sa{sv}}})"
 A2DP_SOURCE_UUID = "0000110a-0000-1000-8000-00805f9b34fb"
 A2DP_SINK_UUID = "0000110b-0000-1000-8000-00805f9b34fb"
 
@@ -70,7 +74,7 @@ class PhoneAudioRoute:
 
     def __init__(
         self,
-        bus: Callable[[], AsyncBus],
+        bus: GioBus,
         device_path: str,
         *,
         allowed: bool,
@@ -130,19 +134,14 @@ class PhoneAudioRoute:
         if not self._allowed or self._matches:
             return
         self._stopped = False
-        bus = self._bus()
+        bus = self._bus
         self._matches = [
-            bus.add_signal_receiver(
-                self._interfaces_added, signal_name="InterfacesAdded",
-                dbus_interface=OBJECT_MANAGER_IFACE, bus_name=BLUEZ,
+            bus.subscribe(BLUEZ, OBJECT_MANAGER_IFACE, "InterfacesAdded", self._interfaces_added),
+            bus.subscribe(
+                BLUEZ, OBJECT_MANAGER_IFACE, "InterfacesRemoved", self._interfaces_removed,
             ),
-            bus.add_signal_receiver(
-                self._interfaces_removed, signal_name="InterfacesRemoved",
-                dbus_interface=OBJECT_MANAGER_IFACE, bus_name=BLUEZ,
-            ),
-            bus.add_signal_receiver(
-                self._properties_changed, signal_name="PropertiesChanged",
-                dbus_interface=PROPERTIES_IFACE, bus_name=BLUEZ,
+            bus.subscribe(
+                BLUEZ, PROPERTIES_IFACE, "PropertiesChanged", self._properties_changed,
                 path=self._device_path, arg0=DEVICE_IFACE,
             ),
         ]
@@ -163,15 +162,15 @@ class PhoneAudioRoute:
         def failed(error: Exception) -> None:
             if generation != self._generation:
                 return
-            log.debug("could not read the phone's audio state: %s", dbus_error_name(error))
+            log.debug("could not read the phone's audio state: %s", error_name(error))
             before = self.snapshot()
             self._known = False
             self._changed(before)
 
         try:
-            self._bus().call_async(
+            self._bus.call(
                 BLUEZ, "/", OBJECT_MANAGER_IFACE, "GetManagedObjects", "", (),
-                reply, failed, timeout=5.0,
+                MANAGED_OBJECTS_REPLY, reply, failed, timeout=5.0,
             )
         except Exception as error:
             failed(error)
@@ -277,7 +276,7 @@ class PhoneAudioRoute:
             success(route)
 
         def failed(error: Exception) -> None:
-            name = dbus_error_name(error)
+            name = error_name(error)
             if name in _ALREADY:
                 reply()
                 return
@@ -291,9 +290,9 @@ class PhoneAudioRoute:
             failure(error)
 
         try:
-            self._bus().call_async(
+            self._bus.call(
                 BLUEZ, self._device_path, DEVICE_IFACE, method, "s",
-                (A2DP_SOURCE_UUID,), reply, failed, timeout=PROFILE_CALL_TIMEOUT_SEC,
+                (A2DP_SOURCE_UUID,), "()", reply, failed, timeout=PROFILE_CALL_TIMEOUT_SEC,
             )
         except Exception as error:
             failed(error)
@@ -339,4 +338,4 @@ class PhoneAudioRoute:
             try:
                 match.remove()
             except Exception as error:
-                log.debug("could not remove audio route watch: %s", dbus_error_name(error))
+                log.debug("could not remove audio route watch: %s", error_name(error))
