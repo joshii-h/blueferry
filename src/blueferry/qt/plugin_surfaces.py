@@ -97,6 +97,10 @@ class PluginSurfaces(QObject):
     def _cardChanged(self) -> None:
         self._timer.start()
 
+    def schedule_reload(self) -> None:
+        """One coalesced reload, e.g. after a plugin was enabled."""
+        self._timer.start()
+
     def reload(self) -> None:
         """Fetch every card plugin's items again (coalesced)."""
         if self._loading:

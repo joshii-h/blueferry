@@ -218,6 +218,9 @@ class BridgeController(QObject):
             bus=self._bus, parent=self,
         )
         self._plugin_surfaces.changed.connect(self.pluginSurfacesChanged)
+        # Enabling, installing or removing a plugin changes the card.
+        self._plugin_set: tuple = ()
+        self._plugin_settings.changed.connect(self._plugin_set_changed)
         if subscribe:
             self._subscribe()
         if autostart:
@@ -551,6 +554,17 @@ class BridgeController(QObject):
     @Slot()
     def clearPluginMessage(self) -> None:
         self._plugin_settings.clear_message()
+
+    def _plugin_set_changed(self) -> None:
+        current = tuple(
+            (row.get("id"), row.get("enabled"))
+            for row in self._plugin_settings.state().get("plugins", [])
+        )
+        if current != self._plugin_set:
+            known = bool(self._plugin_set)
+            self._plugin_set = current
+            if known:
+                self._plugin_surfaces.schedule_reload()
 
     @Property("QVariantMap", notify=pluginSurfacesChanged)
     def pluginSurfaces(self):
