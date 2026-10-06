@@ -19,7 +19,16 @@ import signal
 import sys
 from collections.abc import Callable
 
-from PySide6.QtCore import SLOT, QObject, QProcess, QRect, Qt, QTimer, Slot
+from PySide6.QtCore import (
+    SLOT,
+    QObject,
+    QProcess,
+    QProcessEnvironment,
+    QRect,
+    Qt,
+    QTimer,
+    Slot,
+)
 from PySide6.QtDBus import (
     QDBusConnection,
     QDBusMessage,
@@ -121,6 +130,7 @@ class TrayController(QObject):
         self._bus = bus if bus is not None else QDBusConnection.sessionBus()
         self._launch = launch or launch_qt_client
         self._watchers: set[QDBusPendingCallWatcher] = set()
+        self._daemon_owned: bool | None = None
         self.status: BackendStatus | None = None
         self.status_raw: dict | None = None
         self.error = ""
@@ -188,7 +198,8 @@ class TrayController(QObject):
     # ---- lifecycle ------------------------------------------------------
 
     def start(self) -> None:
-        self.tray.show()
+        # Shown once refresh() knows BlueFerry is set up (running or
+        # activatable); an autostarted tray without a setup stays hidden.
         self.refresh()
 
     def close(self) -> None:
@@ -198,7 +209,11 @@ class TrayController(QObject):
     # ---- D-Bus ----------------------------------------------------------
 
     def _daemon_running(self) -> bool:
-        return name_registered(self._bus, BUS_NAME)
+        # One synchronous lookup at start; afterwards the service watcher
+        # keeps the answer current, so refreshes never block on the bus.
+        if self._daemon_owned is None:
+            self._daemon_owned = name_registered(self._bus, BUS_NAME)
+        return self._daemon_owned
 
     def _call(
         self,
@@ -237,27 +252,53 @@ class TrayController(QObject):
     def _history_invalidated(self, _revision) -> None:
         self._threads_timer.start()
 
-    def _owner_changed(self, _name: str, _old: str, _new: str) -> None:
+    def _owner_changed(self, _name: str, _old: str, new: str) -> None:
+        self._daemon_owned = bool(new)
         self._refresh_timer.start()
 
     @Slot()
     def refresh(self) -> None:
         if not self._daemon_running():
             self.apply_offline()
+            self._check_installed()
             return
+        self.set_present(True)
         self._call(
             BUS_NAME, MESSAGES_IFACE, "GetStatus", [],
             lambda args: self.apply_status(args[0] if args else ""),
             lambda _name: self.apply_offline(),
         )
 
+    def _check_installed(self) -> None:
+        """Hide the icon unless the bus could start the BlueFerry service."""
+        if not self._bus.isConnected():
+            self.set_present(True)  # cannot tell; keep the way back in
+            return
+
+        def listed(args: list) -> None:
+            names = args[0] if args else []
+            self.set_present(BUS_NAME in [str(name) for name in names or []])
+
+        self._call(
+            "org.freedesktop.DBus", "org.freedesktop.DBus", "ListActivatableNames", [],
+            # Unknown: keep the icon rather than lose the only way back in.
+            listed, lambda _name: self.set_present(True),
+            path="/org/freedesktop/DBus",
+        )
+
+    def set_present(self, present: bool) -> None:
+        """Show the icon for a usable BlueFerry setup, hide it otherwise."""
+        self.tray.setVisible(present)
+
     @Slot()
     def refresh_threads(self) -> None:
         if self.status is None or not self._daemon_running():
             return
         self._call(
-            # PySide6 sends Python ints as int32; dbus-python accepts that
-            # for the "u" argument and the daemon bounds the limit anyway.
+            # The signature says "u", but PySide6 can only marshal a Python
+            # int as int32: QDBusArgument has no unsigned overload and
+            # QVariant is not exposed. dbus-python does not enforce incoming
+            # signatures, and the daemon bounds the limit anyway.
             BUS_NAME, MESSAGES_IFACE, "ListThreads", [THREAD_LIMIT],
             lambda args: self.apply_threads(args[0] if args else "[]"),
             lambda _name: None,
@@ -368,7 +409,10 @@ class TrayController(QObject):
         """Raise a running Qt client, or start one."""
         if name_registered(self._bus, QT_CLIENT.bus_name):
             self._call(
-                QT_CLIENT.bus_name, ACTIVATION_INTERFACE, "OpenMessage", ["", ""],
+                QT_CLIENT.bus_name, ACTIVATION_INTERFACE, "OpenMessage",
+                # On Wayland the running window may only take focus with the
+                # activation token Plasma handed to the tray for this click.
+                ["", QProcessEnvironment.systemEnvironment().value("XDG_ACTIVATION_TOKEN")],
                 lambda _args: None, lambda _name: self._launch(),
                 path=ACTIVATION_PATH,
             )

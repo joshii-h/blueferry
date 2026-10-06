@@ -97,8 +97,15 @@ _SMOKE = textwrap.dedent("""
            else QDBusConnection("not-connected"))
     launches = []
     tray = TrayController(bus, launch=lambda: launches.append(1) or True)
+    tray.tray.setVisible(True)  # so hiding must come from the bus reply
     tray.start()
-    app.processEvents()
+    import time
+    for _ in range(100):  # the ListActivatableNames reply is asynchronous
+        app.processEvents()
+        time.sleep(0.01)
+    # Private test bus: BlueFerry is not activatable, so the icon hides.
+    # No bus at all: unknown, so it stays.
+    assert tray.tray.isVisible() is (not address), tray.tray.isVisible()
     # No daemon on the bus: offline, and nothing was activated.
     assert tray.status is None, tray.status
     assert tray.tray.toolTip() == "BlueFerry service is not running", tray.tray.toolTip()
