@@ -95,7 +95,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `ams/parsers.py` | Pure AMS wire-format parsers and command/registration builders. |
 | `ams/state.py` | `NowPlaying` projection of Player, Queue, and Track attributes. |
 | `ams/constants.py` | AMS UUIDs, identifiers, and public command names. |
-| `bearer_supervisor.py` | Connects BR/EDR first, then keeps LE connected alongside it; flags a stale LE bond from bursts of short LE links. |
+| `bearer_supervisor.py` | Connects BR/EDR first, then keeps LE connected alongside it; flags a stale LE bond from bursts of short LE links; damps Classic reconnects to an absent phone. |
 | `solicitation_supervisor.py` | Keeps the ANCS solicitation advertisement on air until ANCS is proven healthy. |
 | `adapter_class_supervisor.py` | Detects Class-of-Device drift and repairs it through the constrained system helper. |
 | `bluetooth_recovery.py` | Last-resort, rate-limited adapter power cycle for persistent ANCS outages. |
@@ -493,7 +493,15 @@ A change to these rules has to be made in both places.
   connection.
 - **Bearers:** `bearer_supervisor` keeps BR/EDR and LE connected, independent
   of desktop applets. In full mode a missing LE bearer holds back MAP/PBAP
-  reconnects. Compatibility mode leaves LE disabled.
+  reconnects. Compatibility mode leaves LE disabled. Classic reconnects back
+  off exponentially (up to 10 min without a live LE link). After three failed
+  attempts with no sign of the phone (no LE link, no RSSI from a discovery in
+  the last two minutes), or when BlueZ reports that the phone closed the
+  Classic link itself (`Bearer.BREDR1.Disconnected` with `Reason.Remote`,
+  e.g. Bluetooth switched off on the iPhone), the supervisor stops paging
+  and probes only every 10 min until an inbound link, LE or a discovery
+  sighting shows the phone again. Paging an absent phone once hung
+  bluetoothd in `l2cap_chan_connect` (kernel 7.2.8), so fewer pages matter.
 - **Media (opt-in):** `ams/client` never dials. It follows the bearer
   supervisor's LE observations and BlueZ owner changes, subscribes after the
   link settles, and resets without `StopNotify` on loss. `media` owns the

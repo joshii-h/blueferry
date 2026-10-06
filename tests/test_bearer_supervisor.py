@@ -1832,3 +1832,116 @@ def test_stable_le_clears_classic_backoff_once() -> None:
     now = quiet_until
     scheduled[0][1]()
     assert attempts == [("bredr", 0.0), ("bredr", retry_at), ("bredr", quiet_until)]
+
+
+# ---- reconnect damping ------------------------------------------------------
+
+
+def _damped(state, attempts, now_ref, watchers):
+    def connect(kind, _on_success, on_error):
+        attempts.append((kind, now_ref[0]))
+        on_error(RuntimeError("page timeout"))
+
+    scheduled = []
+    supervisor = BearerSupervisor(
+        "/device",
+        le_enabled=False,
+        read_connected=state.get,
+        connect=connect,
+        watch_le=lambda on_disc, on_props: watchers.update(le=on_props) or (lambda: None),
+        watch_bredr=lambda on_disc: watchers.update(bredr=on_disc) or (lambda: None),
+        schedule=lambda delay, callback: scheduled.append((delay, callback)) or 7,
+        cancel=lambda _timer_id: None,
+        clock=lambda: now_ref[0],
+    )
+    supervisor.start()
+    return supervisor, scheduled[0][1]
+
+
+def test_absent_phone_rests_after_repeated_classic_failures() -> None:
+    state = {"bredr": False, "le": False}
+    attempts: list = []
+    now = [0.0]
+    supervisor, tick = _damped(state, attempts, now, {})
+    # 10s, 20s, then the third failure parks Classic at the ten-minute probe.
+    for instant in (10.0, 30.0):
+        now[0] = instant
+        tick()
+    assert [at for _kind, at in attempts] == [0.0, 10.0, 30.0]
+    assert supervisor.reconnect_snapshot()["paused"] is True
+    for instant in (100.0, 300.0, 600.0, 629.0):
+        now[0] = instant
+        tick()
+    assert len(attempts) == 3
+    now[0] = 630.0
+    tick()
+    assert len(attempts) == 4
+    supervisor.stop()
+
+
+def test_discovery_sighting_ends_resting_and_keeps_counting() -> None:
+    state = {"bredr": False, "le": False}
+    attempts: list = []
+    now = [0.0]
+    watchers: dict = {}
+    supervisor, tick = _damped(state, attempts, now, watchers)
+    for instant in (10.0, 30.0):
+        now[0] = instant
+        tick()
+    assert supervisor.reconnect_snapshot()["paused"] is True
+    now[0] = 40.0
+    watchers["le"]("org.bluez.Device1", {"RSSI": -60}, [])
+    assert supervisor.reconnect_snapshot()["paused"] is False
+    tick()
+    assert attempts[-1] == ("bredr", 40.0)
+    # Nearby but refusing: exponential, not parked, because the sighting is fresh.
+    assert supervisor.reconnect_snapshot()["paused"] is False
+    assert supervisor._next_attempt["bredr"] == 40.0 + 80
+    supervisor.stop()
+
+
+def test_remote_close_is_not_paged_back_until_the_phone_returns() -> None:
+    state = {"bredr": True, "le": False}
+    attempts: list = []
+    now = [0.0]
+    watchers: dict = {}
+    supervisor, tick = _damped(state, attempts, now, watchers)
+    assert attempts == []
+    # The iPhone's user switches Bluetooth off.
+    watchers["bredr"]("org.bluez.Reason.Remote", "")
+    state["bredr"] = False
+    now[0] = 5.0
+    tick()
+    assert attempts == []
+    assert supervisor.reconnect_snapshot()["paused"] is True
+    # An inbound LE link proves the phone is back.
+    state["le"] = True
+    now[0] = 50.0
+    tick()
+    tick()
+    assert attempts == [("bredr", 50.0)]
+    supervisor.stop()
+
+
+def test_link_loss_timeout_still_reconnects_immediately() -> None:
+    state = {"bredr": True, "le": False}
+    attempts: list = []
+    now = [0.0]
+    watchers: dict = {}
+    supervisor, tick = _damped(state, attempts, now, watchers)
+    watchers["bredr"]("org.bluez.Reason.Timeout", "")
+    state["bredr"] = False
+    now[0] = 5.0
+    tick()
+    assert attempts == [("bredr", 5.0)]
+    supervisor.stop()
+
+
+def test_absent_classic_backoff_is_capped_at_ten_minutes() -> None:
+    supervisor = BearerSupervisor(
+        "/device", read_connected=lambda _kind: False, connect=lambda *_a: None,
+        schedule=lambda *_a: 7, clock=lambda: 0.0,
+    )
+    supervisor._presence_seen_at = 0.0  # nearby, so not parked
+    supervisor._failures["bredr"] = 20
+    assert supervisor._record_failure("bredr") == bearer_supervisor.CLASSIC_BACKOFF_CAP_SECONDS == 600

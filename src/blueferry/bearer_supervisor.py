@@ -35,6 +35,21 @@ BACKOFF_CAP_SECONDS = 300
 # may still decline a page temporarily, but it must not inherit the five-minute
 # absence backoff while ANCS is demonstrably reachable.
 LE_CONNECTED_CLASSIC_BACKOFF_CAP_SECONDS = 30
+# Paging an absent phone over BR/EDR is not free: on 2026-10-06 a Classic
+# reconnect after the iPhone had switched Bluetooth off left bluetoothd in
+# uninterruptible sleep in l2cap_chan_connect (a kernel bug, but BlueFerry's
+# dial triggered it). Classic without any sign of the phone therefore backs
+# off further than LE, up to ten minutes.
+CLASSIC_BACKOFF_CAP_SECONDS = 600
+# After this many consecutive Classic attempts without a connection, and with
+# no evidence that the phone is nearby (no live LE link, no fresh RSSI from a
+# discovery), the phone is treated as resting: BlueFerry stops paging it and
+# waits for an inbound link, LE solicitation or discovery to show it again.
+# One probe per CLASSIC_BACKOFF_CAP_SECONDS keeps Classic-only setups from
+# being stranded.
+CLASSIC_RESTING_AFTER_FAILURES = 3
+# How long an RSSI sighting counts as "the phone is nearby".
+PRESENCE_FRESH_SECONDS = 120
 _INTERFACES = {
     "bredr": "org.bluez.Bearer.BREDR1",
     "le": "org.bluez.Bearer.LE1",
@@ -132,6 +147,9 @@ Prefer = Callable[[str], None]
 ObserveLeState = Callable[[bool | None], None]
 ObserveLeDial = Callable[[bool], None]
 InboundLePrimed = Callable[[], bool]
+OnBredrDisconnected = Callable[[str, str], None]
+# Subscribe to Bearer.BREDR1.Disconnected; return a remover.
+WatchBredr = Callable[[OnBredrDisconnected], Callable[[], None]]
 OnLeDisconnected = Callable[[str, str], None]
 OnLeProperties = Callable[[str, dict, list], None]
 # Subscribe to Bearer.LE1.Disconnected and the device's PropertiesChanged;
@@ -179,6 +197,26 @@ def watch_bluez_le(
     return remove
 
 
+def watch_bluez_bredr(
+    device_path: str,
+    on_disconnected: OnBredrDisconnected,
+) -> Callable[[], None]:
+    """Subscribe to ``org.bluez.Bearer.BREDR1.Disconnected(s name, s message)``.
+
+    BlueZ 5.84+ reports why a Classic link ended. ``org.bluez.Reason.Remote``
+    is what an iPhone sends when its user switches Bluetooth off; older
+    BlueZ never emits the signal and the failure counter alone decides.
+    """
+    match = get_system_bus().add_signal_receiver(
+        on_disconnected,
+        dbus_interface=_INTERFACES["bredr"],
+        signal_name="Disconnected",
+        bus_name="org.bluez",
+        path=device_path,
+    )
+    return match.remove
+
+
 class BearerSupervisor:
     """Connect BR/EDR first, then keep LE connected alongside it.
 
@@ -201,6 +239,7 @@ class BearerSupervisor:
         prefer: Prefer | None = None,
         inbound_le_primed: InboundLePrimed | None = None,
         watch_le: WatchLe | None = None,
+        watch_bredr: WatchBredr | None = None,
         schedule: Schedule = GLib.timeout_add_seconds,
         cancel: Cancel = GLib.source_remove,
         clock: Clock = time.monotonic,
@@ -228,6 +267,12 @@ class BearerSupervisor:
             else None
         )
         self._unwatch_le: Callable[[], None] | None = None
+        self._watch_bredr = watch_bredr or (
+            (lambda on_disconnected: watch_bluez_bredr(device_path, on_disconnected))
+            if read_connected is None
+            else None
+        )
+        self._unwatch_bredr: Callable[[], None] | None = None
         self._schedule = schedule
         self._cancel = cancel
         self._clock = clock
@@ -274,6 +319,9 @@ class BearerSupervisor:
         self._le_link_up_at: float | None = None
         self._last_le_disconnect_reason = ""
         self._own_le_disconnect_at: float | None = None
+        # Reconnect damping: see CLASSIC_RESTING_AFTER_FAILURES.
+        self._bredr_resting = False
+        self._presence_seen_at: float | None = None
 
     @property
     def bredr_connected(self) -> bool:
@@ -303,6 +351,7 @@ class BearerSupervisor:
             return
         self._running = True
         self._start_le_watch()
+        self._start_bredr_watch()
         self._tick()
         self._timer_id = self._schedule(POLL_SECONDS, self._tick)
 
@@ -382,6 +431,8 @@ class BearerSupervisor:
         self._le_disconnect_signal_seen = False
         self._le_link_up_at = None
         self._own_le_disconnect_at = None
+        self._bredr_resting = False
+        self._presence_seen_at = None
         if self._on_le_state is not None:
             self._on_le_state(None)
         if any(value is not None for value in previous.values()) and self._on_status:
@@ -435,6 +486,9 @@ class BearerSupervisor:
         self._le_reset_pending = False
         self._cancel_le_settle()
         self._stop_le_watch()
+        self._stop_bredr_watch()
+        self._bredr_resting = False
+        self._presence_seen_at = None
         if self._timer_id is not None:
             try:
                 self._cancel(self._timer_id)
@@ -456,6 +510,23 @@ class BearerSupervisor:
             "le_bond_suspect": self._le_bond_suspect,
             "le_flap_count": self._le_flap_count,
             "last_le_disconnect_reason": self._last_le_disconnect_reason,
+        }
+
+    def reconnect_snapshot(self) -> dict[str, object]:
+        """Content-free Classic reconnect state for GetStatus."""
+        if self._states["bredr"] is True:
+            state = "connected"
+        elif "bredr" in self._connecting:
+            state = "connecting"
+        elif self._failures["bredr"] > 0:
+            state = "unreachable"
+        else:
+            state = "waiting"
+        wait = self._next_attempt["bredr"] - self._clock()
+        return {
+            "state": state,
+            "paused": self._bredr_resting,
+            "next_in_sec": max(0, int(wait + 0.999)) if state != "connected" else 0,
         }
 
     # ---- broken LE bond detection -----------------------------------------
@@ -515,6 +586,9 @@ class BearerSupervisor:
         if not self._running:
             return
         interface = str(interface)
+        if interface == "org.bluez.Device1" and "RSSI" in changed:
+            # Only discovery reports RSSI: the phone is advertising nearby.
+            self._note_presence("iPhone seen by discovery")
         if interface == _INTERFACES["le"] and "Connected" in changed:
             if bool(changed["Connected"]):
                 self._le_link_up_at = self._clock()
@@ -727,6 +801,8 @@ class BearerSupervisor:
                 self._record_le_drop(
                     None if since is None else self._clock() - since
                 )
+        if value is True and previous is not True:
+            self._note_presence(f"iPhone {kind.upper()} connected")
         if kind == "le" and previous is not True and value is True:
             if self._le_link_up_at is None:
                 self._le_link_up_at = self._clock()
@@ -852,12 +928,7 @@ class BearerSupervisor:
         # A successful method reply only means BlueZ accepted the request; it
         # does not mean the bearer connected. Keep widening the quiet window
         # until an observed Connected=true resets it.
-        self._failures[kind] += 1
-        delay = min(
-            POLL_SECONDS * (2 ** self._failures[kind]),
-            self._backoff_cap(kind),
-        )
-        self._next_attempt[kind] = self._clock() + delay
+        delay = self._record_failure(kind)
         log.info(
             "iPhone %s bearer connection requested successfully; "
             "waiting up to %ds for state change",
@@ -918,12 +989,7 @@ class BearerSupervisor:
             # flight.  This generation never received its permitted attempt.
             self._le_dial_spent = False
             return
-        self._failures[kind] += 1
-        delay = min(
-            POLL_SECONDS * (2 ** self._failures[kind]),
-            self._backoff_cap(kind),
-        )
-        self._next_attempt[kind] = self._clock() + delay
+        delay = self._record_failure(kind)
         if self._last_errors.get(kind) != (name, message):
             detail = f"{name}: {message}" if message else name
             log.warning(
@@ -969,12 +1035,7 @@ class BearerSupervisor:
         # The operation remained down for a full BlueZ Connect timeout. Count
         # that as a failure so Classic observes normal exponential backoff.
         # LE deliberately keeps its one-shot spent and yields to solicitation.
-        self._failures[kind] += 1
-        delay = min(
-            POLL_SECONDS * (2 ** self._failures[kind]),
-            self._backoff_cap(kind),
-        )
-        self._next_attempt[kind] = self._clock() + delay
+        delay = self._record_failure(kind)
         log.debug(
             "%s bearer InProgress state timed out; next attempt in %ds",
             kind.upper(),
@@ -1042,9 +1103,92 @@ class BearerSupervisor:
             log.info("re-arming outbound iPhone LE bootstrap: %s", reason)
 
     def _backoff_cap(self, kind: str) -> int:
-        if kind == "bredr" and self._classic_connect_should_be_targeted():
-            return LE_CONNECTED_CLASSIC_BACKOFF_CAP_SECONDS
+        if kind == "bredr":
+            if self._classic_connect_should_be_targeted():
+                return LE_CONNECTED_CLASSIC_BACKOFF_CAP_SECONDS
+            return CLASSIC_BACKOFF_CAP_SECONDS
         return BACKOFF_CAP_SECONDS
+
+    def _record_failure(self, kind: str) -> int:
+        """Count one unsuccessful attempt and return the next quiet window."""
+        self._failures[kind] += 1
+        delay = min(
+            POLL_SECONDS * (2 ** self._failures[kind]),
+            self._backoff_cap(kind),
+        )
+        if (
+            kind == "bredr"
+            and self._failures[kind] >= CLASSIC_RESTING_AFTER_FAILURES
+            and not self._peer_present()
+        ):
+            self._enter_bredr_resting("repeated BR/EDR attempts failed")
+        if kind == "bredr" and self._bredr_resting:
+            delay = CLASSIC_BACKOFF_CAP_SECONDS
+        self._next_attempt[kind] = self._clock() + delay
+        return delay
+
+    # ---- reconnect damping ---------------------------------------------------
+
+    def _peer_present(self) -> bool:
+        """True with a live link or a recent discovery sighting of the phone."""
+        if self._states["le"] is True or self._states["bredr"] is True:
+            return True
+        seen = self._presence_seen_at
+        return seen is not None and self._clock() - seen < PRESENCE_FRESH_SECONDS
+
+    def _enter_bredr_resting(self, reason: str) -> None:
+        if not self._bredr_resting:
+            log.info(
+                "iPhone looks out of reach (%s); waiting for it instead of "
+                "paging BR/EDR, probing every %ds",
+                reason,
+                CLASSIC_BACKOFF_CAP_SECONDS,
+            )
+        self._bredr_resting = True
+        self._next_attempt["bredr"] = max(
+            self._next_attempt["bredr"],
+            self._clock() + CLASSIC_BACKOFF_CAP_SECONDS,
+        )
+
+    def _note_presence(self, reason: str) -> None:
+        """Fresh evidence that the phone is nearby ends the resting state."""
+        self._presence_seen_at = self._clock()
+        if not self._bredr_resting:
+            return
+        self._bredr_resting = False
+        # Keep the failure count: a phone that is nearby but still refuses
+        # Classic continues its exponential backoff from where it was.
+        self._next_attempt["bredr"] = 0.0
+        # The next health check pages the phone; no re-entrant dial from here.
+        log.info("%s; resuming BR/EDR reconnects", reason)
+
+    def _start_bredr_watch(self) -> None:
+        if self._watch_bredr is None or self._unwatch_bredr is not None:
+            return
+        try:
+            self._unwatch_bredr = self._watch_bredr(self._on_bredr_disconnected_signal)
+        except Exception:
+            log.debug("could not watch iPhone BR/EDR disconnect reasons", exc_info=True)
+
+    def _stop_bredr_watch(self) -> None:
+        unwatch, self._unwatch_bredr = self._unwatch_bredr, None
+        if unwatch is None:
+            return
+        try:
+            unwatch()
+        except Exception:
+            log.debug("could not remove iPhone BR/EDR watch", exc_info=True)
+
+    def _on_bredr_disconnected_signal(self, name: str, _message: str) -> None:
+        """Handle org.bluez.Bearer.BREDR1.Disconnected(name, message)."""
+        if not self._running:
+            return
+        reason = _LE_DISCONNECT_REASONS.get(str(name), "unknown")
+        log.debug("iPhone BR/EDR disconnected: %s", reason)
+        if reason == "remote" and self._states["le"] is not True:
+            # The phone closed the link itself, typically because its user
+            # switched Bluetooth off. Do not page it right back.
+            self._enter_bredr_resting("the iPhone closed the BR/EDR link")
 
     def _request_le_disconnect(self, *, force: bool = False) -> None:
         if "le" in self._disconnecting:
