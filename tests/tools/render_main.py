@@ -71,6 +71,7 @@ STATUS = {
     "phone_battery_source": "ble", "phone_signal_strength": 4,
     "phone_network_name": "Sunrise", "proximity_lock": "idle",
     "proximity_lock_enabled": False, "media_control_enabled": True,
+    "mirror_iphone_removals": True,
 }
 
 BRIDGE_QML = """
