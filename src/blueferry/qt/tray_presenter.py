@@ -14,7 +14,7 @@ from blueferry.companion_tools import ToolState
 from blueferry.i18n import _, ngettext
 from blueferry.models import BackendStatus, Thread, phone_status_fields
 from blueferry.qt.phone_link import phone_audio
-from blueferry.reconnect_view import reconnect_view
+from blueferry.reconnect_view import bluez_text, reconnect_view
 from blueferry.tether_status import TetherStatus
 
 MAX_BADGE = 99
@@ -54,6 +54,8 @@ def connection_line(status: BackendStatus | None, error: str = "") -> str:
 def tooltip(status: BackendStatus | None, unread: int, error: str = "") -> str:
     """Plain-text tooltip: connection, battery/signal/network, unread count."""
     lines = [connection_line(status, error)]
+    if status is not None and status.extra.get("bluez_unresponsive") is True:
+        lines.append(bluez_text(status.extra))
     if status is not None:
         lines.extend(
             _("{label}: {value}").format(label=label, value=value)

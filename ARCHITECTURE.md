@@ -184,6 +184,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `photos_view.py`, `cli_photos.py`, `tui_photos.py`, `qt/qml/PhotosTab.qml` | Client side of the `photos` capability: plugin lookup, blocking loads for worker threads, plain-text labels; `blueferry photos`, the TUI Photos screen (`g`) and the Qt Photos tab (loaded only while shown). |
 | `plugins/immich_photos/` (repository root) | Bundled Immich plugin, laid out as its own package; imports only `plugin_api`. |
 | `cli_plugins.py` | `plugins list` and `plugins ALIAS …` (exec of the plugin's own CLI). |
+| `bluez_health.py` | Detects a bluetoothd that no longer answers D-Bus (NoReply streak, Peer.Ping, /proc state) and pauses BlueFerry's own Bluetooth work. |
 | `cli_reconnect.py` | `reconnect`: manual Classic reconnect that waits for the outcome. |
 | `reconnect_view.py` | Toolkit-neutral texts for the manual reconnect (Qt card, tray, TUI, CLI). |
 | `tui.py` | Textual terminal client. |
@@ -519,6 +520,15 @@ A change to these rules has to be made in both places.
   (`connected`/`connecting`/`waiting`/`unreachable`), `phone_reconnect_paused`
   and `phone_reconnect_next_in_sec`; `reconnect_view.py` turns them into the
   same texts for every client.
+- **BlueZ health:** `bluez_health` marks bluetoothd unresponsive after three
+  consecutive NoReply/Timeout results (bearer reads and an asynchronous
+  `Peer.Ping` every 30 s). While unresponsive the bearer supervisor and the
+  power-cycle recovery stay idle, `ReconnectPhone` answers
+  `bluez-unresponsive`/`bluez-kernel`, GetStatus carries `bluez_unresponsive`
+  and `bluez_unresponsive_reason` (`kernel` when `/proc/<pid>/status` of the
+  `org.bluez` owner shows state D), one WARNING is logged and dbus-python's
+  "Introspect error … NoReply" lines are throttled to one per 10 min. A
+  successful ping or a new `org.bluez` owner resumes normal operation.
 - **Media (opt-in):** `ams/client` never dials. It follows the bearer
   supervisor's LE observations and BlueZ owner changes, subscribes after the
   link settles, and resets without `StopNotify` on loss. `media` owns the

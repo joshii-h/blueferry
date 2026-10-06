@@ -1218,3 +1218,13 @@ def test_shutdown_retries_journal_cleanup_without_waiting_for_it(bluez, monkeypa
     assert adapter.cleanup_pending is not disk_recovers
     assert fake.writes == [False, True]
     assert not fake.props["Powered"]
+
+
+def test_no_recovery_while_bluez_does_not_answer(h):
+    blocked = [True]
+    h.recovery._blocked = lambda: blocked[0]
+    h.ready_to_probe()
+    assert "reset-le" not in h.calls and "probe" not in h.calls
+    blocked[0] = False
+    h.ready_to_probe()
+    assert "reset-le" in h.calls

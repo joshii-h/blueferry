@@ -228,6 +228,15 @@ def test_manual_reconnect_is_forwarded_to_the_bearer_supervisor(make_daemon):
         instance._reconnect_phone()
 
 
+def test_manual_reconnect_names_a_stuck_kernel(make_daemon):
+    instance = make_daemon()
+    instance.bearers = SimpleNamespace(reconnect_now=lambda: "bluez-unresponsive")
+    instance.bluez_health = SimpleNamespace(
+        snapshot=lambda: {"bluez_unresponsive": True, "bluez_unresponsive_reason": "kernel"},
+    )
+    assert instance._reconnect_phone() == "bluez-kernel"
+
+
 def test_failed_hardware_initialization_leaves_control_service_alive(make_daemon, monkeypatch):
     instance = make_daemon()
     scheduled = []

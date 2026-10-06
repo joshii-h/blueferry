@@ -212,3 +212,14 @@ def test_reconnect_entry_follows_the_classic_state() -> None:
     assert presenter.reconnect_entry({
         "daemon": True, "phone_reconnect_state": "connected",
     }).visible is False
+
+
+def test_tooltip_names_an_unresponsive_bluez() -> None:
+    from blueferry.models import BackendStatus
+    from blueferry.qt import tray_presenter as presenter
+    from blueferry.reconnect_view import BLUEZ_HUNG_TEXT
+
+    status = BackendStatus.from_dict({
+        "daemon": True, "bluez_unresponsive": True, "bluez_unresponsive_reason": "kernel",
+    })
+    assert BLUEZ_HUNG_TEXT in presenter.tooltip(status, 0)

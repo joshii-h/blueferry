@@ -11,10 +11,6 @@ import urllib.error
 from pathlib import Path
 
 import pytest
-
-from blueferry.plugin_api.client import PluginClient, PluginError
-from blueferry.plugin_api.manifest import parse_manifest
-from blueferry.plugin_api.testing import ServiceTransport, inline_service
 from blueferry_immich_photos import PLUGIN_ID, manifest_text
 from blueferry_immich_photos import __main__ as cli
 from blueferry_immich_photos.cache import PhotoCache, safe_file_name
@@ -26,6 +22,10 @@ from blueferry_immich_photos.immich import (
 )
 from blueferry_immich_photos.service import ImmichPhotosService
 from blueferry_immich_photos.settings import Settings, SettingsError, SettingsStore
+
+from blueferry.plugin_api.client import PluginClient, PluginError
+from blueferry.plugin_api.manifest import parse_manifest
+from blueferry.plugin_api.testing import ServiceTransport, inline_service
 
 ID_A = "3f1c2d4e-0000-4000-8000-00000000000a"
 ID_B = "3f1c2d4e-0000-4000-8000-00000000000b"

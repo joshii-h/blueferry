@@ -1032,6 +1032,12 @@ the tray, key `b` on the terminal client's iPhone screen, or
 `blueferry reconnect`. If that fails with "iPhone not reachable", check that
 Bluetooth is on on the iPhone.
 
+If bluetoothd itself stops answering (for example stuck in the kernel),
+BlueFerry stops its own connection attempts and the phone card, tray and
+terminal client say "The system Bluetooth service is not responding";
+restarting the computer is then the only fix. BlueFerry resumes on its own
+once bluetoothd answers again or is restarted.
+
 If messages work but names do not, use **Sync Contacts** or run
 `blueferry contacts-sync`.
 

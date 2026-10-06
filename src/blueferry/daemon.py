@@ -29,6 +29,7 @@ from blueferry.bluetooth_recovery import (
     RecoveryObservation,
     probe_map,
 )
+from blueferry.bluez_health import PING_TIMEOUT_SEC, BluezHealth, IntrospectNoReplyFilter
 from blueferry.build_info import build_id, installed_build_sha, running_build_sha
 from blueferry.bus import get_system_bus, main_loop
 from blueferry.call_history import (
@@ -53,6 +54,7 @@ from blueferry.contact_photos import PhotoFiles
 from blueferry.contact_repository import ContactRepository
 from blueferry.contact_sync import ContactSync
 from blueferry.contacts import ContactsResolver
+from blueferry.dbus_call import call_async
 from blueferry.dbus_service import MessagesService, claim_bus_name
 from blueferry.errors import BlueFerryError, NotReadyError
 from blueferry.event_dispatcher import EventDispatcher
@@ -219,6 +221,11 @@ class Daemon:
         # Keep LE out of the initial post-pair window.  The first OBEX
         # attempt below either establishes ordinary Classic MAP/PBAP or gives
         # iOS a chance to reject it before ANCS is allowed to connect.
+        self.bluez_health = BluezHealth(
+            ping=_ping_bluez,
+            owner_pid=_bluez_pid,
+            on_change=self._on_bluez_health_changed,
+        )
         self.bearers = BearerSupervisor(
             device_path,
             le_enabled=False,
@@ -227,6 +234,9 @@ class Daemon:
             on_le_dial=self.solicitation.set_dialing,
             on_reconnect_state=self._emit_status,
             inbound_le_primed=self.solicitation.active,
+            bluez_blocked=lambda: self.bluez_health.unresponsive,
+            on_bluez_error=self.bluez_health.report,
+            on_bluez_ok=self.bluez_health.report_success,
         )
         # Calls-state and phone-status changes often arrive in bursts (a
         # modem going away, a flapping indicator); coalesce their
@@ -364,6 +374,7 @@ class Daemon:
             reset_le=lambda: self.bearers.recover_le_transport(allow_disconnected=True),
             pause=self._pause_for_recovery,
             resume=self._resume_after_recovery,
+            blocked=lambda: self.bluez_health.unresponsive,
         )
 
     def _recovery_observation(self) -> RecoveryObservation:
@@ -546,6 +557,10 @@ class Daemon:
 
     def _reconnect_phone(self) -> str:
         result = self.bearers.reconnect_now()
+        if result == "bluez-unresponsive" and (
+            self.bluez_health.snapshot()["bluez_unresponsive_reason"] == "kernel"
+        ):
+            result = "bluez-kernel"
         log.info("manual iPhone reconnect: %s", result)
         if result == "unavailable":
             raise NotReadyError("no iPhone is being supervised")
@@ -555,6 +570,11 @@ class Daemon:
         emit = getattr(self._dbus_service, "emit_tether_changed", None)
         if emit is not None:
             emit()
+
+    def _on_bluez_health_changed(self) -> None:
+        self._emit_status()
+        if not self.bluez_health.unresponsive:
+            self.bearers.poke()
 
     def _reconnect_status(self) -> dict[str, object]:
         reconnect = self.bearers.reconnect_snapshot()
@@ -828,6 +848,8 @@ class Daemon:
                 "adapter is in A/V Hands-Free CoD if the toggles aren't there."
             )
         self._watch_bluez_owner()
+        _throttle_introspect_errors()
+        self.bluez_health.start()
         self.solicitation.start()
 
         # A bond records trust but does not guarantee a live connection. The
@@ -919,6 +941,7 @@ class Daemon:
             return
         self._bluez_owner_generation += 1
         generation = self._bluez_owner_generation
+        self.bluez_health.owner_changed(str(new_owner or ""))
         # Invalidate before discovery or advertising can dispatch more D-Bus
         # work. An interrupted power restoration keeps ordinary reconnects
         # paused until the recovery controller explicitly resumes them.
@@ -1255,6 +1278,7 @@ class Daemon:
             "ancs_actions": config.ancs_actions_active(),
             **self.bearers.snapshot(),
             **self._reconnect_status(),
+            **self.bluez_health.snapshot(),
             **self.proximity.snapshot(),
             "contacts": self.contacts.count(),
             **self._contact_photo_status(),
@@ -1405,6 +1429,7 @@ class Daemon:
         self.read_receipts.close()
         self.adapter_class.stop()
         self.bearers.stop()
+        self.bluez_health.stop()
         self.profiles.stop()
         self.contact_sync.stop()
         if self.call_history is not None:
@@ -1498,3 +1523,36 @@ class Daemon:
     def _signal(self, signum, _frame):
         log.info("received signal %d, stopping", signum)
         main_loop.quit()
+
+
+def _ping_bluez(on_reply: Callable[[], None], on_error: Callable[[Exception], None]) -> None:
+    """Asynchronous org.freedesktop.DBus.Peer.Ping to bluetoothd."""
+    proxy = get_system_bus().get_object("org.bluez", "/", introspect=False)
+    call_async(
+        proxy, "org.freedesktop.DBus.Peer", "Ping", "",
+        reply_handler=lambda *_args: on_reply(), error_handler=on_error,
+        timeout=PING_TIMEOUT_SEC,
+    )
+
+
+def _bluez_pid(on_pid: Callable[[int | None], None]) -> None:
+    """Asynchronously ask the bus daemon for bluetoothd's process id."""
+    proxy = get_system_bus().get_object(
+        "org.freedesktop.DBus", "/org/freedesktop/DBus", introspect=False,
+    )
+    call_async(
+        proxy, "org.freedesktop.DBus", "GetConnectionUnixProcessID", "s", ("org.bluez",),
+        reply_handler=lambda pid: on_pid(int(pid)), error_handler=lambda _error: on_pid(None),
+        timeout=PING_TIMEOUT_SEC,
+    )
+
+
+_introspect_filter: IntrospectNoReplyFilter | None = None
+
+
+def _throttle_introspect_errors() -> None:
+    """dbus-python logs each failed introspection; keep one per window."""
+    global _introspect_filter
+    if _introspect_filter is None:
+        _introspect_filter = IntrospectNoReplyFilter()
+        logging.getLogger("dbus.proxies").addFilter(_introspect_filter)

@@ -298,7 +298,9 @@ class PhoneScreen(ModalScreen[None]):
             return
         self.app.call_from_thread(
             self.notify, result_text(result),
-            severity="error" if result == "unreachable" else "information",
+            severity="error"
+            if result in ("unreachable", "bluez-kernel", "bluez-unresponsive")
+            else "information",
             markup=False,
         )
         refresh = getattr(self.app, "action_refresh", None)

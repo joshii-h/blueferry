@@ -358,10 +358,10 @@ class BridgeController(QObject):
         """Skip the automatic backoff and page the iPhone once now."""
         def completed(value: object) -> None:
             result = str(value)
-            if result == "unreachable":
+            if result in ("unreachable", "bluez-kernel", "bluez-unresponsive"):
                 self._reconnect_pending = False
                 self._reconnect_notice = ""
-                self._set_error(UNREACHABLE_TEXT)
+                self._set_error(result_text(result))
             else:
                 self._reconnect_pending = result == "started"
                 self._reconnect_notice = result_text(result)

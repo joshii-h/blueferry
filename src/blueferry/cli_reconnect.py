@@ -44,8 +44,8 @@ def reconnect(
     if result in ("connected", "in-progress") or not wait:
         typer.echo(result_text(result))
         return
-    if result == "unreachable":
-        typer.echo(UNREACHABLE_TEXT, err=True)
+    if result in ("unreachable", "bluez-kernel", "bluez-unresponsive"):
+        typer.echo(result_text(result), err=True)
         raise typer.Exit(code=1)
     typer.echo(result_text(result))
     for _attempt in range(WAIT_SECONDS):

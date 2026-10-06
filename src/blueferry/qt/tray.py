@@ -448,7 +448,7 @@ class TrayController(QObject):
                 self.tray.showMessage(
                     "BlueFerry", result_text(result),
                     QSystemTrayIcon.MessageIcon.Warning
-                    if result == "unreachable"
+                    if result in ("unreachable", "bluez-kernel", "bluez-unresponsive")
                     else QSystemTrayIcon.MessageIcon.Information,
                     8000,
                 )
