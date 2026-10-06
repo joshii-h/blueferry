@@ -112,6 +112,20 @@ QtObject {
     property var callHistory: []
     property string callHistoryError: ""
     property int avatarRevision: 0
+    property var companionTools: ({probed: true, busy: "", needsPairing: true, messageOk: false,
+        message: "This computer is not trusted by the iPhone yet. Unlock the iPhone and confirm \u201cTrust This Computer\u201d, then try again.",
+        tools: [
+        {key: "mirror", installed: true, enabled: true, active: false, title: "Mirror iPhone screen",
+         subtitle: "On the iPhone, open Control Center, tap Screen Mirroring and choose this computer."},
+        {key: "send", installed: false, enabled: false, active: false, title: "Send a file (LocalSend)",
+         subtitle: "Install LocalSend (Flathub) to exchange files over Wi-Fi."},
+        {key: "photos", installed: true, enabled: true, active: true, title: "iPhone photos (USB)",
+         subtitle: "The camera roll is open. Eject it before unplugging."},
+        {key: "eject", installed: true, enabled: true, active: false, title: "Eject iPhone photos",
+         subtitle: "Unmount the camera roll."}]})
+    function refreshCompanionTools() {}
+    function runCompanionTool(action) {}
+    function clearCompanionMessage() {}
     signal pairingConfirmationRequested(string passkey)
     signal messageOpenRequested(string handle)
     signal messageSendSucceeded(string recipient, string body)

@@ -191,7 +191,7 @@ def test_terminal_signals_quit_qt_and_restore_previous_handlers(monkeypatch):
     assert installed == previous
 
 
-def test_main_window_loads_the_phone_overview_offscreen(monkeypatch):
+def test_main_window_loads_the_phone_overview_offscreen(monkeypatch, tmp_path):
     """Smoke test: the real controller drives the card-and-tabs main window."""
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from pathlib import Path
@@ -206,7 +206,18 @@ def test_main_window_loads_the_phone_overview_offscreen(monkeypatch):
     engine = QQmlEngine()
     warnings: list[str] = []
     engine.warnings.connect(lambda errors: warnings.extend(e.toString() for e in errors))
-    bridge = BridgeController(backend=object(), setup=object(), subscribe=False, autostart=False)
+    from blueferry.companion_tools import CommandResult, System
+    from blueferry.qt.companion import CompanionTools
+
+    # The card probes the companion tools; nothing real may run here.
+    fake_system = System(
+        which=lambda _name: None, desktop_app=lambda _id: None,
+        run=lambda _argv, _timeout: CommandResult(1), runtime_dir=lambda: tmp_path,
+    )
+    bridge = BridgeController(
+        backend=object(), setup=object(), subscribe=False, autostart=False,
+        companion=CompanionTools(fake_system),
+    )
     main = Path(app_module.__file__).with_name("qml") / "Main.qml"
     component = QQmlComponent(engine, QUrl.fromLocalFile(str(main)))
     window = component.createWithInitialProperties({"bridge": bridge})

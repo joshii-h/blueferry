@@ -33,6 +33,7 @@ from blueferry.onboarding import OnboardingState, effective_compatibility
 from blueferry.protocol import BUS_NAME, EVENTS_IFACE, OBJECT_PATH, TETHER_IFACE
 from blueferry.qt import phone_link
 from blueferry.qt.avatars import avatar_url
+from blueferry.qt.companion import CompanionTools
 from blueferry.qt.tasks import Task
 from blueferry.quirks_report import issue_report, issue_url
 from blueferry.service_manager import bluetooth_restart_command
@@ -78,6 +79,7 @@ class BridgeController(QObject):
     tetherChanged = Signal()
     notificationsChanged = Signal()
     phoneIdentityChanged = Signal()
+    companionToolsChanged = Signal()
 
     def __init__(
         self,
@@ -87,6 +89,7 @@ class BridgeController(QObject):
         subscribe: bool = True,
         autostart: bool = True,
         parent: QObject | None = None,
+        companion: CompanionTools | None = None,
     ) -> None:
         super().__init__(parent)
         self._backend = backend or BackendClient()
@@ -170,6 +173,9 @@ class BridgeController(QObject):
         self._notifications_timer.setSingleShot(True)
         self._notifications_timer.setInterval(150)
         self._notifications_timer.timeout.connect(self.refreshNotifications)
+        # UxPlay, LocalSend and iPhone photos: client-side, no daemon involved.
+        self._companion = companion or CompanionTools(parent=self)
+        self._companion.changed.connect(self.companionToolsChanged)
         self.devicesChanged.connect(self.phoneIdentityChanged)
         self.configuredChanged.connect(self.phoneIdentityChanged)
         self._bus = QDBusConnection.sessionBus() if subscribe else None
@@ -340,6 +346,22 @@ class BridgeController(QObject):
             if mac and device.get("mac") == mac and device.get("name"):
                 return str(device["name"])
         return "iPhone"
+
+    @Property("QVariantMap", notify=companionToolsChanged)
+    def companionTools(self):
+        return self._companion.state()
+
+    @Slot()
+    def refreshCompanionTools(self) -> None:
+        self._companion.refresh()
+
+    @Slot(str)
+    def runCompanionTool(self, action: str) -> None:
+        self._companion.run(action)
+
+    @Slot()
+    def clearCompanionMessage(self) -> None:
+        self._companion.clear_message()
 
     @Property("QVariantList", notify=notificationsChanged)
     def notifications(self):

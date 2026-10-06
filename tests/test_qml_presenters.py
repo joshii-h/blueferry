@@ -711,6 +711,8 @@ def settings_window(qml_engine):
             property bool callHistoryEnabled: false
             property var callHistory: []
             property string callHistoryError: ""
+            property var companionTools: ({})
+            property int companionRefreshes: 0
             signal pairingConfirmationRequested(string passkey)
             signal messageOpenRequested(string handle)
             signal messageSendSucceeded(string recipient, string body)
@@ -745,6 +747,9 @@ def settings_window(qml_engine):
             function watchNotifications(watched) { record("watchNotifications", [watched]); }
             function setThreadStarred(key, starred) { record("setThreadStarred", [key, starred]); }
             function markThreadRead(key) { record("markThreadRead", [key]); }
+            function refreshCompanionTools() { companionRefreshes += 1; }
+            function runCompanionTool(action) { record("runCompanionTool", [action]); }
+            function clearCompanionMessage() { companionTools = Object.assign({}, companionTools, {message: ""}); }
         }
     ''', QUrl())
     assert not component.isError(), [error.toString() for error in component.errors()]
@@ -2782,3 +2787,55 @@ def test_quickshell_phone_controls_render_overview_and_send_actions(qml_engine) 
     finally:
         controls.deleteLater()
         QGuiApplication.processEvents()
+
+
+_COMPANION_TOOLS = {
+    "probed": True, "busy": "", "message": "", "messageOk": True, "needsPairing": False,
+    "tools": [
+        {"key": "mirror", "installed": True, "enabled": True, "active": False,
+         "title": "Mirror iPhone screen", "subtitle": "Open Control Center"},
+        {"key": "send", "installed": False, "enabled": False, "active": False,
+         "title": "Send a file (LocalSend)", "subtitle": "Install LocalSend"},
+        {"key": "photos", "installed": True, "enabled": True, "active": True,
+         "title": "iPhone photos (USB)", "subtitle": "The camera roll is open."},
+        {"key": "eject", "installed": True, "enabled": True, "active": False,
+         "title": "Eject iPhone photos", "subtitle": "Unmount the camera roll."},
+    ],
+}
+
+
+def test_phone_card_tools_grey_out_missing_tools_and_run_actions(qml_engine, settings_window):
+    window, bridge = settings_window
+    assert bridge.property("companionRefreshes") >= 1  # probed when the card appears
+    bridge.setProperty("companionTools", _COMPANION_TOOLS)
+    QGuiApplication.processEvents()
+    # Repeater rows are looked up in QML: walking them from Python wraps
+    # Kirigami's Icon items in foreign wrappers that crash at teardown.
+    qml_engine.globalObject().setProperty("toolsSection", qml_engine.newQObject(
+        _settings_object(window, "companionTools")))
+    assert _evaluate(qml_engine, "toolsSection.rowFor('mirror').enabled") is True
+    assert _evaluate(qml_engine, "toolsSection.rowFor('send').enabled") is False
+    assert _evaluate(qml_engine, "toolsSection.rowFor('eject')") is None  # folded into photos
+    assert _evaluate(qml_engine, "toolsSection.rowFor('photos').ejectButton.visible") is True
+
+    _evaluate(qml_engine, "toolsSection.rowFor('mirror').clicked()")
+    _evaluate(qml_engine, "toolsSection.rowFor('photos').ejectButton.clicked()")
+    calls = [call for call in _evaluate(qml_engine, "testBridge.calls")
+             if call["method"] == "runCompanionTool"]
+    assert [call["args"] for call in calls] == [["mirror"], ["eject"]]
+
+    message = _settings_object(window, "companionMessage")
+    assert message.property("visible") is False
+    bridge.setProperty("companionTools", dict(
+        _COMPANION_TOOLS, busy="photos", message="Confirm Trust This Computer.",
+        messageOk=False, needsPairing=True,
+    ))
+    QGuiApplication.processEvents()
+    assert message.property("visible") is True
+    assert _evaluate(qml_engine, "toolsSection.rowFor('mirror').enabled") is False  # one at a time
+    message.setProperty("visible", False)  # what the close button does
+    QGuiApplication.processEvents()
+    assert _evaluate(qml_engine, "testBridge.companionTools.message") == ""
+    bridge.setProperty("companionTools", dict(_COMPANION_TOOLS, message="Ejected."))
+    QGuiApplication.processEvents()
+    assert message.property("visible") is True
