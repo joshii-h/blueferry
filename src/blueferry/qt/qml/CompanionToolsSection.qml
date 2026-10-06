@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls as Controls
+import QtQuick.Dialogs as Dialogs
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import "ui"
@@ -18,6 +19,15 @@ ColumnLayout {
     readonly property var tools: section.bridge.companionTools || ({})
     readonly property var rows: (section.tools.tools || []).filter(tool => tool.key !== "eject")
     readonly property bool busy: (section.tools.busy || "") !== ""
+    // "Send to…" targets from plugins with the share capability.
+    readonly property var surfaces: section.bridge.pluginSurfaces || ({})
+    readonly property var shareTargets: section.surfaces.targets || []
+    property string sendKey: ""
+
+    function loadTargets() {
+        if (typeof section.bridge.loadShareTargets === "function")
+            section.bridge.loadShareTargets()
+    }
 
     function tool(key) {
         return (section.tools.tools || []).find(entry => entry.key === key) || ({})
@@ -100,6 +110,46 @@ ColumnLayout {
         }
     }
 
+    ListRow {
+        id: sendRow
+        objectName: "sendToRow"
+        Layout.fillWidth: true
+        visible: section.shareTargets.length > 0
+        density: "compact"
+        wrapSubtitle: true
+        avatarSize: Kirigami.Units.iconSizes.smallMedium
+        iconName: "document-send"
+        title: qsTr("Send to…")
+        subtitle: section.shareTargets.map(target => target.label).join(", ")
+        enabled: (section.surfaces.busy || "") === ""
+        onClicked: sendMenu.popup(sendRow, 0, sendRow.height)
+
+        Controls.Menu {
+            id: sendMenu
+            objectName: "sendToMenu"
+            onAboutToShow: section.loadTargets()
+            Repeater {
+                model: section.shareTargets
+                delegate: Controls.MenuItem {
+                    required property var modelData
+                    text: modelData.label
+                    icon.name: modelData.icon
+                    onTriggered: {
+                        section.sendKey = modelData.key
+                        sendDialog.open()
+                    }
+                }
+            }
+        }
+    }
+
+    Dialogs.FileDialog {
+        id: sendDialog
+        title: qsTr("Choose Files to Send")
+        fileMode: Dialogs.FileDialog.OpenFiles
+        onAccepted: section.bridge.sendToTarget(section.sendKey, selectedFiles)
+    }
+
     Kirigami.InlineMessage {
         objectName: "companionMessage"
         Layout.fillWidth: true
@@ -139,5 +189,8 @@ ColumnLayout {
         running: section.visible && !section.busy
         onTriggered: section.refresh()
     }
-    Component.onCompleted: section.refresh()
+    Component.onCompleted: {
+        section.refresh()
+        section.loadTargets()
+    }
 }
