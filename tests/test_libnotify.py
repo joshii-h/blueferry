@@ -777,8 +777,8 @@ def test_empty_mapping_matches_the_previous_popup_exactly(monkeypatch) -> None:
     # The exact Notify() arguments this popup had before click rules existed.
     [(app, replaces, icon, title, body, actions, hints, timeout)] = sink._notif.calls
     assert (app, int(replaces), icon) == ("BlueFerry", 0, "phone-symbolic")
-    assert title == "\U0001f4f1 App"
-    assert body == "Inbox \u2014 New mail"
+    assert title == "\U0001f4f1 App \u00b7 Inbox"
+    assert body == "New mail"
     assert list(actions) == []
     assert actions.signature == "s"
     assert dict(hints) == {"urgency": 1, "transient": True}
@@ -916,3 +916,13 @@ def test_mirrored_removal_closes_any_ancs_popup_of_the_session(monkeypatch) -> N
     server.calls.clear()
     sink.close_removed_ancs_popup(42)
     assert server.calls == []
+
+
+def test_ancs_popup_mirrors_the_iphone_title_subtitle_and_message(monkeypatch) -> None:
+    sink = _clickable_sink({}, [], monkeypatch)
+    event = _ancs("com.github.stormbreaker.prod", title="Run succeeded", body="CI - v0.1.0 (bd753fb)")
+    event.subtitle = "joshii-h/blueferry-plugin-shortcuts"
+    sink.handle_ancs(event)
+    [(_app, _replaces, _icon, title, body, *_rest)] = sink._notif.calls
+    assert title.endswith("· Run succeeded")
+    assert body == "joshii-h/blueferry-plugin-shortcuts\nCI - v0.1.0 (bd753fb)"

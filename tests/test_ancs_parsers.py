@@ -125,7 +125,7 @@ def test_label_request_appends_ids_without_max_length() -> None:
         0x01020304, action_label_ids=(6, 7)
     )
 
-    assert plain == bytes.fromhex("00" "04030201" "00" "014000" "024000" "030001")
+    assert plain == bytes.fromhex("00" "04030201" "00" "018000" "028000" "030004")
     assert with_labels == plain + bytes([6, 7])
 
 

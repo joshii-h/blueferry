@@ -278,9 +278,9 @@ class DataSourceAssembler:
 def build_get_notification_attributes(
     notification_id: int,
     *,
-    title_max: int = 64,
-    subtitle_max: int = 64,
-    message_max: int = 256,
+    title_max: int = 128,
+    subtitle_max: int = 128,
+    message_max: int = 1024,
     action_label_ids: tuple[int, ...] = (),
 ) -> bytes:
     """Construct a Control Point write asking for an incoming notification's
