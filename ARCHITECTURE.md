@@ -178,6 +178,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `cli_media.py` | `blueferry media` now-playing status and commands. |
 | `cli_audio.py` | `blueferry audio [status\|pc\|phone]`. |
 | `cli_tether.py` | `blueferry tether [status\|on\|off]`. |
+| `companion_tools.py`, `cli_tools.py`, `qt/companion.py` | Client-only launchers for UxPlay screen mirroring, LocalSend and the iPhone camera roll over USB (ifuse); `blueferry tools`, the Qt card's Tools section and the tray menu. Not part of the daemon or its D-Bus API; which/Gio/subprocess are injectable. |
 | `cli_proximity.py` | `proximity-lock` status, dry run, enable, and disable. |
 | `tui.py` | Textual terminal client. |
 | `tui_launcher.py` | Launches the TUI with the package-private Textual bundle when present. |

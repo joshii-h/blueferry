@@ -867,6 +867,40 @@ background:
 - Turning a tether off in the network applet counts as a deliberate stop:
   automatic tethering does not bring it back until you turn it on again.
 
+## Companion tools (optional)
+
+The Qt phone card (section **Tools**), the tray menu and `blueferry tools`
+can start three programs that BlueFerry does not ship. Each entry only
+works when its tool is installed; otherwise it stays greyed out with what
+to install. These are local client actions; the daemon is not involved.
+
+- **Mirror iPhone screen** starts [UxPlay](https://github.com/FDH2/UxPlay).
+  A `uxplay-battlestation.desktop` entry is used when present, otherwise
+  `uxplay -n <host name> -nh`. On the iPhone, open Control Center, tap
+  Screen Mirroring and choose this computer. The same entry stops the
+  UxPlay that BlueFerry started (tracked by a pid file in
+  `$XDG_RUNTIME_DIR/blueferry`, never by a process search).
+- **Send a file (LocalSend)** opens the Flathub app
+  `org.localsend.localsend_app`, or `localsend` from PATH.
+- **iPhone photos (USB)** needs `ifuse` and libimobiledevice
+  (`idevice_id`, `idevicepair`) and an iPhone on a USB cable. It mounts the
+  camera roll at `$XDG_RUNTIME_DIR/blueferry/iphone-photos` (mode 0700) and
+  opens `DCIM` in the file manager; **Eject** runs `fusermount3 -u`. If the
+  iPhone does not trust this computer yet, unlock it and confirm
+  "Trust This Computer"; "Ask the iPhone again" runs `idevicepair pair`.
+
+```sh
+blueferry tools            # which tools are ready
+blueferry tools mirror     # start or stop UxPlay
+blueferry tools send
+blueferry tools photos     # mount and open the camera roll
+blueferry tools eject
+blueferry tools pair       # ask the iPhone to trust this computer
+```
+
+Only verified with fakes so far; the launches and the USB mount are not
+tested against hardware.
+
 ## Lock when the iPhone goes away
 
 BlueFerry can lock your desktop session after the paired iPhone has been
