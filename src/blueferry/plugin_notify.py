@@ -1,11 +1,11 @@
 """Desktop popups requested by plugins (capability ``notify``, PLUGINS.md 1.2).
 
-A plugin emits ``Notify1.Notify(title, body, icon, action_label, action_id)``
-on the session bus. The daemon shows it through its own notification sink,
+A plugin emits ``Notify(title, body, icon, action_label, action_id)`` on its
+``Plugin1`` interface on the session bus. The daemon shows it through its own notification sink,
 so the user's policy applies (``none`` silences plugins too, and without
 ``BLUEFERRY_SHOW_NOTIFICATION_CONTENT`` only the plugin's name is shown).
 A click on the popup's button calls the plugin's
-``Notify1.InvokeAction("notify", action_id, "{}")``.
+``Plugin1.InvokeAction("notify", action_id, "{}")``.
 
 The daemon still never loads plugin code: it reads manifests (files only)
 to learn which bus names may ask for popups, checks that the signal's sender
@@ -22,7 +22,13 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from blueferry import __version__
-from blueferry.plugin_api import CAPABILITY_NOTIFY, NOTIFY_INTERFACE, OBJECT_PATH
+from blueferry.plugin_api import (
+    CAPABILITY_NOTIFY,
+    METHOD_INVOKE_ACTION,
+    OBJECT_PATH,
+    SIGNAL_NOTIFY,
+    SURFACES_INTERFACE,
+)
 from blueferry.plugin_api.client import default_cache_roots
 from blueferry.plugin_api.manifest import PluginManifest, discover
 from blueferry.plugin_api.surfaces import (
@@ -65,7 +71,7 @@ def gio_open_uri(uri: str) -> None:
 
 
 class PluginPopups:
-    """Watch Notify1.Notify and hand verified popups to ``show``."""
+    """Watch Plugin1.Notify and hand verified popups to ``show``."""
 
     def __init__(
         self,
@@ -91,7 +97,7 @@ class PluginPopups:
             return
         try:
             self._match = self._bus.add_signal_receiver(
-                self._on_notify, dbus_interface=NOTIFY_INTERFACE, signal_name="Notify",
+                self._on_notify, dbus_interface=SURFACES_INTERFACE, signal_name=SIGNAL_NOTIFY,
                 path=OBJECT_PATH, sender_keyword="sender",
             )
         except Exception:
@@ -195,7 +201,7 @@ class PluginPopups:
             log.info("plugin popup action failed: %s", name)
 
         self._bus.call_async(
-            popup.bus_name, OBJECT_PATH, NOTIFY_INTERFACE, "InvokeAction", "sss",
+            popup.bus_name, OBJECT_PATH, SURFACES_INTERFACE, METHOD_INVOKE_ACTION, "sss",
             (NOTIFY_ITEM_ID, popup.note.action_id, "{}"), replied, failed,
             timeout=ACTION_TIMEOUT_SEC,
         )

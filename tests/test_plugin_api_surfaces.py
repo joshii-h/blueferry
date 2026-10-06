@@ -122,10 +122,10 @@ def test_fake_host_round_trip_for_card_share_and_notify(cache, tmp_path) -> None
     assert len(host.notifications) == 1
     clicked = host.click(host.notifications[0])
     assert clicked.ok and service.clicked[-1] == ("notify", "open", {})
-    # The popup button goes through Notify1, the card through Card1.
-    interfaces = [call[0] for call in host.transport.calls if call[1] == "InvokeAction"]
-    assert interfaces[-1] == "io.weirdware.BlueFerry.Notify1"
-    assert interfaces[0] == "io.weirdware.BlueFerry.Card1"
+    # Everything is on Plugin1; the popup button passes item "notify".
+    invokes = [call for call in host.transport.calls if call[1] == "InvokeAction"]
+    assert {call[0] for call in invokes} == {"io.weirdware.BlueFerry.Plugin1"}
+    assert invokes[-1][2][:2] == ("notify", "open")
 
 
 def test_service_refuses_bad_ids_arguments_and_file_lists(cache) -> None:
@@ -230,7 +230,7 @@ def test_open_uri_allows_only_web_and_own_cache_files(cache, tmp_path) -> None:
 
 
 @pytest.mark.private_dbus
-def test_a_combined_service_answers_both_invoke_actions_on_the_private_bus(cache) -> None:
+def test_a_combined_service_answers_on_plugin1_on_the_private_bus(cache) -> None:
     import dbus
     import dbus.mainloop
     import dbus.service

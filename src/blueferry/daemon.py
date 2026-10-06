@@ -963,7 +963,7 @@ class Daemon:
         # _post_sessions_setup, so we don't duplicate it here.
 
     def _start_plugin_popups(self) -> None:
-        """Watch Notify1 popups from plugins (PLUGINS.md, capability notify)."""
+        """Watch Plugin1.Notify popups from plugins (PLUGINS.md, capability notify)."""
         if self.plugin_popups is not None:
             return
         try:

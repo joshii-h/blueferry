@@ -16,20 +16,15 @@ from pathlib import Path
 from typing import Any
 
 from . import (
-    CARD_INTERFACE,
-    NOTIFY_INTERFACE,
     PHOTOS_INTERFACE,
     PLUGIN_INTERFACE,
-    SHARE_INTERFACE,
     surfaces,
 )
 from .client import PluginClient, PluginError
 from .manifest import PluginManifest, parse_manifest
 from .service import PluginService
 
-_INTERFACES = frozenset({
-    PLUGIN_INTERFACE, PHOTOS_INTERFACE, CARD_INTERFACE, SHARE_INTERFACE, NOTIFY_INTERFACE,
-})
+_INTERFACES = frozenset({PLUGIN_INTERFACE, PHOTOS_INTERFACE})
 
 
 def manifest(
@@ -68,9 +63,8 @@ class ServiceTransport:
         self.calls.append((interface, method, tuple(args)))
         if interface not in _INTERFACES:
             raise PluginError("unknown interface")
-        # The same lookup dbus-python does for a call on the bus, so a
-        # member that exists on two interfaces (InvokeAction) dispatches
-        # by interface here too.
+        # The same lookup dbus-python does for a call on the bus: a member
+        # on another interface than the one called is not found.
         try:
             function, _parent = _method_lookup(self.service, method, interface)
         except (AttributeError, dbus.exceptions.DBusException):

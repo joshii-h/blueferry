@@ -64,7 +64,7 @@ def test_only_the_owner_of_an_enabled_notify_plugin_gets_a_popup() -> None:
                uids={":1.7": 1000, ":1.9": 1000})
     shown: list[PluginPopup] = []
     _popups(bus, shown)
-    assert bus.receivers[0][1]["dbus_interface"] == "io.weirdware.BlueFerry.Notify1"
+    assert bus.receivers[0][1]["dbus_interface"] == "io.weirdware.BlueFerry.Plugin1"
 
     _emit(bus, "Dentist", "10:00 \x1b[2J", "view-calendar", "Open", "open")
     _emit(bus, "Spoof", "from a stranger", "", "", "", sender=":1.9")
@@ -118,7 +118,7 @@ def test_a_click_invokes_the_plugin_and_opens_only_safe_uris(tmp_path, monkeypat
     popups.invoke(popup)
     assert opened == [ics.resolve().as_uri(), "https://example.org/e"]
     invoke = next(call for call in bus.calls if call[2] == "InvokeAction")
-    assert invoke == (CALENDAR.bus_name, "io.weirdware.BlueFerry.Notify1", "InvokeAction",
+    assert invoke == (CALENDAR.bus_name, "io.weirdware.BlueFerry.Plugin1", "InvokeAction",
                       ("notify", "open", "{}"))
     # A popup without a button never calls the plugin.
     count = len(bus.calls)

@@ -618,7 +618,7 @@ class LibnotifySink:
     # ---- plugin popups (capability notify) --------------------------------
 
     def handle_plugin_notification(self, popup) -> None:
-        """A verified Notify1 popup from a plugin, under the user's policy.
+        """A verified Plugin1.Notify popup from a plugin, under the user's policy.
 
         Like the battery warning it shows under ``messages`` and ``all``;
         ``none`` silences it. Without SHOW_NOTIFICATION_CONTENT only the
