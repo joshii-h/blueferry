@@ -160,8 +160,13 @@ Controls.ItemDelegate {
         RowLayout {
             id: actionRow
             spacing: 0
-            // Shown when pointed at, focused (keyboard) or pinned.
-            visible: row.revealed && children.length > 0
+            // Drawn when pointed at, focused (keyboard) or pinned; otherwise
+            // collapsed but still visible, so screen readers keep the buttons
+            // and the time stays at the right edge.
+            visible: children.length > 0
+            opacity: row.revealed ? 1 : 0
+            clip: true
+            Layout.preferredWidth: row.revealed ? implicitWidth : 0
         }
     }
 
