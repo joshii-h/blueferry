@@ -256,3 +256,54 @@ def test_in_progress_maps_to_not_ready_with_a_retry_hint() -> None:
     ops = BackendOperations(object(), BackendDependencies(phone_audio=Audio()))  # type: ignore[arg-type]
     ops.set_phone_audio_route("pc", pytest.fail, seen.append)
     assert isinstance(seen[0], NotReadyError)
+
+
+def _resuming_route(bus, *, playing: bool):
+    timers = Timers()
+    resumed: list[int] = []
+    subject = PhoneAudioRoute(
+        lambda: bus, DEV, allowed=True, on_changed=lambda: None,
+        schedule=timers.schedule, cancel=timers.cancel,
+        was_playing=lambda: playing, resume_playback=lambda: resumed.append(1),
+    )
+    return subject, timers, resumed
+
+
+def test_handback_to_phone_resumes_playback_that_ios_paused() -> None:
+    bus = Bus(tree(transport=True))
+    subject, timers, resumed = _resuming_route(bus, playing=True)
+    subject.start()
+    subject.set_route("phone", lambda _route: None, pytest.fail)
+    bus.held.pop()[0]()
+    assert resumed == []
+    delays = sorted(seconds for seconds, _callback in timers.pending.values())
+    assert delays == [2, 2]  # settle re-probe and the resume
+    timers.fire()
+    assert resumed == [1]
+
+
+def test_handback_does_not_start_playback_that_was_paused() -> None:
+    bus = Bus(tree(transport=True))
+    subject, timers, resumed = _resuming_route(bus, playing=False)
+    subject.start()
+    subject.set_route("phone", lambda _route: None, pytest.fail)
+    bus.held.pop()[0]()
+    timers.fire()
+    assert resumed == []
+
+
+def test_switch_to_pc_never_resumes_and_stop_cancels_a_pending_resume() -> None:
+    bus = Bus(tree())
+    subject, timers, resumed = _resuming_route(bus, playing=True)
+    subject.start()
+    subject.set_route("pc", lambda _route: None, pytest.fail)
+    bus.held.pop()[0]()
+    timers.fire()
+    assert resumed == []
+    bus.tree = tree(transport=True)
+    subject.probe()
+    subject.set_route("phone", lambda _route: None, pytest.fail)
+    bus.held.pop()[0]()
+    subject.stop()
+    timers.fire()
+    assert resumed == []

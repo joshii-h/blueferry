@@ -260,6 +260,8 @@ class Daemon:
             on_changed=self._emit_status_soon,
             schedule=GLib.timeout_add_seconds,
             cancel=GLib.source_remove,
+            was_playing=self._iphone_playing,
+            resume_playback=self._resume_iphone_playback,
         )
         # Opt-in sub-feature of calls: one low-battery warning per cycle.
         self.low_battery = LowBatteryMonitor(config.PHONE_BATTERY_LOW_PERCENT)
@@ -1278,6 +1280,20 @@ class Daemon:
         self._target_config_check_id = None  # GLib removes it after False.
         main_loop.quit()
         return False
+
+    def _iphone_playing(self) -> bool:
+        media = self.media
+        return bool(media is not None and media.available and media.state.playing)
+
+    def _resume_iphone_playback(self) -> None:
+        media = self.media
+        if media is None or not media.available or media.state.playing:
+            return
+        media.send_command(
+            "play",
+            lambda *_: log.info("resumed iPhone playback after audio handback"),
+            lambda error: log.info("iPhone playback resume failed: %s", type(error).__name__),
+        )
 
     def stop(self) -> None:
         log.info("=== BlueFerry stopping ===")

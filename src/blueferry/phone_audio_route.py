@@ -52,6 +52,9 @@ PROFILE_CALL_TIMEOUT_SEC = 30.0
 # Re-read the object tree once after a change in case bluetoothd's signals
 # raced the reply.
 SETTLE_SEC = 2
+# iOS pauses playback when its A2DP output goes away, as it does when
+# headphones are unplugged. Resume once the phone has settled on its speaker.
+RESUME_AFTER_HANDBACK_SEC = 2
 
 _ALREADY = frozenset({
     "org.bluez.Error.AlreadyConnected",
@@ -74,6 +77,8 @@ class PhoneAudioRoute:
         on_changed: Callable[[], None],
         schedule: Schedule,
         cancel: Cancel,
+        was_playing: Callable[[], bool] | None = None,
+        resume_playback: Callable[[], None] | None = None,
     ) -> None:
         self._bus = bus
         self._device_path = device_path
@@ -89,6 +94,9 @@ class PhoneAudioRoute:
         self._pending: str | None = None
         self._generation = 0
         self._settle_id: int | None = None
+        self._resume_id: int | None = None
+        self._was_playing = was_playing
+        self._resume_playback = resume_playback
         self._stopped = False
 
     # ---- state ---------------------------------------------------------
@@ -243,6 +251,12 @@ class PhoneAudioRoute:
         if self._pending is not None:
             raise NotReadyError("an audio route change is already in progress")
         before = self.snapshot()
+        resume = (
+            route == ROUTE_PHONE
+            and self._was_playing is not None
+            and self._resume_playback is not None
+            and self._was_playing()
+        )
         self._pending = route
         self._changed(before)
         method = "ConnectProfile" if route == ROUTE_PC else "DisconnectProfile"
@@ -258,6 +272,8 @@ class PhoneAudioRoute:
 
         def reply(*_args) -> None:
             done()
+            if resume and not self._stopped:
+                self._schedule_resume()
             success(route)
 
         def failed(error: Exception) -> None:
@@ -282,6 +298,21 @@ class PhoneAudioRoute:
         except Exception as error:
             failed(error)
 
+    def _schedule_resume(self) -> None:
+        if self._resume_id is not None:
+            self._cancel(self._resume_id)
+
+        def fire() -> bool:
+            self._resume_id = None
+            if not self._stopped and self._resume_playback is not None:
+                try:
+                    self._resume_playback()
+                except Exception as error:  # media control may have gone away
+                    log.info("could not resume iPhone playback: %s", type(error).__name__)
+            return False
+
+        self._resume_id = self._schedule(RESUME_AFTER_HANDBACK_SEC, fire)
+
     def _settle(self) -> None:
         if self._settle_id is not None:
             self._cancel(self._settle_id)
@@ -296,6 +327,9 @@ class PhoneAudioRoute:
     def stop(self) -> None:
         self._stopped = True
         self._pending = None
+        if self._resume_id is not None:
+            self._cancel(self._resume_id)
+            self._resume_id = None
         self._generation += 1
         if self._settle_id is not None:
             self._cancel(self._settle_id)
