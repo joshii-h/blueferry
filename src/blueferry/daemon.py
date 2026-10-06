@@ -17,6 +17,7 @@ from gi.repository import GLib
 from blueferry import __version__, bluez_setup, config
 from blueferry.adapter_class_supervisor import AdapterClassSupervisor
 from blueferry.ams.client import AmsClient
+from blueferry.ams.constants import RemoteCommandID
 from blueferry.ancs.client import ACTION_DISCONNECTED, AncsClient
 from blueferry.backend_lifecycle import installed_release
 from blueferry.backend_operations import BackendDependencies
@@ -133,6 +134,11 @@ RESTART_AFTER_UPGRADE_EXIT = 75
 
 class PairingRequiredError(RuntimeError):
     """Saved configuration exists, but BlueZ has no corresponding bond."""
+
+
+# Waiting for iOS to report the handback pause before toggling play.
+_RESUME_RETRIES = 4
+_RESUME_RETRY_MS = 750
 
 
 class Daemon:
@@ -1437,15 +1443,34 @@ class Daemon:
         media = self.media
         return bool(media is not None and media.available and media.state.playing)
 
-    def _resume_iphone_playback(self) -> None:
+    def _resume_iphone_playback(self, attempt: int = 0) -> None:
+        """Resume after iOS paused on losing its A2DP output.
+
+        iOS reports the pause over AMS with a delay, so the cached state may
+        still say "playing" when this runs. An explicit Play is safe at any
+        time; only a toggle has to wait until the pause has been observed.
+        """
         media = self.media
-        if media is None or not media.available or media.state.playing:
+        if media is None or not media.available:
             return
-        media.send_command(
-            "play",
-            lambda *_: log.info("resumed iPhone playback after audio handback"),
-            lambda error: log.info("iPhone playback resume failed: %s", type(error).__name__),
-        )
+        supported = media.state.supported_commands
+        if RemoteCommandID.Play not in supported and media.state.playing:
+            if attempt < _RESUME_RETRIES:
+                def retry() -> bool:
+                    self._resume_iphone_playback(attempt + 1)
+                    return False
+
+                GLib.timeout_add(_RESUME_RETRY_MS, retry)
+            return
+        try:
+            media.send_command(
+                "play",
+                lambda *_: log.info("resumed iPhone playback after audio handback"),
+                lambda error: log.info(
+                    "iPhone playback resume failed: %s", type(error).__name__),
+            )
+        except Exception as error:  # media control may have gone away
+            log.info("iPhone playback resume failed: %s", type(error).__name__)
 
     def stop(self) -> None:
         log.info("=== BlueFerry stopping ===")
