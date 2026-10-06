@@ -19,6 +19,7 @@ from textual.widgets import Button, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 from blueferry import phone_overview
+from blueferry import tui_design as design
 from blueferry.client import BackendError
 from blueferry.models import CALLS_STATE_TEXT, CallInfo, CallsSnapshot
 from blueferry.text_safety import terminal_text
@@ -86,13 +87,13 @@ def recent_options(rows: list[dict]) -> list[Option]:
     for index, row in enumerate(rows):
         if row["day"] != day:
             day = row["day"]
-            options.append(Option(Text(terminal_text(day), style="bold #7dd3fc"),
+            options.append(Option(Text(terminal_text(day), style=f"bold {design.ACCENT}"),
                                   id=f"day:{index}", disabled=True))
         count = f" ({row['count']})" if row["count"] > 1 else ""
         direction = {"missed": "Missed", "outgoing": "Outgoing"}.get(row["direction"], "Incoming")
         line = Text(f"  {row['clock']:>8}  {direction:<9} ", style="dim")
         line.append(terminal_text(row["caller"]).replace("\n", " ") + count,
-                    style="bold #fda4af" if row["missed"] else "")
+                    style=f"bold {design.MISSED}" if row["missed"] else "")
         options.append(Option(line, id=f"call:{index}"))
     return options
 
@@ -102,6 +103,8 @@ class CallsScreen(ModalScreen[None]):
         Binding("escape", "close", "Close", show=False),
         Binding("b", "call_back", "Call back", show=False),
         Binding("h", "hold", "Hold/resume", show=False),
+        Binding("f", "filter", "All/Missed", show=False),
+        Binding("r", "reload", "Refresh", show=False),
     ]
 
     def __init__(self, client: CallsClient, *, poll_seconds: float = _POLL_SECONDS) -> None:
@@ -110,17 +113,23 @@ class CallsScreen(ModalScreen[None]):
         self._poll_seconds = poll_seconds
         self.snapshot = CallsSnapshot(state="unknown")
         self._recent: list[dict] = []
+        self._all_recent: list[dict] = []
+        self.filter = "all"
 
     def compose(self) -> ComposeResult:
         with Vertical(id="calls-dialog", classes="dialog"):
-            yield Static("Phone calls (experimental)", classes="dialog-title")
+            yield Static("Calls", classes="dialog-title")
             yield Static("Loading…", id="calls-state")
             yield Static("", id="calls-list", classes="dialog-copy")
             yield Static("Number", classes="field-label")
             yield Input(placeholder="+1 555 123 4567", id="calls-number", max_length=_MAX_NUMBER)
-            yield Static("Recent calls (Enter or b calls back · h hold/resume)",
-                         classes="field-label")
+            yield Static(design.section(design.RECENT_CALLS, design.CALL_FILTERS, "all"),
+                         id="calls-recent-title", classes="section-title")
             yield OptionList(id="calls-recent")
+            yield Static(design.key_hints(
+                ("Enter/b", "call back"), ("h", "hold/resume"), ("f", "All/Missed"),
+                ("r", "refresh"), ("Esc", "close"),
+            ), classes="key-hints")
             with Horizontal(classes="dialog-actions"):
                 yield Button("Close", id="calls-close")
                 yield Button("Hang up", variant="error", id="calls-hangup")
@@ -152,13 +161,30 @@ class CallsScreen(ModalScreen[None]):
         self.app.call_from_thread(self._show_recent, phone_overview.call_groups(entries))
 
     def _show_recent(self, rows: list[dict]) -> None:
+        self._all_recent = rows
+        self._render_recent()
+
+    def _render_recent(self) -> None:
+        rows = [row for row in self._all_recent if self.filter == "all" or row["missed"]]
         self._recent = rows
+        self.query_one("#calls-recent-title", Static).update(
+            design.section(design.RECENT_CALLS, design.CALL_FILTERS, self.filter))
         recent = self.query_one("#calls-recent", OptionList)
         recent.clear_options()
         if rows:
             recent.add_options(recent_options(rows))
+        elif self.filter == "missed" and self._all_recent:
+            recent.add_option(Option(design.empty("No missed calls"), disabled=True))
         else:
-            recent.add_option(Option("No recent calls (or recent calls are off)", disabled=True))
+            recent.add_option(Option(
+                design.empty("No recent calls (or recent calls are off)"), disabled=True))
+
+    def action_filter(self) -> None:
+        self.filter = design.next_filter(design.CALL_FILTERS, self.filter)
+        self._render_recent()
+
+    def action_reload(self) -> None:
+        self.load_recent()
 
     def _highlighted_address(self) -> str:
         recent = self.query_one("#calls-recent", OptionList)

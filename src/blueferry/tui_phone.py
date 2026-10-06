@@ -22,6 +22,7 @@ from textual.widgets import Button, Static
 
 from blueferry import companion_tools
 from blueferry import phone_overview as overview
+from blueferry import tui_design as design
 from blueferry.client import BackendError
 from blueferry.models import BackendStatus, CallHistoryEntry, phone_status_fields
 from blueferry.reconnect_view import reconnect_view, result_text
@@ -136,17 +137,17 @@ def calls_text(status: Mapping[str, Any], entries: list[CallHistoryEntry] | None
         return Text("Loading…", style="dim")
     rows = overview.call_groups(entries[:_MAX_ROWS])
     if not rows:
-        return Text("No recent calls", style="dim")
+        return design.empty("No recent calls")
     text = Text()
     day = None
     for row in rows:
         if row["day"] != day:
             day = row["day"]
-            text.append(f"{_plain(day)}\n", style="bold #7dd3fc")
+            text.append(f"{_plain(day)}\n", style=f"bold {design.ACCENT}")
         count = f" ({row['count']})" if row["count"] > 1 else ""
         text.append(
             f"  {row['clock']:>8}  {row['direction']:<9} {_plain(row['caller'])}{count}\n",
-            style="bold #fda4af" if row["missed"] else "",
+            style=f"bold {design.MISSED}" if row["missed"] else "",
         )
     text.append("Press c to call back from the list.", style="dim")
     return text
@@ -161,7 +162,7 @@ def notifications_text(status: Mapping[str, Any], snapshot: object) -> Text:
     records = snapshot.get("notifications") if isinstance(snapshot, Mapping) else None
     rows = overview.notification_rows(records)[:_MAX_ROWS]
     if not rows:
-        return Text("No notifications yet", style="dim")
+        return design.empty("No notifications yet")
     text = Text()
     for row in rows:
         text.append(f"{_plain(row['app'])}  {_plain(row['time'])}\n", style="bold")
@@ -204,16 +205,19 @@ class PhoneScreen(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="phone-dialog", classes="dialog"):
-            yield Static("iPhone", classes="dialog-title")
+            yield Static("Phone", classes="dialog-title")
             with VerticalScroll(id="phone-body"):
-                yield Static("Switches", classes="field-label")
+                yield Static(design.section(design.QUICK_SETTINGS), classes="section-title")
                 yield Static("", id="phone-switches", classes="dialog-copy")
-                yield Static("Tools", classes="field-label")
+                yield Static(design.section(design.TOOLS), classes="section-title")
                 yield Static("", id="phone-tools", classes="dialog-copy")
-                yield Static("Recent calls", classes="field-label")
+                yield Static(design.section(design.RECENT_CALLS), classes="section-title")
                 yield Static("", id="phone-calls", classes="dialog-copy")
-                yield Static("Notifications", classes="field-label")
+                yield Static(design.section(design.NOTIFICATIONS), classes="section-title")
                 yield Static("", id="phone-notifications", classes="dialog-copy")
+            yield Static(design.key_hints(
+                ("letters", "switch or start"), ("Esc", "close"),
+            ), classes="key-hints")
             with Horizontal(classes="dialog-actions"):
                 yield Button("Close", id="phone-close")
 

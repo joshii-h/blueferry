@@ -218,5 +218,12 @@ def test_calls_panel_groups_recent_calls_by_day_and_calls_back() -> None:
             await _until(pilot, lambda: ("dial", "+41790000002") in backend.requests)
             await pilot.press("h")
             await _until(pilot, lambda: ("swap",) in backend.requests)
+            # f cycles All | Missed like the Qt FilterBar.
+            await pilot.press("f")
+            await _until(pilot, lambda: recent.option_count == 2)
+            assert screen.filter == "missed"
+            assert "[b]Eve[/b] (2)" in str(recent.get_option_at_index(1).prompt)
+            await pilot.press("f")
+            await _until(pilot, lambda: recent.option_count == 4)
 
     _run(scenario())

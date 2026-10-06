@@ -19,6 +19,7 @@ from textual.widgets import Button, OptionList, Static
 from textual.widgets.option_list import Option
 
 from blueferry import companion_tools, photos_view
+from blueferry import tui_design as design
 from blueferry.plugin_api.client import Photo, PluginError
 from blueferry.plugin_api.manifest import PluginManifest
 from blueferry.text_safety import terminal_text
@@ -47,6 +48,7 @@ class PhotosScreen(ModalScreen[None]):
         Binding("escape,g", "close", "Close", show=False),
         Binding("c", "copy_path", "Copy path", show=False),
         Binding("r", "reload", "Refresh", show=False),
+        Binding("f", "filter", "All/Photos/Videos", show=False),
     ]
 
     def __init__(
@@ -64,15 +66,20 @@ class PhotosScreen(ModalScreen[None]):
         self._system = system or companion_tools.default_system()
         self._manifest: PluginManifest | None = None
         self._photos: list[Photo] = []
+        self._all_photos: list[Photo] = []
+        self.filter = "all"
 
     def compose(self) -> ComposeResult:
         with Vertical(id="photos-dialog", classes="dialog"):
             yield Static("Photos", classes="dialog-title")
+            yield Static(design.section(design.RECENT_PHOTOS, design.PHOTO_FILTERS, "all"),
+                         id="photos-title", classes="section-title")
             yield Static("Loading…", id="photos-hint", classes="dialog-copy")
             yield OptionList(id="photos-list")
-            yield Static(
-                "Enter open · c copy path · r refresh · Esc close", classes="dialog-copy",
-            )
+            yield Static(design.key_hints(
+                ("Enter", "open"), ("c", "copy path"), ("f", "All/Photos/Videos"),
+                ("r", "refresh"), ("Esc", "close"),
+            ), classes="key-hints")
             with Horizontal(classes="dialog-actions"):
                 yield Button("Close", id="photos-close")
 
@@ -86,8 +93,17 @@ class PhotosScreen(ModalScreen[None]):
 
     def _show(self, manifest: PluginManifest | None, snapshot: photos_view.PhotosSnapshot) -> None:
         self._manifest = manifest
-        self._photos = list(snapshot.photos)
+        self._all_photos = list(snapshot.photos)
         self.query_one("#photos-hint", Static).update(_plain(snapshot.hint))
+        self._render_photos()
+
+    def _render_photos(self) -> None:
+        self._photos = [
+            photo for photo in self._all_photos
+            if self.filter == "all" or (photo.type == "video") == (self.filter == "videos")
+        ]
+        self.query_one("#photos-title", Static).update(
+            design.section(design.RECENT_PHOTOS, design.PHOTO_FILTERS, self.filter))
         options = self.query_one("#photos-list", OptionList)
         options.clear_options()
         options.add_options([Option(photo_line(photo), id=photo.id) for photo in self._photos])
@@ -115,6 +131,10 @@ class PhotosScreen(ModalScreen[None]):
 
     def action_reload(self) -> None:
         self.reload()
+
+    def action_filter(self) -> None:
+        self.filter = design.next_filter(design.PHOTO_FILTERS, self.filter)
+        self._render_photos()
 
     @work(thread=True, group="photos-fetch", exit_on_error=False)
     def _download(self, photo: Photo, *, copy: bool) -> None:
