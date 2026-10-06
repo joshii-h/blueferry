@@ -11,6 +11,7 @@ pytest.importorskip("PySide6")
 from blueferry.client import BackendError, TetherUnsupportedError
 from blueferry.conversation_state import ConversationSnapshot
 from blueferry.models import BackendStatus, Thread
+from blueferry.qt import phone_link
 from blueferry.qt.controller import BridgeController
 from blueferry.setup_client import ConfigurationState
 from blueferry.tether_status import TetherStatus
@@ -1397,6 +1398,17 @@ def test_feature_hints_name_the_local_env_setting_for_each_opt_in():
         "proximity_lock": "idle",
     }
     assert controller.featureHints == {}
+
+
+@pytest.mark.parametrize(("calls_state", "expected"), [
+    ("connecting", "connecting to the iPhone"),
+    ("searching", "connecting to the iPhone"),
+    ("unavailable", "oFono is not running"),
+    ("ready", "Waiting for battery and signal"),
+])
+def test_phone_status_hint_names_the_hands_free_state(calls_state, expected):
+    hints = phone_link.feature_hints({"calls_enabled": True, "calls_state": calls_state})
+    assert expected in hints["phoneStatus"]
 
 
 def test_phone_name_comes_from_the_configured_device():

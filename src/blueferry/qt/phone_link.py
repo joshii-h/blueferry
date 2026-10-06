@@ -58,6 +58,15 @@ def phone_audio(status: Mapping[str, Any]) -> dict[str, object]:
     }
 
 
+def _phone_status_wait(calls_state: object) -> str:
+    """Why battery and signal are missing although calls are enabled."""
+    if calls_state in ("searching", "connecting"):
+        return _("Calls and battery: connecting to the iPhone…")
+    if calls_state == "unavailable":
+        return _("Calls and battery unavailable: oFono is not running or denies access.")
+    return _("Waiting for battery and signal from the iPhone.")
+
+
 def feature_hints(status: Mapping[str, Any]) -> dict[str, str]:
     """Why an opt-in feature is greyed out, keyed by feature; empty when usable."""
     hints: dict[str, str] = {}
@@ -72,7 +81,7 @@ def feature_hints(status: Mapping[str, Any]) -> dict[str, str]:
     elif not isinstance(status.get("phone_battery_level"), int | float) and not isinstance(
         status.get("phone_signal_strength"), int | float
     ):
-        hints["phoneStatus"] = _("Waiting for battery and signal from the iPhone.")
+        hints["phoneStatus"] = _phone_status_wait(status.get("calls_state"))
     if status.get("call_history_enabled") is not True:
         hints["callHistory"] = _opt_in("BLUEFERRY_CALL_HISTORY_ENABLED")
     if status.get("notification_history_enabled") is not True:
