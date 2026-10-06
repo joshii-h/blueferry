@@ -126,6 +126,22 @@
       <annotation name="io.weirdware.BlueFerry.Errors"
                   value="InvalidArgs,NotReady"/>
     </method>
+    <method name="GetFeatures">
+      <annotation name="org.freedesktop.DBus.Description"
+                  value="JSON object keyed by feature name (show_notification_content, ancs_actions, mark_read_on_dismiss, notification_history, otp_autocopy, calls_enabled, call_history_enabled, missed_call_notifications, keep_phone_audio_on_phone, phone_battery_notify, contact_photos, media_control_enabled, media_mpris_enabled, tether_autoconnect): {value, running, source (environment, settings, local.env or default), variable, restart_required}"/>
+      <arg name="features" type="s" direction="out"/>
+      <annotation name="io.weirdware.BlueFerry.Errors"
+                  value="NotReady"/>
+    </method>
+    <method name="SetFeature">
+      <annotation name="org.freedesktop.DBus.Description"
+                  value="Store one allowlisted boolean switch in settings.json, where it overrides local.env from the next daemon start; an explicit process environment still wins. Returns active, restart-required or environment"/>
+      <arg name="name" type="s" direction="in"/>
+      <arg name="enabled" type="b" direction="in"/>
+      <arg name="result" type="s" direction="out"/>
+      <annotation name="io.weirdware.BlueFerry.Errors"
+                  value="InvalidArgs,NotReady"/>
+    </method>
     <method name="ReconnectPhone">
       <annotation name="org.freedesktop.DBus.Description"
                   value="Clear the BR/EDR reconnect backoff and page the iPhone once now. Returns started, in-progress (no second attempt is started), connected or unreachable; GetStatus phone_reconnect_state/phone_reconnect_paused/phone_reconnect_next_in_sec report the outcome"/>

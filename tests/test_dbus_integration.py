@@ -938,3 +938,38 @@ def test_mirror_removals_setter_round_trips_and_reports_status(public_service) -
     assert outcome == {"off": False, "status": False, "on": True}
     assert policy.mirror_removals is True
     assert changes
+
+
+def test_feature_switches_round_trip(public_service, tmp_path, monkeypatch) -> None:
+    from blueferry.features import FEATURES, FeatureSettings
+
+    name, _pending, _policy, _changes, service = public_service
+    running = {feature.name: feature.default for feature in FEATURES}
+    monkeypatch.setattr(service.operations, "dependencies", BackendDependencies(
+        features=FeatureSettings(tmp_path / "s.json", running=lambda: running,
+                                 explicit=frozenset(), local_env=dict),
+    ))
+    outcome = {}
+
+    def change() -> None:
+        connection, interface = _client(name)
+        try:
+            client = BackendClient(
+                interface_factory=lambda iface: dbus.Interface(interface.proxy_object, iface)
+            )
+            outcome["set"] = client.set_feature("calls_enabled", True)
+            outcome["features"] = client.features()["calls_enabled"]
+            try:
+                client.set_feature("mac", True)
+            except Exception as error:  # BackendError
+                outcome["bad"] = str(error)
+        finally:
+            connection.close()
+
+    thread = threading.Thread(target=change)
+    thread.start()
+    _dispatch_until(lambda: not thread.is_alive())
+    thread.join(timeout=1)
+    assert outcome["set"] == "restart-required"
+    assert outcome["features"]["value"] is True and outcome["features"]["source"] == "settings"
+    assert "unknown feature" in outcome["bad"]

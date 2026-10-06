@@ -25,7 +25,7 @@ import os
 import re
 import shlex
 import shutil
-import subprocess  # nosec B404 - fixed argv lists, no shell
+import subprocess  # nosec B404
 import sys
 import tempfile
 import time
@@ -66,7 +66,7 @@ class SubprocessRunner:
         env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="/bin/false",
                    PIP_DISABLE_PIP_VERSION_CHECK="1")
         try:
-            completed = subprocess.run(  # nosec B603 - argv list built here, no shell
+            completed = subprocess.run(  # nosec B603
                 list(argv), cwd=cwd, env=env, capture_output=True, text=True,
                 timeout=timeout, check=False, stdin=subprocess.DEVNULL,
             )

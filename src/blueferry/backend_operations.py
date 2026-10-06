@@ -28,6 +28,7 @@ from blueferry.errors import (
     SendOutcomeUnknownError,
 )
 from blueferry.events import canonical_address
+from blueferry.features import FeatureSettings
 from blueferry.grouping import (
     CORRELATED_ANCS_ROW_IDS_FIELD,
     HISTORY_ROW_ID_FIELD,
@@ -279,6 +280,7 @@ class BackendDependencies:
     notification_content: bool = False
     set_proximity_lock: Callable[[bool, int], dict[str, Any]] | None = None
     reconnect_phone: Callable[[], str] | None = None
+    features: FeatureSettings | None = None
 
 
 class BackendOperations:
@@ -1187,6 +1189,25 @@ class BackendOperations:
         if removed and self.dependencies.on_notification_policy_changed is not None:
             self.dependencies.on_notification_policy_changed()
         return removed
+    def get_features(self) -> dict[str, dict[str, Any]]:
+        """The allowlisted local.env switches and where each value comes from."""
+        features = self.dependencies.features
+        if features is None:
+            raise NotReadyError("feature settings are unavailable in this backend")
+        return features.snapshot()
+
+    def set_feature(self, name: str, enabled: bool) -> str:
+        """Store one switch in settings.json; it applies after a restart."""
+        features = self.dependencies.features
+        if features is None:
+            raise NotReadyError("feature settings are unavailable in this backend")
+        try:
+            return features.set(str(name), bool(enabled))
+        except KeyError:
+            raise InvalidArgumentsError("unknown feature") from None
+        except (OSError, ValueError) as error:
+            raise NotReadyError(f"could not store the setting: {type(error).__name__}") from None
+
     def reconnect_phone(self) -> str:
         """Clear the Classic backoff and page the iPhone once now."""
         reconnect = self.dependencies.reconnect_phone

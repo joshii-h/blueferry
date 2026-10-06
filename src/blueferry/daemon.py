@@ -58,6 +58,7 @@ from blueferry.dbus_call import call_async
 from blueferry.dbus_service import MessagesService, claim_bus_name
 from blueferry.errors import BlueFerryError, NotReadyError
 from blueferry.event_dispatcher import EventDispatcher
+from blueferry.features import FeatureSettings
 from blueferry.gio_dbus import GioDBus
 from blueferry.gio_dbus import system_bus as gio_system_bus
 from blueferry.group_routes import GroupRoutesStore
@@ -685,6 +686,7 @@ class Daemon:
                 notification_content=config.SHOW_NOTIFICATION_CONTENT,
                 set_proximity_lock=self._set_proximity_lock,
                 reconnect_phone=self._reconnect_phone,
+                features=FeatureSettings(),
             ),
         )
         self.events.set_dbus_service(self._dbus_service)

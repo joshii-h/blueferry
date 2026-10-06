@@ -176,7 +176,7 @@ def _https_fetch(url: str) -> bytes:
     check_index_url(url)
     request = urllib.request.Request(url, headers={"User-Agent": "BlueFerry plugin store"})
     try:
-        with urllib.request.urlopen(request, timeout=FETCH_TIMEOUT_SEC) as response:  # nosec B310 - https only
+        with urllib.request.urlopen(request, timeout=FETCH_TIMEOUT_SEC) as response:  # nosec B310
             if not response.geturl().startswith("https://"):
                 raise IndexFetchError("the index redirected away from https")
             data = response.read(MAX_INDEX_BYTES + 1)

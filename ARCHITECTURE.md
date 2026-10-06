@@ -523,6 +523,16 @@ A change to these rules has to be made in both places.
   (`connected`/`connecting`/`waiting`/`unreachable`), `phone_reconnect_paused`
   and `phone_reconnect_next_in_sec`; `reconnect_view.py` turns them into the
   same texts for every client.
+- **Feature switches:** `features.py` lists the boolean `local.env`
+  variables a settings UI may change (calls, call history, missed-call
+  popups, notification content and actions, notification history, OTP
+  auto-copy, contact photos, media/MPRIS, battery warning, keeping iPhone
+  audio on the phone, hotspot auto-connect). `Messages1.SetFeature(s,b)`
+  (own `feature` rate bucket, 20/min) stores one in settings.json
+  (`"features"`); `config._load_local_env` applies those before local.env at
+  the next start, an explicit process environment still wins.
+  `GetFeatures()` reports value, running value, source and whether a restart
+  is pending. Pairing target, adapter and ANCS itself stay local.env-only.
 - **BlueZ health:** `bluez_health` marks bluetoothd unresponsive after two
   unanswered asynchronous `Peer.Ping`s 15 s apart (pinged every 30 s; a
   NoReply from a bearer read only triggers an early ping). While unresponsive the bearer supervisor and the

@@ -15,6 +15,7 @@ from blueferry.cli_call_history import calls_history
 from blueferry.cli_calls import calls_app, phone_status
 from blueferry.cli_common import setup_logging as _setup_logging
 from blueferry.cli_contacts import contacts_photo
+from blueferry.cli_features import features_app
 from blueferry.cli_media import media
 from blueferry.cli_messages import sms_list, sms_send
 from blueferry.cli_notifications import notifications_app
@@ -593,6 +594,7 @@ app.command("audio")(audio)
 app.command("tether")(tether)
 app.add_typer(proximity_app, name="proximity-lock")
 app.command("reconnect")(reconnect)
+app.add_typer(features_app, name="features")
 app.command("plugins", context_settings=PLUGINS_CONTEXT)(plugins)
 app.add_typer(photos_app, name="photos")
 

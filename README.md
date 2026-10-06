@@ -436,6 +436,14 @@ physical iPhone.
 
 Restart the user service after editing `local.env` settings.
 
+Most on/off switches can also be changed without editing the file: in the Qt
+settings, the terminal client's settings screen, or with
+`blueferry features` (`blueferry features on calls_enabled`). They are
+stored in `~/.config/blueferry/settings.json`, override `local.env`, and
+apply after the service restarts; a variable set in the service's own
+environment still wins. `blueferry features` lists every switch with its
+source.
+
 ### Contact photos (optional)
 
 Contact photos are off by default. To show the iPhone's contact pictures as
