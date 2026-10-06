@@ -457,7 +457,7 @@ class TrayController(QObject):
 
     def check_share_available(self) -> None:
         def done(value: object) -> None:
-            self.share_action.setVisible(bool(value) or bool(self.share_targets))
+            self.share_action.setVisible(bool(value))
 
         self._plugin_work(self._share_available, done, lambda _message: None)
 
