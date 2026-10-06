@@ -981,6 +981,17 @@ def test_optional_phone_status_indicator_appears_only_with_known_values(
     assert label.property("contentWidth") <= cap
     assert label.property("lineCount") > 1
 
+    # The exact LE Battery Service level wins and drops the "about".
+    bridge.setProperty("status", {
+        "phone_battery_level": None,
+        "phone_battery_percent": 87,
+        "phone_battery_source": "ble",
+    })
+    QGuiApplication.processEvents()
+    assert _settings_object(window, "phoneBatteryLabel").property("text") == "87 %"
+    assert indicator.property("batteryIconName") == "battery-090"
+    assert indicator.property("summary") == "iPhone battery 87 %"
+
     # Signal only: the battery parts hide, the indicator stays.
     bridge.setProperty("status", {"calls_enabled": True, "phone_signal_strength": 20})
     QGuiApplication.processEvents()

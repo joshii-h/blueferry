@@ -145,18 +145,19 @@ def calls_hold_answer() -> None:
 def phone_status(
     as_json: bool = typer.Option(False, "--json", help="Print the raw status keys as JSON"),
 ) -> None:
-    """Show the iPhone's battery, signal, and network (needs calls enabled)."""
+    """Show the iPhone's battery, signal, and network."""
     status = _run(lambda: _client().status(), "Could not read status")
     if as_json:
         typer.echo(json.dumps({key: status.to_dict()[key] for key in PHONE_STATUS_KEYS}))
         return
-    if not status.calls_enabled:
+    fields = phone_status_fields(status)
+    if not status.calls_enabled and not fields:
         typer.echo(
-            "Phone status comes from the optional HFP calls integration; "
-            "set BLUEFERRY_CALLS_ENABLED=true."
+            "Phone status comes from the iPhone's LE link or the optional HFP "
+            "calls integration; set BLUEFERRY_CALLS_ENABLED=true for signal "
+            "and network."
         )
         return
-    fields = phone_status_fields(status)
     if not fields:
         typer.echo(
             f"Phone status unknown — calls: {status.calls_state} "
@@ -165,5 +166,6 @@ def phone_status(
         return
     for label, value in fields:
         typer.echo(f"{label + ':':<9}{terminal_text(value)}")
-    if status.phone_battery_level is not None:
+    percent, exact = status.battery
+    if percent is not None and not exact:
         typer.echo("(The iPhone reports its battery to hands-free devices in 20 % steps.)")

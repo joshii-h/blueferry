@@ -73,8 +73,19 @@ class BackendStatus:
     phone_signal_strength: int | None = None
     phone_network_name: str | None = None
     phone_network_status: str | None = None
+    # The most precise battery level: LE Battery Service ("ble", 1 % steps)
+    # or HFP ("hfp", 20 % steps). Older backends omit both.
+    phone_battery_percent: int | None = None
+    phone_battery_source: str | None = None
     otp_autocopy: bool = False
     extra: Mapping[str, Any] = field(default_factory=dict, repr=False)
+
+    @property
+    def battery(self) -> tuple[int | None, bool]:
+        """The best known battery level and whether it is exact (1 % steps)."""
+        if self.phone_battery_percent is not None:
+            return self.phone_battery_percent, self.phone_battery_source == "ble"
+        return self.phone_battery_level, False
 
     @property
     def map_connection_refused(self) -> bool:
@@ -117,6 +128,8 @@ class BackendStatus:
             "phone_signal_strength",
             "phone_network_name",
             "phone_network_status",
+            "phone_battery_percent",
+            "phone_battery_source",
             "otp_autocopy",
         }
         return cls(
@@ -155,6 +168,11 @@ class BackendStatus:
             phone_signal_strength=_percent(value.get("phone_signal_strength")),
             phone_network_name=_optional_str(value.get("phone_network_name")),
             phone_network_status=_optional_str(value.get("phone_network_status")),
+            phone_battery_percent=_percent(value.get("phone_battery_percent")),
+            phone_battery_source=(
+                source if (source := value.get("phone_battery_source")) in ("ble", "hfp")
+                else None
+            ),
             otp_autocopy=_bool(value.get("otp_autocopy")),
             extra={key: item for key, item in value.items() if key not in known},
         )
@@ -192,6 +210,8 @@ class BackendStatus:
             "phone_signal_strength": self.phone_signal_strength,
             "phone_network_name": self.phone_network_name,
             "phone_network_status": self.phone_network_status,
+            "phone_battery_percent": self.phone_battery_percent,
+            "phone_battery_source": self.phone_battery_source,
             "otp_autocopy": self.otp_autocopy,
         }
 
@@ -217,12 +237,11 @@ def phone_status_fields(
     e.g. for a compact header. Shared by the CLI and the TUI.
     """
     fields: list[tuple[str, str]] = []
-    if status.phone_battery_level is not None:
-        # HFP reports the battery in 20 % steps, hence "about".
-        fields.append((
-            _("Battery"),
-            _("about {percent} %").format(percent=status.phone_battery_level),
-        ))
+    percent, exact = status.battery
+    if percent is not None:
+        # The LE Battery Service is exact; HFP reports 20 % steps, hence "about".
+        text = _("{percent} %") if exact else _("about {percent} %")
+        fields.append((_("Battery"), text.format(percent=percent)))
     if status.phone_signal_strength is not None:
         fields.append((
             _("Signal"),

@@ -23,6 +23,8 @@ src/blueferry/qt/qml/TetherSection.qml
 src/blueferry/tether_status.py
 src/blueferry/qt/qml/ProximityLockSettings.qml
 src/blueferry/qt/phone_link.py
+src/blueferry/qt/tray.py
+src/blueferry/qt/tray_presenter.py
 src/blueferry/qt/qml/PhoneCard.qml
 src/blueferry/qt/qml/CallsTab.qml
 src/blueferry/qt/qml/NotificationsTab.qml

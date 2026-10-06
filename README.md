@@ -249,6 +249,21 @@ Press `?` for the keyboard map or `Ctrl+P` for the command palette. The TUI has
 conversation search, a multiline composer, mouse support, themes, and a layout
 that adapts to narrow terminals.
 
+## System tray item
+
+`blueferry-tray` is a small separate process for the system tray (a
+StatusNotifierItem under KDE Plasma). Its phone icon carries the number of
+unread messages; the tooltip shows the connection, battery, signal and
+network. Left-click opens the Qt client (or raises it), and the menu switches
+the iPhone's sound between this computer and the iPhone, turns the Personal
+Hotspot on or off, and quits the tray. The tray only talks to a running
+backend: it never starts or restarts the daemon. While it runs, `blueferry-qt`
+leaves out its own tray icon.
+
+The Qt packages install an autostart entry
+(`/etc/xdg/autostart/blueferry-tray.desktop`); disable it in the desktop's
+autostart settings if you do not want the tray.
+
 ## Omarchy Quattro
 
 The native bar panel lives in
@@ -649,6 +664,15 @@ signal likewise moves in 20 % steps. iOS also sends a finer 0-9 battery level
 through Apple's `AT+IPHONEACCEV` extension, but stock oFono does not decode
 it and BlueFerry does not patch oFono. There is no charging indicator.
 
+Exact battery (1 % steps): the iPhone also exports the standard Bluetooth LE
+Battery Service (GATT `0x180F`). Whenever the LE link that carries
+notifications is up (it is not in compatibility mode), BlueFerry reads its
+Battery Level once and then subscribes to changes. This needs no oFono and no
+`BLUEFERRY_CALLS_ENABLED`. Clients show this exact value ("87 %") and fall
+back to the HFP value ("about 80 %") otherwise; the low-battery warning uses
+the exact value as well. Verified against mocks only; the iPhone's GATT
+database was inspected read-only.
+
 An optional desktop warning fires once when the battery reaches the
 threshold and again only after the phone has charged at least one step
 (20 %) above it. The daemon keeps no record of past warnings, so after a
@@ -661,7 +685,8 @@ BLUEFERRY_PHONE_BATTERY_LOW_PERCENT=20      # 0-80, default 20
 
 The values are part of the private `GetStatus` reply (keys
 `phone_battery_level`, `phone_signal_strength`, `phone_network_name`,
-`phone_network_status`; `null` when unknown). Changes are announced with the
+`phone_network_status`, plus `phone_battery_percent` with
+`phone_battery_source` = `"ble"` or `"hfp"`; `null` when unknown). Changes are announced with the
 existing argument-free `StatusChanged` signal, coalesced to at most one per
 main-loop iteration; no value is ever broadcast, and the logs never contain
 the levels or the operator name.

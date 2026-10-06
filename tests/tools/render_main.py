@@ -67,7 +67,8 @@ THREADS = [
 
 STATUS = {
     "daemon": True, "map": True, "calls_enabled": True, "calls_state": "ready",
-    "phone_battery_level": 80, "phone_signal_strength": 4,
+    "phone_battery_level": 80, "phone_battery_percent": 87,
+    "phone_battery_source": "ble", "phone_signal_strength": 4,
     "phone_network_name": "Sunrise", "proximity_lock": "idle",
     "proximity_lock_enabled": False, "media_control_enabled": True,
 }
@@ -158,7 +159,8 @@ def _render(scheme: str, out_dir: Path) -> None:
     # Narrow window with the folded card open while the hands-free modem
     # is still connecting: no battery or signal yet.
     status = dict(STATUS, calls_state="connecting")
-    del status["phone_battery_level"], status["phone_signal_strength"]
+    for key in ("phone_battery_level", "phone_battery_percent", "phone_signal_strength"):
+        del status[key]
     bridge.setProperty("status", status)
     bridge.setProperty("featureHints", {"phoneStatus": "Calls and battery: connecting to the iPhone…"})
     window.resize(*SIZES[-1])

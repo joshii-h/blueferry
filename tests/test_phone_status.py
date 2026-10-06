@@ -459,7 +459,33 @@ def test_cli_phone_status_json_has_exactly_the_phone_keys(monkeypatch) -> None:
     assert json.loads(result.output) == {
         "phone_battery_level": 100, "phone_signal_strength": None,
         "phone_network_name": None, "phone_network_status": None,
+        "phone_battery_percent": None, "phone_battery_source": None,
     }
+
+
+def test_status_model_prefers_the_exact_ble_battery() -> None:
+    ble = BackendStatus.from_dict({
+        "phone_battery_level": 80, "phone_battery_percent": 87,
+        "phone_battery_source": "ble",
+    })
+    assert ble.battery == (87, True)
+    assert phone_status_fields(ble) == [("Battery", "87 %")]
+    hfp = BackendStatus.from_dict({
+        "phone_battery_level": 80, "phone_battery_percent": 80,
+        "phone_battery_source": "hfp",
+    })
+    assert phone_status_fields(hfp) == [("Battery", "about 80 %")]
+    bogus = BackendStatus.from_dict({"phone_battery_percent": 101, "phone_battery_source": "x"})
+    assert (bogus.phone_battery_percent, bogus.phone_battery_source) == (None, None)
+
+
+def test_cli_phone_status_shows_the_ble_battery_without_calls(monkeypatch) -> None:
+    result = _invoke(monkeypatch, _StatusClient(
+        phone_battery_percent=87, phone_battery_source="ble",
+    ))
+    assert result.exit_code == 0, result.output
+    assert "Battery: 87 %" in result.output
+    assert "20 % steps" not in result.output
 
 
 def test_cli_phone_status_reports_backend_errors(monkeypatch) -> None:
@@ -472,3 +498,45 @@ def test_cli_phone_status_reports_backend_errors(monkeypatch) -> None:
     result = _invoke(monkeypatch, Failing())
     assert result.exit_code == 3
     assert "Could not read status" in result.output
+
+
+# ---- LE Battery Service ----------------------------------------------------------
+
+
+class _FakeBattery:
+    def __init__(self, level: int | None) -> None:
+        self.level = level
+
+
+def test_preferred_battery_takes_ble_over_hfp() -> None:
+    from blueferry.calls.phone_status import preferred_battery
+
+    assert preferred_battery(87, 80) == (87, "ble")
+    assert preferred_battery(None, 80) == (80, "hfp")
+    assert preferred_battery(0, None) == (0, "ble")
+    assert preferred_battery(None, None) == (None, None)
+
+
+def test_status_reports_the_precise_battery_without_calls(make_daemon) -> None:
+    instance = make_daemon()
+    assert instance._battery_status() == {
+        "phone_battery_percent": None, "phone_battery_source": None,
+    }
+    instance.battery = _FakeBattery(87)
+    assert instance._battery_status() == {
+        "phone_battery_percent": 87, "phone_battery_source": "ble",
+    }
+
+
+def test_low_battery_warning_prefers_the_ble_level(make_daemon, monkeypatch) -> None:
+    monkeypatch.setattr(config, "PHONE_BATTERY_NOTIFY", True)
+    instance, seen = _daemon_with_recorders(make_daemon)
+    battery = _FakeBattery(35)
+    instance.battery = battery
+    # HFP says 20 % (would warn), the precise level says 35 %: stay quiet.
+    instance._on_phone_status(PhoneStatus(battery_steps=1))
+    battery.level = 19
+    instance._on_battery_level(19)
+    battery.level = 18
+    instance._on_battery_level(18)
+    assert [item for item in seen if item != "status"] == [("low", 19)]

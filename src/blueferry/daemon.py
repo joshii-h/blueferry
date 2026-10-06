@@ -20,6 +20,7 @@ from blueferry.ams.client import AmsClient
 from blueferry.ancs.client import ACTION_DISCONNECTED, AncsClient
 from blueferry.backend_lifecycle import installed_release
 from blueferry.backend_operations import BackendDependencies
+from blueferry.battery_service import BatteryServiceClient
 from blueferry.bearer_supervisor import BearerSupervisor
 from blueferry.bluetooth_capabilities import ancs_limited_vendor, controller_hardware
 from blueferry.bluetooth_recovery import (
@@ -45,7 +46,7 @@ from blueferry.calls.missed import (
     call_number_identity,
 )
 from blueferry.calls.model import CallEvent
-from blueferry.calls.phone_status import LowBatteryMonitor, PhoneStatus
+from blueferry.calls.phone_status import LowBatteryMonitor, PhoneStatus, preferred_battery
 from blueferry.confirmed_groups import ConfirmedGroupsStore
 from blueferry.connectivity import Connectivity
 from blueferry.contact_photos import PhotoFiles
@@ -193,6 +194,9 @@ class Daemon:
             if config.MEDIA_CONTROL_ENABLED else None
         )
         self.ams: AmsClient | None = None
+        # The iPhone's 1 % Battery Level over the same LE link; exists only
+        # where LE is allowed (full delivery mode).
+        self.battery: BatteryServiceClient | None = None
         self.mpris: MprisPlayer | None = None
         self.adapter_class = AdapterClassSupervisor(config.ADAPTER)
         self.solicitation = SolicitationSupervisor(config.ADAPTER)
@@ -394,6 +398,8 @@ class Daemon:
             self.ancs.observe_bearer_state(False)
         if self.ams is not None:
             self.ams.observe_bearer_state(False)
+        if self.battery is not None:
+            self.battery.observe_bearer_state(False)
 
     def _resume_after_recovery(self) -> None:
         if not self._bluetooth_initialized:
@@ -495,12 +501,40 @@ class Daemon:
     def _on_phone_status(self, status: PhoneStatus) -> None:
         """The phone's battery/signal/operator changed: content-free signal."""
         self._emit_status_soon()
+        self._check_low_battery(status.battery_percent)
+
+    def _on_battery_level(self, _level: int | None) -> None:
+        """The LE Battery Level changed: content-free signal."""
+        self._emit_status_soon()
+        self._check_low_battery(self.calls.phone_status.battery_percent)
+
+    def _phone_battery(self, hfp: int | None) -> tuple[int | None, str | None]:
+        """The most precise battery level: LE Battery Service, else HFP."""
+        return preferred_battery(
+            self.battery.level if self.battery is not None else None, hfp,
+        )
+
+    def _check_low_battery(self, hfp: int | None) -> None:
         if not config.PHONE_BATTERY_NOTIFY:
             return
-        percent = status.battery_percent
+        percent, _source = self._phone_battery(hfp)
         if self.low_battery.observe(percent) and percent is not None:
             log.info("iPhone battery is low; showing a desktop warning")
             self.events.phone_battery_low(percent)
+
+    def _start_battery(self, device_path: str) -> None:
+        if self.battery is not None or not config.ANCS_ENABLED:
+            return
+        candidate = BatteryServiceClient(device_path, on_level=self._on_battery_level)
+        self.battery = candidate
+        try:
+            candidate.observe_bearer_state(self.bearers.le_state)
+            candidate.start()
+        except Exception:
+            # The precise battery is optional: never let it block messaging.
+            log.warning("iPhone battery level could not start", exc_info=True)
+            self.battery = None
+            candidate.stop()
 
     def _on_bearer_status(self) -> None:
         self.calls.poke()
@@ -532,6 +566,8 @@ class Daemon:
             self.ancs.observe_bearer_state(connected)
         if self.ams is not None:
             self.ams.observe_bearer_state(connected)
+        if self.battery is not None:
+            self.battery.observe_bearer_state(connected)
 
     def _on_ancs_status(self) -> None:
         # StartNotify is not the success boundary.  Keep solicitation on air
@@ -819,6 +855,7 @@ class Daemon:
         elif not config.ANCS_ENABLED:
             log.info("ANCS connection disabled by pairing compatibility policy")
         self._start_media(device_path)
+        self._start_battery(device_path)
         self._watch_sleep_resume()
 
         # Sinks don't need the OBEX sessions — set them up now so ANCS events
@@ -886,6 +923,8 @@ class Daemon:
             self.ancs.observe_bluez_owner(old_owner, new_owner)
         if self.ams is not None:
             self.ams.observe_bluez_owner(old_owner, new_owner)
+        if self.battery is not None:
+            self.battery.observe_bluez_owner(old_owner, new_owner)
         if (
             new_owner
             and not self.recovery.active
@@ -1192,11 +1231,16 @@ class Daemon:
             "media_control_enabled": self.media is not None,
             "media_control_available": bool(self.media and self.media.available),
             "media_mpris_enabled": self.mpris is not None,
+            **self._battery_status(),
             **self.phone_audio_route.snapshot(),
             "notification_history_enabled": self.notification_log is not None,
             **self._controller_identity(),
             **self.connectivity.snapshot(),
         }
+
+    def _battery_status(self) -> dict[str, object]:
+        percent, source = self._phone_battery(self.calls.phone_status.battery_percent)
+        return {"phone_battery_percent": percent, "phone_battery_source": source}
 
     def _contact_photo_status(self) -> dict[str, object]:
         if not config.CONTACT_PHOTOS:
@@ -1339,6 +1383,8 @@ class Daemon:
             self.ancs.stop()
         if self.ams is not None:
             self.ams.stop()
+        if self.battery is not None:
+            self.battery.stop()
         if self.mpris is not None:
             self.mpris.close()
             self.mpris = None

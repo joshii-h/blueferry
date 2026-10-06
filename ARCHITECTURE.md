@@ -91,6 +91,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `ancs/events.py` | `AncsEvent`, the normalized per-app notification. |
 | `ancs/sequencer.py` | Bounded, duplicate-aware backlog of serialized ANCS requests. |
 | `ams/client.py` | Opt-in Apple Media Service GATT client on the ANCS LE link; asynchronous, serialized, bounded. |
+| `battery_service.py` | Battery Service (0x180F) client on the ANCS LE link: reads Battery Level (0x2A19) once, then notifications; no `StopNotify`. |
 | `ams/parsers.py` | Pure AMS wire-format parsers and command/registration builders. |
 | `ams/state.py` | `NowPlaying` projection of Player, Queue, and Track attributes. |
 | `ams/constants.py` | AMS UUIDs, identifiers, and public command names. |
@@ -191,6 +192,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `ui/util.py` | Small UI helpers. |
 | `qt/app.py` | PySide6/Kirigami entry point. |
 | `qt/controller.py` | Asynchronous `BridgeController` exposed to QML. |
+| `qt/tray.py`, `qt/tray_presenter.py` | `blueferry-tray`: standalone StatusNotifierItem (unread badge, battery/signal tooltip, sound and hotspot toggles); asynchronous QtDBus calls with auto-start disabled; pure presenters. |
 | `qt/phone_link.py` | Pure presenters for the phone overview: audio switch state and opt-in hints naming the `local.env` setting. |
 | `qt/tasks.py` | Qt worker primitive. |
 | `qt/avatars.py` | Image provider that decodes opt-in contact photos with `QImageReader` after header and size checks. |
