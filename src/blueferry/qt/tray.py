@@ -58,7 +58,7 @@ from blueferry.protocol import (
 )
 from blueferry.qt import tray_presenter as presenter
 from blueferry.qt.companion import CompanionTools
-from blueferry.reconnect_view import UNREACHABLE_TEXT, result_text
+from blueferry.reconnect_view import reconnect_error_text, result_text
 from blueferry.tether_status import TetherStatus
 
 QT_CLIENT = next(client for client in CLIENTS if client.key == "qt")
@@ -454,9 +454,10 @@ class TrayController(QObject):
                 )
             self._refresh_timer.start()
 
-        def failed(_name: str) -> None:
+        def failed(name: str) -> None:
             self.tray.showMessage(
-                "BlueFerry", UNREACHABLE_TEXT, QSystemTrayIcon.MessageIcon.Warning, 8000,
+                "BlueFerry", reconnect_error_text(name), QSystemTrayIcon.MessageIcon.Warning,
+                8000,
             )
 
         self._call(

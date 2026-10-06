@@ -510,7 +510,9 @@ A change to these rules has to be made in both places.
   attempts with no sign of the phone (no LE link, no RSSI from a discovery in
   the last two minutes), or when BlueZ reports that the phone closed the
   Classic link itself (`Bearer.BREDR1.Disconnected` with `Reason.Remote`,
-  e.g. Bluetooth switched off on the iPhone), the supervisor stops paging
+  e.g. Bluetooth switched off on the iPhone; immediately when LE is known to
+  be down and solicitation can bring the phone back, otherwise after one
+  failed attempt), the supervisor stops paging
   and probes only every 10 min until an inbound link, LE or a discovery
   sighting shows the phone again. Paging an absent phone once hung
   bluetoothd in `l2cap_chan_connect` (kernel 7.2.8), so fewer pages matter.
@@ -520,9 +522,9 @@ A change to these rules has to be made in both places.
   (`connected`/`connecting`/`waiting`/`unreachable`), `phone_reconnect_paused`
   and `phone_reconnect_next_in_sec`; `reconnect_view.py` turns them into the
   same texts for every client.
-- **BlueZ health:** `bluez_health` marks bluetoothd unresponsive after three
-  consecutive NoReply/Timeout results (bearer reads and an asynchronous
-  `Peer.Ping` every 30 s). While unresponsive the bearer supervisor and the
+- **BlueZ health:** `bluez_health` marks bluetoothd unresponsive after two
+  unanswered asynchronous `Peer.Ping`s 15 s apart (pinged every 30 s; a
+  NoReply from a bearer read only triggers an early ping). While unresponsive the bearer supervisor and the
   power-cycle recovery stay idle, `ReconnectPhone` answers
   `bluez-unresponsive`/`bluez-kernel`, GetStatus carries `bluez_unresponsive`
   and `bluez_unresponsive_reason` (`kernel` when `/proc/<pid>/status` of the

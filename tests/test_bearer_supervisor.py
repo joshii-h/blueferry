@@ -1837,7 +1837,7 @@ def test_stable_le_clears_classic_backoff_once() -> None:
 # ---- reconnect damping ------------------------------------------------------
 
 
-def _damped(state, attempts, now_ref, watchers):
+def _damped(state, attempts, now_ref, watchers, *, le_enabled=False):
     def connect(kind, _on_success, on_error):
         attempts.append((kind, now_ref[0]))
         on_error(RuntimeError("page timeout"))
@@ -1845,7 +1845,7 @@ def _damped(state, attempts, now_ref, watchers):
     scheduled = []
     supervisor = BearerSupervisor(
         "/device",
-        le_enabled=False,
+        le_enabled=le_enabled,
         read_connected=state.get,
         connect=connect,
         watch_le=lambda on_disc, on_props: watchers.update(le=on_props) or (lambda: None),
@@ -1855,6 +1855,7 @@ def _damped(state, attempts, now_ref, watchers):
         clock=lambda: now_ref[0],
     )
     supervisor.start()
+    supervisor.scheduled = scheduled
     return supervisor, scheduled[0][1]
 
 
@@ -1905,7 +1906,7 @@ def test_remote_close_is_not_paged_back_until_the_phone_returns() -> None:
     attempts: list = []
     now = [0.0]
     watchers: dict = {}
-    supervisor, tick = _damped(state, attempts, now, watchers)
+    supervisor, tick = _damped(state, attempts, now, watchers, le_enabled=True)
     assert attempts == []
     # The iPhone's user switches Bluetooth off.
     watchers["bredr"]("org.bluez.Reason.Remote", "")
@@ -1920,6 +1921,24 @@ def test_remote_close_is_not_paged_back_until_the_phone_returns() -> None:
     tick()
     tick()
     assert attempts == [("bredr", 50.0)]
+    supervisor.stop()
+
+
+def test_remote_close_on_classic_only_allows_one_attempt_then_rests() -> None:
+    state = {"bredr": True, "le": False}
+    attempts: list = []
+    now = [0.0]
+    watchers: dict = {}
+    supervisor, tick = _damped(state, attempts, now, watchers)
+    watchers["bredr"]("org.bluez.Reason.Remote", "")
+    state["bredr"] = False
+    now[0] = 5.0
+    tick()
+    assert attempts == [("bredr", 5.0)]
+    assert supervisor.reconnect_snapshot()["paused"] is True
+    now[0] = 100.0
+    tick()
+    assert len(attempts) == 1
     supervisor.stop()
 
 
@@ -1963,8 +1982,11 @@ def test_manual_reconnect_clears_resting_and_pages_once() -> None:
         "state": "unreachable", "paused": True, "next_in_sec": 600,
     }
     now[0] = 40.0
-    # The fake connect fails synchronously: the user learns it at once.
-    assert supervisor.reconnect_now() == "unreachable"
+    assert supervisor.reconnect_now() == "started"
+    assert supervisor.reconnect_now() == "in-progress"  # already queued
+    delay, dial = supervisor.scheduled[-1]
+    assert delay == 0
+    dial()
     assert attempts[-1] == ("bredr", 40.0)
     snapshot = supervisor.reconnect_snapshot()
     assert snapshot["state"] == "unreachable" and snapshot["paused"] is False
@@ -1974,12 +1996,13 @@ def test_manual_reconnect_clears_resting_and_pages_once() -> None:
 
 def test_manual_reconnect_does_not_start_a_second_attempt() -> None:
     pending = []
+    scheduled: list = []
     supervisor = BearerSupervisor(
         "/device",
         le_enabled=False,
         read_connected=lambda _kind: False,
         connect=lambda kind, ok, err: pending.append((kind, ok, err)),
-        schedule=lambda *_a: 7,
+        schedule=lambda delay, callback: scheduled.append((delay, callback)) or 7,
         cancel=lambda _id: None,
         clock=lambda: 100.0,
     )
@@ -1992,6 +2015,8 @@ def test_manual_reconnect_does_not_start_a_second_attempt() -> None:
     pending[0][1]()
     assert supervisor.reconnect_snapshot()["state"] == "waiting"
     assert supervisor.reconnect_now() == "started"
+    assert supervisor.reconnect_snapshot()["state"] == "connecting"
+    scheduled[-1][1]()
     assert len(pending) == 2
     supervisor.stop()
 

@@ -68,6 +68,17 @@ def bluez_text(status: Mapping[str, Any] | None) -> str:
     return BLUEZ_HUNG_TEXT if reason == "kernel" else BLUEZ_UNRESPONSIVE_TEXT
 
 
+def reconnect_error_text(error_name: str) -> str:
+    """Text for a failed ReconnectPhone() call, by D-Bus error name."""
+    if error_name.endswith((".UnknownMethod", ".UnknownInterface")):
+        return UNSUPPORTED_TEXT
+    if error_name.endswith(".RateLimited"):
+        return _("Too many reconnect requests; try again in a minute.")
+    if error_name.endswith(".NotReady"):
+        return _("BlueFerry is not supervising an iPhone yet.")
+    return _("The reconnect request failed.")
+
+
 def result_text(result: str) -> str:
     """User-facing text for a ReconnectPhone() reply."""
     return {

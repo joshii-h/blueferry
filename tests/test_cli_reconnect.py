@@ -82,3 +82,11 @@ def test_reconnect_view_texts() -> None:
     })
     assert "20 s" in soon.hint
     assert result_text("bogus") == UNREACHABLE_TEXT
+
+
+def test_reconnect_error_texts_follow_the_dbus_error() -> None:
+    from blueferry.reconnect_view import UNSUPPORTED_TEXT, reconnect_error_text
+
+    assert reconnect_error_text("org.freedesktop.DBus.Error.UnknownMethod") == UNSUPPORTED_TEXT
+    assert "try again" in reconnect_error_text("io.weirdware.BlueFerry.Error.RateLimited")
+    assert "failed" in reconnect_error_text("")
