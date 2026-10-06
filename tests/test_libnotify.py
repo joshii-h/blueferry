@@ -31,8 +31,11 @@ class _FakeNotifications:
         self.calls.append(args)
         return 1
 
-    def CloseNotification(self, notification_id):
+    def CloseNotification(self, notification_id, **kwargs):
+        # Closing must never block the daemon's main loop.
+        assert "reply_handler" in kwargs and "error_handler" in kwargs
         self.calls.append(("close", int(notification_id)))
+        kwargs["reply_handler"]()
 
 
 class _Match:
