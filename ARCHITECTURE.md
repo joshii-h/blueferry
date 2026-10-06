@@ -89,6 +89,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `ancs/events.py` | `AncsEvent`, the normalized per-app notification. |
 | `ancs/sequencer.py` | Bounded, duplicate-aware backlog of serialized ANCS requests. |
 | `ams/client.py` | Opt-in Apple Media Service GATT client on the ANCS LE link; asynchronous, serialized, bounded. |
+| `battery_service.py` | Battery Service (0x180F) client on the ANCS LE link: reads Battery Level (0x2A19) once, then notifications; no `StopNotify`. |
 | `ams/parsers.py` | Pure AMS wire-format parsers and command/registration builders. |
 | `ams/state.py` | `NowPlaying` projection of Player, Queue, and Track attributes. |
 | `ams/constants.py` | AMS UUIDs, identifiers, and public command names. |

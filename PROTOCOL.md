@@ -545,6 +545,9 @@ statement below is a specification-based expectation, not a captured result.
   adjacent in the serialized GATT queue.
 - The ANCS BlueZ 5.87 constraint applies here too: no `StopNotify` on a
   dropped or flapping link; surviving `Notifying=true` registrations are kept.
+  The same holds for the Battery Service client (`0x180F`/`0x2A19`, flags
+  `read`, `notify`; one uint8 percentage), which reads once after the LE
+  link settles and then subscribes.
 - AMS offers relative volume steps and fixed skips only, so an MPRIS volume
   write becomes one step, MPRIS `CanSeek` is false and `Seek`/`SetPosition`
   have no effect, and MPRIS `Stop` pauses. The skips remain available through
