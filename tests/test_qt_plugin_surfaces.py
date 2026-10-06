@@ -80,8 +80,12 @@ def test_reload_invoke_and_send_run_off_the_ui_thread(app, tmp_path) -> None:
     adapter.send("io.example.ls:iphone", [QUrl.fromLocalFile(str(payload)).toString()])
     _wait(lambda: adapter.state()["message"] == "Sending 1 file")
     assert sent == [("io.example.ls:iphone", [str(payload.resolve())])]
+    # FileDialog.selectedFiles delivers QUrl objects.
+    adapter.send("io.example.ls:iphone", [QUrl.fromLocalFile(str(payload))])
+    _wait(lambda: len(sent) == 2)
+    assert sent[1] == ("io.example.ls:iphone", [str(payload.resolve())])
     adapter.send("io.example.ls:iphone", ["/no/such/file"])
-    assert "no such file" in adapter.state()["message"]
+    _wait(lambda: "no such file" in adapter.state()["message"])
     adapter.send("gone:target", [str(payload)])
     assert adapter.state()["messageOk"] is False
 

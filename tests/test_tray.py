@@ -260,6 +260,16 @@ _SHARE_SMOKE = textwrap.dedent("""
         time.sleep(0.01)
     assert sent == [("io.example.ls:iphone", ["/tmp/a.jpg"])], sent
     assert reported == ["Sending 1 file"], reported
+
+    def broken(target, paths):
+        raise RuntimeError("plugin exploded")
+
+    tray._send = broken
+    tray.share_menu.actions()[0].trigger()
+    while len(reported) < 2 and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    assert reported[1] == "plugin exploded", reported
     tray.close()
     print("SHARE-OK")
 """)

@@ -439,11 +439,14 @@ class TrayController(QObject):
 
     # ---- Send to… (plugins) -------------------------------------------------
 
-    def _plugin_work(self, work: Callable[[], object], done: Callable[[object], None]) -> None:
+    def _plugin_work(
+        self, work: Callable[[], object], done: Callable[[object], None],
+        failed: Callable[[str], None],
+    ) -> None:
         task = Task(work)
         self._plugin_tasks.add(task)
         task.signals.done.connect(done)
-        task.signals.failed.connect(lambda _message: self._targets_done(None))
+        task.signals.failed.connect(failed)
         task.signals.finished.connect(lambda: self._plugin_tasks.discard(task))
         self._plugin_pool.start(task)
 
@@ -451,7 +454,8 @@ class TrayController(QObject):
         if self._targets_loading:
             return
         self._targets_loading = True
-        self._plugin_work(self._load_targets, self._targets_done)
+        self._plugin_work(self._load_targets, self._targets_done,
+                          lambda _message: self._targets_done(None))
 
     def _targets_done(self, value: object) -> None:
         self._targets_loading = False
@@ -483,7 +487,11 @@ class TrayController(QObject):
             if isinstance(outcome, surfaces.Outcome):
                 self._tool_reported(outcome.ok, outcome.message)
 
-        self._plugin_work(lambda: self._send(choice, paths), done)
+        self._plugin_work(
+            lambda: self._send(choice, paths), done,
+            lambda message: self._tool_reported(
+                False, message or _("The plugin did not take the files.")),
+        )
 
     def _tool_reported(self, ok: bool, message: str) -> None:
         self.tray.showMessage(

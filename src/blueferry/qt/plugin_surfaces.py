@@ -51,8 +51,10 @@ class PluginSurfaces(QObject):
         self._find = find
         self._send = send
         self._open = opener
-        self._pool = pool or QThreadPool(self)
-        self._pool.setMaxThreadCount(2)
+        if pool is None:
+            pool = QThreadPool(self)
+            pool.setMaxThreadCount(2)
+        self._pool = pool
         self._tasks: set[Task] = set()
         self._choices: dict[str, surfaces.ShareChoice] = {}
         self._loading = False
@@ -161,19 +163,29 @@ class PluginSurfaces(QObject):
     def send(self, key: str, urls: Sequence[object]) -> None:
         choice = self._choices.get(key)
         if choice is None:
-            self._say(_("That target is gone; open “Send to” again."), False)
+            self._say(_("That target is gone; open \u201cSend to\u201d again."), False)
             return
-        paths = [QUrl(str(url)).toLocalFile() if str(url).startswith("file:") else str(url)
-                 for url in urls]
-        try:
-            files = checked_share_paths(paths)
-        except ValueError as error:
-            self._say(str(error), False)
-            return
+        # FileDialog.selectedFiles hands over QUrl objects; plain strings are
+        # either file: URLs or paths.
+        paths = [local_path(url) for url in urls]
         self._update(busy=f"send:{key}", message="")
+
+        def work() -> surfaces.Outcome:
+            try:
+                files = checked_share_paths(paths)  # stat()s: not on the UI thread
+            except ValueError as error:
+                return surfaces.Outcome(False, str(error))
+            return self._send(choice, files)
 
         def done(outcome: surfaces.Outcome) -> None:
             self._say(outcome.message, outcome.ok)
             self._timer.start()
 
-        self._run(lambda: self._send(choice, files), done)
+        self._run(work, done)
+
+
+def local_path(url: object) -> str:
+    if isinstance(url, QUrl):
+        return url.toLocalFile() if url.isLocalFile() else url.toString()
+    text = str(url)
+    return QUrl(text).toLocalFile() if text.startswith("file:") else text
