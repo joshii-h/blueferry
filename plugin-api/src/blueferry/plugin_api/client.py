@@ -24,11 +24,14 @@ from . import (
     PHOTOS_INTERFACE,
     PLUGIN_INTERFACE,
 )
+from .config import SECRET_MASK, ConfigError
 from .manifest import PluginManifest
 
 STATUS_TIMEOUT_SEC = 10.0
 LIST_TIMEOUT_SEC = 90.0
 FETCH_TIMEOUT_SEC = 600.0
+# SetConfig may check the new settings against the plugin's server.
+CONFIG_TIMEOUT_SEC = 60.0
 _ASSET_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _TIMESTAMP = re.compile(r"^[0-9T:.+\-Z ]{4,40}$")
 _PHOTO_TYPES = frozenset({"image", "video", "other"})
@@ -119,6 +122,13 @@ class PluginStatus:
 
 
 @dataclass(frozen=True, slots=True)
+class ConfigResult:
+    ok: bool
+    # field key (or "" for the whole form) -> short plain-text reason
+    errors: dict[str, str]
+
+
+@dataclass(frozen=True, slots=True)
 class Photo:
     id: str
     taken_at: str
@@ -180,6 +190,57 @@ class PluginClient:
             detail=plain_text(value.get("detail", ""), 200),
             server=plain_text(value.get("server", ""), 100),
         )
+
+    # ---- settings -------------------------------------------------------------
+
+    def get_config(self) -> dict[str, object]:
+        """Current settings for the manifest's fields; secrets only as a mask."""
+        fields = self.manifest.config
+        if not fields:
+            raise PluginError("this plugin has no settings")
+        value = self._json(PLUGIN_INTERFACE, "GetConfig", "", (), STATUS_TIMEOUT_SEC)
+        values = value.get("values") if isinstance(value, Mapping) else None
+        if not isinstance(values, Mapping):
+            raise PluginError("the plugin sent invalid settings")
+        result: dict[str, object] = {}
+        for field in fields:
+            raw = values.get(field.key)
+            if field.secret:
+                # Whatever a plugin sends for a secret, show only whether one is set.
+                result[field.key] = SECRET_MASK if raw else ""
+                continue
+            try:
+                result[field.key] = field.empty() if raw in (None, "") else field.coerce(raw)
+            except ConfigError:
+                result[field.key] = field.empty()
+        return result
+
+    def set_config(self, values: Mapping[str, object]) -> ConfigResult:
+        """Send changed settings; a secret only when a new one was typed."""
+        fields = {field.key: field for field in self.manifest.config}
+        if not fields:
+            raise PluginError("this plugin has no settings")
+        update: dict[str, object] = {}
+        for key, value in values.items():
+            field = fields.get(key)
+            if field is None:
+                continue
+            if field.secret and value in (None, "", SECRET_MASK):
+                continue
+            update[key] = value
+        reply = self._json(
+            PLUGIN_INTERFACE, "SetConfig", "s", (json.dumps(update),), CONFIG_TIMEOUT_SEC,
+        )
+        if not isinstance(reply, Mapping) or not isinstance(reply.get("ok"), bool):
+            raise PluginError("the plugin sent an invalid answer")
+        errors = reply.get("errors")
+        reasons = {
+            plain_text(key, 32): plain_text(reason, 200)
+            for key, reason in (errors.items() if isinstance(errors, Mapping) else ())
+        }
+        if not reply["ok"] and not reasons:
+            reasons = {"": "the plugin rejected the settings"}
+        return ConfigResult(ok=bool(reply["ok"]), errors=reasons)
 
     # ---- photos capability ---------------------------------------------------
 

@@ -52,7 +52,7 @@ class ServiceTransport:
         if interface not in (PLUGIN_INTERFACE, PHOTOS_INTERFACE):
             raise PluginError("unknown interface")
         handler = getattr(self.service, method)
-        if method in ("ListRecent", "FetchOriginal"):
+        if method in ("ListRecent", "FetchOriginal", "GetConfig", "SetConfig"):
             outcome: dict[str, object] = {}
             handler(
                 *args,

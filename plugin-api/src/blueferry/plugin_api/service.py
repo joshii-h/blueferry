@@ -21,6 +21,7 @@ import dbus
 import dbus.service
 
 from . import (
+    API_MINOR,
     API_VERSION,
     MAX_RECENT_PHOTOS,
     MAX_REPLY_BYTES,
@@ -28,6 +29,7 @@ from . import (
     PHOTOS_INTERFACE,
     PLUGIN_INTERFACE,
 )
+from .config import ConfigError, masked, parse_update, validate
 from .manifest import PluginManifest
 
 log = logging.getLogger(__name__)
@@ -61,7 +63,7 @@ def _thread(work: Callable[[], None]) -> None:
 
 
 class PluginService(dbus.service.Object):
-    """Plugin1: GetInfo() and Status(); subclasses add capability methods."""
+    """Plugin1: GetInfo(), Status() and the optional GetConfig()/SetConfig()."""
 
     def __init__(
         self,
@@ -87,6 +89,24 @@ class PluginService(dbus.service.Object):
     def status(self) -> dict[str, object]:
         """``{"state": ok|unconfigured|error|busy, "detail": str, ...}``."""
         return {"state": "ok"}
+
+    def config_values(self) -> dict[str, object]:
+        """Blocking; worker thread. Current settings by manifest key.
+
+        For a ``secret`` field return anything truthy when one is stored
+        (``True`` is enough); the base class never sends it out.
+        """
+        raise PluginCallError("this plugin has no settings")
+
+    def apply_config(self, values: dict[str, object]) -> None:
+        """Blocking; worker thread. Store validated settings.
+
+        ``values`` holds every non-secret field and only the secrets the
+        user entered anew; keep the stored secret for a missing key. Raise
+        :class:`~blueferry.plugin_api.config.ConfigError` to reject one field
+        (for example a key the server refuses).
+        """
+        raise PluginCallError("this plugin has no settings")
 
     # ---- helpers ---------------------------------------------------------
 
@@ -152,6 +172,7 @@ class PluginService(dbus.service.Object):
             "name": self.manifest.name,
             "version": self.manifest.version,
             "api_version": API_VERSION,
+            "api_minor": API_MINOR,
             "capabilities": list(self.manifest.capabilities),
         })
 
@@ -161,6 +182,49 @@ class PluginService(dbus.service.Object):
     def Status(self, sender=None) -> str:
         self.admit(sender)
         return json.dumps(self.status())
+
+
+    @dbus.service.method(
+        PLUGIN_INTERFACE, in_signature="", out_signature="s",
+        async_callbacks=("reply", "error"), sender_keyword="sender",
+    )
+    def GetConfig(self, reply, error, sender=None) -> None:
+        self.admit(sender)
+        self.run_async(self._get_config, reply, error)
+
+    @dbus.service.method(
+        PLUGIN_INTERFACE, in_signature="s", out_signature="s",
+        async_callbacks=("reply", "error"), sender_keyword="sender",
+    )
+    def SetConfig(self, update, reply, error, sender=None) -> None:
+        self.admit(sender)
+        text = str(update)
+        self.run_async(lambda: self._set_config(text), reply, error)
+
+    def _fields(self):
+        if not self.manifest.config:
+            raise PluginCallError("this plugin has no settings")
+        return self.manifest.config
+
+    def _get_config(self) -> str:
+        fields = self._fields()
+        return json.dumps({"values": masked(fields, self.config_values())})
+
+    def _set_config(self, text: str) -> str:
+        fields = self._fields()
+        try:
+            update = parse_update(text)
+        except ConfigError as failure:
+            return json.dumps({"ok": False, "errors": {failure.field: failure.message}})
+        values, errors = validate(fields, self.config_values(), update)
+        if errors:
+            return json.dumps({"ok": False, "errors": errors})
+        try:
+            self.apply_config(values)
+        except ConfigError as failure:
+            return json.dumps({"ok": False, "errors": {failure.field: failure.message}})
+        log.info("plugin settings saved (%d fields)", len(values))
+        return json.dumps({"ok": True})
 
 
 class PhotosService(PluginService):

@@ -9,7 +9,10 @@ small:
 - **Clients discover plugins themselves** by reading manifest files, then talk
   to the plugin over the user's session bus.
 - The contract lives in `blueferry.plugin_api`, a self-contained package that
-  imports nothing else from BlueFerry. Plugins import only from it.
+  imports nothing else from BlueFerry. Plugins import only from it. It ships
+  inside BlueFerry and as its own distribution `blueferry-plugin-api`
+  (`plugin-api/` in this repository; `src/blueferry/plugin_api` is a symlink
+  to it).
 
 Nothing in this document has been tested against real hardware; the plugin
 path does not touch Bluetooth at all.
@@ -36,13 +39,44 @@ Desktop-entry syntax, group `[BlueFerry Plugin]`:
 | `Id` | yes | Reverse-DNS id, e.g. `io.weirdware.blueferry.immich_photos`. |
 | `Name` | yes | Display name (plain text, ≤ 80 characters). |
 | `Version` | yes | The plugin's own version. |
-| `ApiVersion` | yes | Plugin contract version it implements (currently `1`). Unknown versions are ignored. |
+| `ApiVersion` | yes | Plugin contract version it implements: `MAJOR` or `MAJOR.MINOR` (currently `1.1`). Clients ignore unknown major versions; the minor part is informational. |
 | `MinBlueFerry` | yes | Oldest BlueFerry release the plugin works with. |
 | `Capabilities` | yes | `;`-separated list. Known: `photos`; reserved: `conversations`. Unknown entries are dropped; a manifest with none left is ignored. |
 | `Homepage`, `Source` | at least one | `https://` URLs. |
 | `Exec` | yes | Command line that serves the plugin on the bus (used for its D-Bus service file). |
 | `Cli` | no | Command line for the plugin's own CLI; `blueferry plugins <alias> …` forwards to it. |
 | `Alias` | no | Short lowercase name for the CLI, e.g. `immich`. |
+
+### Settings (`[Config <key>]`, ApiVersion 1.1)
+
+Optional. Each group describes one setting; clients build a form from them in
+file order. `<key>` is lowercase letters, digits and `_` (at most 32
+characters, at most 24 settings).
+
+| Key | Required | Meaning |
+| --- | --- | --- |
+| `Label` | yes | Form label (plain text, ≤ 80 characters). |
+| `Type` | yes | `string`, `url` (https, http only for localhost), `secret`, `bool`, `int` or `choice`. |
+| `Required` | no | `true` or `false` (default). |
+| `Default` | no | Value of an unset field. Not allowed for `secret`. |
+| `Help` | no | One line under the field (≤ 300 characters). |
+| `Choices` | for `choice` | `;`-separated simple words. |
+| `Min`, `Max` | no | Bounds for `int`. |
+
+```
+[Config url]
+Label=Server URL
+Type=url
+Required=true
+
+[Config api_key]
+Label=API key
+Type=secret
+Required=true
+```
+
+A malformed settings group makes clients ignore the whole manifest, like any
+other manifest error.
 
 ## Bus contract (ApiVersion 1)
 
@@ -57,8 +91,10 @@ Desktop-entry syntax, group `[BlueFerry Plugin]`:
 
 | Member | Signature | Meaning |
 | --- | --- | --- |
-| `GetInfo()` | `→ s` | JSON `{id, name, version, api_version, capabilities}`. |
+| `GetInfo()` | `→ s` | JSON `{id, name, version, api_version, api_minor, capabilities}`. |
 | `Status()` | `→ s` | JSON `{state, detail?, server?}`; `state` is `ok`, `unconfigured`, `error` or `busy`. |
+| `GetConfig()` | `→ s` | Since 1.1, plugins with settings. JSON `{values: {key: value}}` for every manifest setting. A `secret` is `"********"` when stored and `""` when not; its value never leaves the plugin. |
+| `SetConfig(s json)` | `→ s` | Since 1.1. A JSON object with the settings to change (at most 16 KiB). The plugin validates it against its schema and answers `{ok: true}` or `{ok: false, errors: {key: reason}}` (`""` for the whole form). A `secret` that is missing, empty or the mask keeps its stored value; unknown keys are errors. |
 
 `io.weirdware.BlueFerry.Photos1` (capability `photos`):
 
@@ -100,7 +136,10 @@ Errors are D-Bus errors under `io.weirdware.BlueFerry.Plugin.Error.*`
   and disk work off its main loop. `run()` exits after the idle time only
   when no call is still in flight.
 - Secrets (API keys) belong to the plugin: keep them in the Secret Service
-  keyring, or in a 0600 file as a fallback, never in the manifest.
+  keyring, or in a 0600 file as a fallback, never in the manifest. Settings
+  forms send a secret into the plugin only when the user typed a new one,
+  and `GetConfig()` reports only whether one is stored (the base class masks
+  it even if `config_values()` returns the plain value).
 
 ## Writing a plugin
 
@@ -123,6 +162,11 @@ def main():
     manifest = parse_manifest(MANIFEST_TEXT)
     return run(lambda bus: MyPhotos(manifest, bus))
 ```
+
+A plugin with `[Config …]` groups also implements `config_values()` (the
+stored settings; for a secret anything truthy) and `apply_config(values)`
+(validated settings; raise `ConfigError(key, reason)` to reject one). Both
+run on the worker thread.
 
 Tests use `blueferry.plugin_api.testing`: `inline_service()` runs worker and
 main-loop hand-offs inline, `ServiceTransport` lets a real `PluginClient`

@@ -15,6 +15,11 @@ Example ``~/.local/share/blueferry/plugins/io.example.photos.plugin``::
     Cli=blueferry-plugin-example
     Alias=example
 
+    [Config url]
+    Label=Server URL
+    Type=url
+    Required=true
+
 Discovery never runs anything; it only parses files. A manifest that is
 malformed, too large or written for an unsupported ``ApiVersion`` is ignored
 with a reason the clients can show.
@@ -34,6 +39,8 @@ from . import (
     KNOWN_CAPABILITIES,
     SUPPORTED_API_VERSIONS,
 )
+from .config import GROUP_PREFIX as CONFIG_GROUP_PREFIX
+from .config import ConfigField, parse_fields
 
 GROUP = "BlueFerry Plugin"
 SUFFIX = ".plugin"
@@ -45,6 +52,7 @@ _ID = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*(\.[A-Za-z_][A-Za-z0-9_-]*)+$")
 _ALIAS = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 _VERSION = re.compile(r"^\d+(\.\d+){0,3}([-+.~][0-9A-Za-z.]+)?$")
 _URL = re.compile(r"^https://[^\s/]+(/\S*)?$")
+_API_VERSION = re.compile(r"^(\d{1,3})(?:\.(\d{1,3}))?$")
 _REQUIRED = (
     "Id", "Name", "Version", "ApiVersion", "MinBlueFerry", "Capabilities", "Exec",
 )
@@ -68,6 +76,10 @@ class PluginManifest:
     cli: tuple[str, ...] = ()
     alias: str = ""
     path: Path | None = None
+    # Optional settings form (``[Config <key>]`` groups), in manifest order.
+    config: tuple[ConfigField, ...] = ()
+    # Minor revision of the contract (``ApiVersion=1.1``); informational.
+    api_minor: int = 0
 
     @property
     def bus_name(self) -> str:
@@ -105,8 +117,11 @@ def version_tuple(value: str) -> tuple[int, ...]:
     return tuple(int(part) for part in match.group(1).split("."))
 
 
-def _keyfile(text: str) -> dict[str, str]:
+def _keyfile(text: str) -> tuple[dict[str, str], list[tuple[str, dict[str, str]]]]:
+    """The ``[BlueFerry Plugin]`` keys and the ``[Config <key>]`` groups."""
     values: dict[str, str] = {}
+    config: list[tuple[str, dict[str, str]]] = []
+    target: dict[str, str] | None = None
     group = None
     for raw in text.splitlines():
         line = raw.strip()
@@ -114,8 +129,15 @@ def _keyfile(text: str) -> dict[str, str]:
             continue
         if line.startswith("[") and line.endswith("]"):
             group = line[1:-1]
+            if group == GROUP:
+                target = values
+            elif group.startswith(CONFIG_GROUP_PREFIX):
+                target = {}
+                config.append((group[len(CONFIG_GROUP_PREFIX):].strip(), target))
+            else:
+                target = None
             continue
-        if group != GROUP:
+        if target is None:
             continue
         key, separator, value = line.partition("=")
         key = key.strip()
@@ -124,12 +146,12 @@ def _keyfile(text: str) -> dict[str, str]:
             if "[" in key:
                 continue
             raise ManifestError(f"malformed line: {raw[:40]!r}")
-        if key in values:
+        if key in target:
             raise ManifestError(f"duplicate key {key}")
-        values[key] = value.strip()
+        target[key] = value.strip()
     if group is None and not values:
         raise ManifestError(f"missing [{GROUP}] group")
-    return values
+    return values, config
 
 
 def _argv(value: str, key: str) -> tuple[str, ...]:
@@ -153,17 +175,18 @@ def parse_manifest(
     """Parse and validate one manifest; raise ManifestError to skip it."""
     if len(text.encode("utf-8", "surrogatepass")) > MAX_MANIFEST_BYTES:
         raise ManifestError("manifest is too large")
-    values = _keyfile(text)
+    values, config_groups = _keyfile(text)
     missing = [key for key in _REQUIRED if not values.get(key)]
     if missing:
         raise ManifestError("missing " + ", ".join(missing))
     plugin_id = values["Id"]
     if len(plugin_id) > 120 or not _ID.fullmatch(plugin_id):
         raise ManifestError("Id must be a reverse-DNS name like io.example.photos")
-    try:
-        api_version = int(values["ApiVersion"])
-    except ValueError:
-        raise ManifestError("ApiVersion must be an integer") from None
+    api_match = _API_VERSION.fullmatch(values["ApiVersion"])
+    if api_match is None:
+        raise ManifestError("ApiVersion must be MAJOR or MAJOR.MINOR")
+    api_version = int(api_match.group(1))
+    api_minor = int(api_match.group(2) or 0)
     if api_version not in SUPPORTED_API_VERSIONS:
         supported = ", ".join(str(v) for v in sorted(SUPPORTED_API_VERSIONS))
         raise ManifestError(
@@ -193,6 +216,10 @@ def parse_manifest(
     name = values["Name"]
     if len(name) > 80 or any(ord(ch) < 32 for ch in name):
         raise ManifestError("Name is too long or contains control characters")
+    try:
+        config = parse_fields(config_groups)
+    except ValueError as error:
+        raise ManifestError(str(error)) from None
     return PluginManifest(
         id=plugin_id,
         name=name,
@@ -206,6 +233,8 @@ def parse_manifest(
         cli=_argv(values["Cli"], "Cli") if values.get("Cli") else (),
         alias=alias,
         path=path,
+        config=config,
+        api_minor=api_minor,
     )
 
 

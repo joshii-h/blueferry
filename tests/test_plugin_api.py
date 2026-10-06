@@ -58,7 +58,7 @@ def test_manifest_parses_required_and_optional_keys() -> None:
 
 @pytest.mark.parametrize("change,reason", [
     (("ApiVersion=1", "ApiVersion=2"), "plugin API 2"),
-    (("ApiVersion=1", "ApiVersion=x"), "integer"),
+    (("ApiVersion=1", "ApiVersion=x"), "MAJOR"),
     (("MinBlueFerry=0.8", "MinBlueFerry=9.0"), "needs BlueFerry 9.0"),
     (("Id=io.example.immich-photos", "Id=photos"), "reverse-DNS"),
     (("Id=io.example.immich-photos", "Id=io.9bad.x"), "reverse-DNS"),
@@ -309,3 +309,166 @@ def test_plugin_api_ships_from_one_tree() -> None:
         project = tomllib.load(stream)
     assert project["project"]["name"] == "blueferry-plugin-api"
     assert project["tool"]["setuptools"]["packages"]["find"]["namespaces"] is True
+
+
+# ---- settings schema (Config groups, GetConfig/SetConfig) ------------------------
+
+CONFIG = """
+[Config url]
+Label=Server URL
+Type=url
+Required=true
+Help=For example https://photos.example.org
+
+[Config api_key]
+Label=API key
+Type=secret
+Required=true
+
+[Config camera_model]
+Label=Camera model
+Type=string
+
+[Config size]
+Label=Size
+Type=choice
+Choices=small;large;
+Default=small
+
+[Config limit]
+Label=Limit
+Type=int
+Min=1
+Max=200
+Default=60
+
+[Config videos]
+Label=Videos
+Type=bool
+Default=true
+"""
+
+
+def _configured(extra: str = CONFIG):
+    return manifest(extra=extra)
+
+
+def test_manifest_reads_the_settings_schema_in_order() -> None:
+    parsed = parse_manifest(VALID.replace("ApiVersion=1", "ApiVersion=1.1") + CONFIG)
+    assert parsed.api_version == 1 and parsed.api_minor == 1
+    assert [field.key for field in parsed.config] == [
+        "url", "api_key", "camera_model", "size", "limit", "videos",
+    ]
+    url, key, _model, size, limit, videos = parsed.config
+    assert url.required and url.type == "url" and url.help.startswith("For example")
+    assert key.secret and size.choices == ("small", "large") and size.default == "small"
+    assert (limit.minimum, limit.maximum, limit.default) == (1, 200, 60)
+    assert videos.default is True
+    assert parse_manifest(VALID).config == ()
+
+
+@pytest.mark.parametrize("group,reason", [
+    ("[Config Bad]\nLabel=x\nType=string\n", "lowercase"),
+    ("[Config a]\nLabel=x\nType=float\n", "unknown Type"),
+    ("[Config a]\nType=string\n", "missing Label"),
+    ("[Config a]\nLabel=x\nType=secret\nDefault=hunter2\n", "secret cannot"),
+    ("[Config a]\nLabel=x\nType=choice\n", "Choices"),
+    ("[Config a]\nLabel=x\nType=int\nMin=a\n", "integers"),
+    ("[Config a]\nLabel=x\nType=int\nMax=3\nDefault=9\n", "invalid Default"),
+    ("[Config a]\nLabel=x\nType=bool\nRequired=maybe\n", "Required"),
+    ("[Config a]\nLabel=x\nType=string\n[Config a]\nLabel=y\nType=string\n", "duplicate"),
+])
+def test_bad_settings_schema_ignores_the_manifest(group, reason) -> None:
+    with pytest.raises(ManifestError, match=reason):
+        parse_manifest(VALID + group)
+
+
+def test_validate_merges_checks_and_keeps_stored_secrets() -> None:
+    from blueferry.plugin_api.config import SECRET_MASK, validate
+
+    fields = _configured().config
+    current = {"url": "https://a.example", "api_key": True, "limit": 10}
+    values, errors = validate(fields, current, {"limit": 20, "api_key": SECRET_MASK})
+    assert errors == {}
+    assert values["url"] == "https://a.example" and values["limit"] == 20
+    assert "api_key" not in values and values["size"] == "small" and values["videos"] is True
+    values, errors = validate(fields, {}, {
+        "url": "http://evil.example", "limit": 500, "size": "huge", "videos": "yes",
+        "bogus": 1,
+    })
+    assert set(errors) == {"url", "api_key", "limit", "size", "videos", "bogus"}
+    values, errors = validate(fields, {}, {"url": "http://localhost:2283/", "api_key": "k"})
+    assert errors == {} and values["url"] == "http://localhost:2283" and values["api_key"] == "k"
+
+
+@given(st.dictionaries(st.text(max_size=8), st.one_of(
+    st.none(), st.booleans(), st.integers(), st.text(max_size=40),
+    st.lists(st.integers(), max_size=3),
+), max_size=8))
+def test_validate_never_raises(update) -> None:
+    from blueferry.plugin_api.config import validate
+
+    values, errors = validate(_configured().config, {}, update)
+    assert isinstance(values, dict) and isinstance(errors, dict)
+
+
+class _Configurable(_Photos):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.stored: dict[str, object] = {"url": "https://a.example", "api_key": "s3cret"}
+
+    def config_values(self):
+        return dict(self.stored)
+
+    def apply_config(self, values) -> None:
+        from blueferry.plugin_api.config import ConfigError
+
+        if values.get("api_key") == "refused":
+            raise ConfigError("api_key", "the server refused this key")
+        self.stored.update(values)
+
+
+def test_settings_round_trip_never_reveals_a_secret(cache) -> None:
+    from blueferry.plugin_api.config import SECRET_MASK
+
+    service = inline_service(_Configurable, _configured())
+    client = PluginClient(_configured(), transport=ServiceTransport(service),
+                          cache_root=lambda: cache)
+    shown = client.get_config()
+    assert shown["api_key"] == SECRET_MASK and shown["url"] == "https://a.example"
+    assert "s3cret" not in json.dumps(shown)
+    raw = []
+    service.GetConfig(reply=raw.append, error=raw.append, sender=":1.2")
+    assert "s3cret" not in raw[0]
+    result = client.set_config({"url": "https://b.example", "api_key": SECRET_MASK, "x": 1})
+    assert result.ok and service.stored["api_key"] == "s3cret"
+    assert service.stored["url"] == "https://b.example"
+    result = client.set_config({"api_key": "refused"})
+    assert not result.ok and result.errors == {"api_key": "the server refused this key"}
+    result = client.set_config({"url": "ftp://nope"})
+    assert not result.ok and "url" in result.errors
+    info = json.loads(service.GetInfo(sender=":1.9"))
+    assert info["api_minor"] == 1
+
+
+def test_settings_are_refused_without_a_schema_and_bad_replies_are_errors(cache) -> None:
+    service = inline_service(_Configurable, manifest())
+    client = PluginClient(manifest(), transport=ServiceTransport(service),
+                          cache_root=lambda: cache)
+    with pytest.raises(PluginError, match="no settings"):
+        client.get_config()
+    outcome = []
+    service.SetConfig("{}", reply=outcome.append, error=outcome.append, sender=":1.2")
+    assert "no settings" in str(outcome[0])
+    for reply in ("[]", '{"values": 3}', "nope"):
+        scripted = PluginClient(_configured(), transport=ScriptedTransport({"GetConfig": reply}),
+                                cache_root=lambda: cache)
+        with pytest.raises(PluginError):
+            scripted.get_config()
+    leaky = PluginClient(_configured(), transport=ScriptedTransport(
+        {"GetConfig": json.dumps({"values": {"api_key": "plain", "limit": "x"}}),
+         "SetConfig": json.dumps({"ok": False})},
+    ), cache_root=lambda: cache)
+    shown = leaky.get_config()
+    assert shown["api_key"] != "plain" and shown["limit"] == 60
+    assert leaky.set_config({}).errors == {"": "the plugin rejected the settings"}
