@@ -223,3 +223,58 @@ def test_tooltip_names_an_unresponsive_bluez() -> None:
         "daemon": True, "bluez_unresponsive": True, "bluez_unresponsive_reason": "kernel",
     })
     assert BLUEZ_HUNG_TEXT in presenter.tooltip(status, 0)
+
+
+_SHARE_SMOKE = textwrap.dedent("""
+    import time
+    from PySide6.QtDBus import QDBusConnection
+    from PySide6.QtWidgets import QApplication
+    from blueferry import plugin_surfaces as surfaces
+    from blueferry.qt.tray import TrayController
+
+    app = QApplication([])
+    sent, reported = [], []
+    choice = surfaces.ShareChoice("io.example.ls", "LocalSend", "iphone", "iPhone (LocalSend)",
+                                  "smartphone")
+    tray = TrayController(
+        QDBusConnection("not-connected"), launch=lambda: True,
+        load_targets=lambda: surfaces.ShareTargets([choice]),
+        send=lambda target, paths: sent.append((target.key, paths))
+        or surfaces.Outcome(True, "Sending 1 file"),
+        pick_files=lambda label: ["/tmp/a.jpg"],
+    )
+    tray.tray.showMessage = lambda title, message, *rest: reported.append(message)
+    sections = [a.text() for a in tray.menu.actions() if a.isSeparator() and a.text()]
+    assert sections == ["Quick Settings", "Tools"], sections
+    assert not tray.share_action.isVisible()
+    tray.refresh_share_targets()
+    deadline = time.monotonic() + 5
+    while not tray.share_menu.actions() and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    assert tray.share_action.isVisible()
+    assert [a.text() for a in tray.share_menu.actions()] == ["iPhone (LocalSend)"]
+    tray.share_menu.actions()[0].trigger()
+    while not reported and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    assert sent == [("io.example.ls:iphone", ["/tmp/a.jpg"])], sent
+    assert reported == ["Sending 1 file"], reported
+    tray.close()
+    print("SHARE-OK")
+""")
+
+
+def test_tray_groups_its_menu_and_offers_send_to() -> None:
+    env = {
+        **os.environ,
+        "QT_QPA_PLATFORM": "offscreen",
+        "PYTHONPATH": str(ROOT / "src"),
+        "LANGUAGE": "C",
+        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/blueferry-tests-no-live-bus",
+    }
+    result = subprocess.run(  # nosec B603 - fixed interpreter and script
+        [sys.executable, "-c", _SHARE_SMOKE],
+        env=env, capture_output=True, text=True, timeout=60, check=False,
+    )
+    assert "SHARE-OK" in result.stdout, result.stdout + result.stderr

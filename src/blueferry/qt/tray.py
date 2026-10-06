@@ -26,6 +26,7 @@ from PySide6.QtCore import (
     QProcessEnvironment,
     QRect,
     Qt,
+    QThreadPool,
     QTimer,
     Slot,
 )
@@ -36,8 +37,9 @@ from PySide6.QtDBus import (
     QDBusServiceWatcher,
 )
 from PySide6.QtGui import QAction, QColor, QFont, QFontMetrics, QIcon, QPainter, QPixmap
-from PySide6.QtWidgets import QApplication, QMenu, QStyle, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QFileDialog, QMenu, QStyle, QSystemTrayIcon
 
+from blueferry import plugin_surfaces as surfaces
 from blueferry.client_activation import (
     ACTIVATION_INTERFACE,
     ACTIVATION_PATH,
@@ -58,6 +60,7 @@ from blueferry.protocol import (
 )
 from blueferry.qt import tray_presenter as presenter
 from blueferry.qt.companion import CompanionTools
+from blueferry.qt.tasks import Task
 from blueferry.reconnect_view import (
     RATE_LIMITED_TEXT,
     is_rate_limited,
@@ -121,6 +124,10 @@ def badged_icon(base: QIcon, badge: str, *, dimmed: bool = False) -> QIcon:
     return icon
 
 
+def theme_icon(key: str) -> QIcon:
+    return QIcon.fromTheme(presenter.ICONS.get(key, ""))
+
+
 class TrayController(QObject):
     """Owns the tray icon and mirrors the daemon's state into it."""
 
@@ -131,6 +138,9 @@ class TrayController(QObject):
         parent: QObject | None = None,
         launch: Callable[[], bool] | None = None,
         companion: CompanionTools | None = None,
+        load_targets: Callable[[], surfaces.ShareTargets] = surfaces.load_targets,
+        send: Callable[..., surfaces.Outcome] = surfaces.send,
+        pick_files: Callable[[str], list[str]] | None = None,
     ) -> None:
         super().__init__(parent)
         self._bus = bus if bus is not None else QDBusConnection.sessionBus()
@@ -146,18 +156,18 @@ class TrayController(QObject):
 
         self.tray = QSystemTrayIcon(self)
         self.menu = QMenu()
-        self.open_action = QAction(_("Open BlueFerry"), self.menu)
+        self.open_action = QAction(theme_icon("open"), _("Open BlueFerry"), self.menu)
         self.open_action.triggered.connect(self.open_app)
-        self.audio_action = QAction(self.menu)
+        self.audio_action = QAction(theme_icon("audio"), "", self.menu)
         self.audio_action.setCheckable(True)
         self.audio_action.triggered.connect(self._audio_triggered)
-        self.hotspot_action = QAction(self.menu)
+        self.hotspot_action = QAction(theme_icon("hotspot"), "", self.menu)
         self.hotspot_action.setCheckable(True)
         self.hotspot_action.triggered.connect(self._hotspot_triggered)
-        self.mirror_action = QAction(self.menu)
+        self.mirror_action = QAction(theme_icon("mirror_notifications"), "", self.menu)
         self.mirror_action.setCheckable(True)
         self.mirror_action.triggered.connect(self._mirror_triggered)
-        self.reconnect_action = QAction(self.menu)
+        self.reconnect_action = QAction(theme_icon("reconnect"), "", self.menu)
         self.reconnect_action.triggered.connect(self._reconnect_triggered)
         # UxPlay, LocalSend and iPhone photos: started here, no daemon involved.
         self.companion = companion or CompanionTools(parent=self)
@@ -165,22 +175,40 @@ class TrayController(QObject):
         self.companion.reported.connect(self._tool_reported)
         self.tool_actions: dict[str, QAction] = {}
         for key in ("mirror", "send", "photos", "eject", "pair"):
-            action = QAction(self.menu)
+            action = QAction(theme_icon(key), "", self.menu)
             action.triggered.connect(lambda _checked=False, key=key: self.companion.run(key))
             self.tool_actions[key] = action
-        self.quit_action = QAction(_("Quit"), self.menu)
+        # "Send to…": targets from plugins with the share capability
+        # (PLUGINS.md 1.2), looked up off the UI thread when the menu opens.
+        self._load_targets = load_targets
+        self._send = send
+        self._pick_files = pick_files or pick_files_dialog
+        self._plugin_pool = QThreadPool(self)
+        self._plugin_pool.setMaxThreadCount(1)
+        self._plugin_tasks: set[Task] = set()
+        self.share_targets: list[surfaces.ShareChoice] = []
+        self._targets_loading = False
+        self.share_menu = QMenu(presenter.share_menu_title(False, 0), self.menu)
+        self.share_menu.setIcon(theme_icon("share"))
+        self.quit_action = QAction(theme_icon("quit"), _("Quit"), self.menu)
         self.quit_action.triggered.connect(QApplication.quit)
+        # Grouped like the phone card. Plasma's tray menus may show the
+        # section titles only as separators; the order still groups them.
         self.menu.addAction(self.open_action)
-        self.menu.addSeparator()
+        self.menu.setDefaultAction(self.open_action)
+        self.menu.addAction(self.reconnect_action)
+        self.menu.addSection(presenter.SECTION_QUICK)
         self.menu.addAction(self.audio_action)
         self.menu.addAction(self.hotspot_action)
         self.menu.addAction(self.mirror_action)
-        self.menu.addAction(self.reconnect_action)
-        self.menu.addSeparator()
+        self.menu.addSection(presenter.SECTION_TOOLS)
         for action in self.tool_actions.values():
             self.menu.addAction(action)
+        self.share_action = self.menu.addMenu(self.share_menu)
+        self.share_action.setVisible(False)
         self.menu.addSeparator()
         self.menu.addAction(self.quit_action)
+        self.menu.aboutToShow.connect(self.refresh_share_targets)
         # Tools and USB devices change without a signal: look when opened.
         self.menu.aboutToShow.connect(self.companion.refresh)
         self.tray.setContextMenu(self.menu)
@@ -409,6 +437,54 @@ class TrayController(QObject):
             if key not in shown:
                 action.setVisible(False)
 
+    # ---- Send to… (plugins) -------------------------------------------------
+
+    def _plugin_work(self, work: Callable[[], object], done: Callable[[object], None]) -> None:
+        task = Task(work)
+        self._plugin_tasks.add(task)
+        task.signals.done.connect(done)
+        task.signals.failed.connect(lambda _message: self._targets_done(None))
+        task.signals.finished.connect(lambda: self._plugin_tasks.discard(task))
+        self._plugin_pool.start(task)
+
+    def refresh_share_targets(self) -> None:
+        if self._targets_loading:
+            return
+        self._targets_loading = True
+        self._plugin_work(self._load_targets, self._targets_done)
+
+    def _targets_done(self, value: object) -> None:
+        self._targets_loading = False
+        if isinstance(value, surfaces.ShareTargets):
+            self.share_targets = list(value.choices)
+        self.render_share()
+
+    def render_share(self) -> None:
+        self.share_menu.clear()
+        for choice in self.share_targets:
+            action = self.share_menu.addAction(
+                QIcon.fromTheme(choice.icon or "document-send"),
+                surfaces.choice_label(choice, self.share_targets),
+            )
+            action.triggered.connect(lambda _checked=False, key=choice.key: self.send_to(key))
+        self.share_menu.setTitle(presenter.share_menu_title(
+            self._targets_loading, len(self.share_targets)))
+        self.share_action.setVisible(bool(self.share_targets))
+
+    def send_to(self, key: str) -> None:
+        choice = next((c for c in self.share_targets if c.key == key), None)
+        if choice is None:
+            return
+        paths = self._pick_files(choice.label)
+        if not paths:
+            return
+
+        def done(outcome: object) -> None:
+            if isinstance(outcome, surfaces.Outcome):
+                self._tool_reported(outcome.ok, outcome.message)
+
+        self._plugin_work(lambda: self._send(choice, paths), done)
+
     def _tool_reported(self, ok: bool, message: str) -> None:
         self.tray.showMessage(
             "BlueFerry", message,
@@ -493,6 +569,13 @@ class TrayController(QObject):
             lambda _args: self._refresh_timer.start(), failed,
             timeout=ACTION_TIMEOUT_MS,
         )
+
+
+def pick_files_dialog(target: str) -> list[str]:
+    files, _filter = QFileDialog.getOpenFileNames(
+        None, _("Send to {target}").format(target=target),
+    )
+    return [str(path) for path in files]
 
 
 def launch_qt_client() -> bool:
