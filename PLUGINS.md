@@ -175,12 +175,13 @@ call the service in-process through the full validation, and
 
 ### Plugin from its own repository
 
-A plugin should be movable into its own Git repository unchanged. Layout
-(the bundled `plugins/immich_photos/` follows it):
+A plugin lives in its own Git repository (for example
+[blueferry-plugin-immich](https://github.com/joshii-h/blueferry-plugin-immich)).
+Layout:
 
 ```
 my-plugin/
-├── pyproject.toml            # depends on blueferry (for blueferry.plugin_api)
+├── pyproject.toml            # depends on blueferry-plugin-api
 ├── README.md
 ├── data/
 │   └── io.example.my_plugin.plugin
@@ -191,9 +192,80 @@ my-plugin/
 └── tests/
 ```
 
-Rules: import only `blueferry.plugin_api` from BlueFerry; declare a
-`[project.scripts]` entry point that serves and sets up the plugin; ship the
-manifest as package data and have the setup command install it together with
-the D-Bus service file. Installation from a Git URL is not implemented yet;
-the manifest keys `Version`, `ApiVersion`, `MinBlueFerry` and `Source` are
-there so it can be added without changing the format.
+Rules: import only `blueferry.plugin_api` from BlueFerry and depend on the
+`blueferry-plugin-api` distribution, not on `blueferry`:
+
+```toml
+dependencies = [
+  "blueferry-plugin-api @ git+https://github.com/joshii-h/blueferry@local/battlestation#subdirectory=plugin-api",
+]
+```
+
+(The ref is a branch for now and must become a release tag.) Declare a
+`[project.scripts]` entry point that serves the plugin and name it in `Exec=`
+(and `Cli=`). Ship exactly one manifest, in `data/` or as package data in
+`src/<package>/`.
+
+## Installing plugins
+
+```
+blueferry plugins install https://github.com/me/blueferry-plugin-x [--ref TAG|COMMIT] [--yes]
+blueferry plugins update ID [--yes]
+blueferry plugins remove ID [--yes]
+blueferry plugins enable|disable ID
+blueferry plugins config ID [--set KEY=VALUE]... [--secret KEY]...
+```
+
+The Qt settings (Plugins) and the terminal client offer the same.
+
+- Only `https://` Git URLs. The ref is pinned: `--ref` takes a tag or a
+  full commit; without it the newest version tag (`v1.2.3` or `1.2.3`) is
+  used, else the default branch's HEAD, pinned as its commit.
+- Install is two steps. First the ref is cloned to
+  `~/.local/share/blueferry/plugins/src/<id>` and the manifest is read; no
+  plugin code runs. The client shows source, ref and commit, capabilities,
+  the command it will run and the settings, and asks (`--yes` skips the
+  question). Only then a venv is created at
+  `~/.local/share/blueferry/plugins/venvs/<id>-<commit>` (with
+  `--system-site-packages` for dbus-python and PyGObject), the package is
+  installed with pip (its dependencies, including `blueferry-plugin-api`,
+  come from the network), and the manifest (with `Exec`/`Cli` pointing into
+  the venv) and the D-Bus service file are written below `~/.local/share`.
+  `Exec` and `Cli` must name a program the plugin installs, or `python`.
+- A manifest with the same `Id` that BlueFerry did not install (for example
+  from an earlier `setup` command) is replaced; the summary says so.
+- `update` compares the pinned ref with the newest tag (or the branch HEAD
+  for a pinned commit), shows both commits and the commit log, and asks.
+- `remove` deletes the checkout, the venv, the manifest and the service
+  file. The plugin's own settings and keyring entries stay.
+- Disabled plugins stay installed; clients skip them. The list lives in
+  `~/.config/blueferry/plugins.json`.
+- A BlueFerry installed system-wide shadows the venv's
+  `blueferry.plugin_api` (a regular package wins over the namespace
+  portion). That is harmless while both are the same version.
+
+## Plugin store (indexes)
+
+`blueferry plugins available` (and `search TERM`) list plugins from curated
+index files; Qt and the terminal client show them as cards. The default index
+is `plugins-index.json` in
+[joshii-h/blueferry-plugins-index](https://github.com/joshii-h/blueferry-plugins-index);
+`blueferry plugins index add|remove|reset URL` changes the list.
+
+```json
+{"version": 1, "plugins": [
+  {"id": "io.weirdware.blueferry.immich_photos", "name": "Immich photos",
+   "description": "…", "repo": "https://github.com/joshii-h/blueferry-plugin-immich",
+   "ref": "v0.2.0", "capabilities": ["photos"], "icon": "folder-pictures",
+   "emoji": "", "screenshot": "", "min_blueferry": "0.8", "api_version": 1}
+]}
+```
+
+- An index is untrusted: at most 256 KiB, fetched over https with a
+  10-second timeout, every entry validated (https Git URL, tag-like ref,
+  reverse-DNS id, plain-text name and description). Bad entries are
+  dropped.
+- Indexes are cached for six hours below `~/.cache/blueferry/plugin-index/`;
+  without network the cached copy is shown with a note.
+- An entry without `ref` is "coming soon" and cannot be installed.
+- Installing from the store uses the same confirmed install as a URL.

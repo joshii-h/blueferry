@@ -25,6 +25,7 @@ def test_find_plugin_picks_a_photos_capability() -> None:
     photos = manifest("io.example.photos")
     assert photos_view.find_plugin(Discovery((other, photos))) is photos
     assert photos_view.find_plugin(Discovery((other,))) is None
+    assert photos_view.find_plugin(Discovery((photos,)), frozenset({photos.id})) is None
 
 
 def test_load_recent_covers_missing_unconfigured_failing_and_ready(tmp_path) -> None:

@@ -23,10 +23,16 @@ DEFAULT_LIMIT = 60
 _TYPE_TEXT = {"image": _("Photo"), "video": _("Video"), "other": _("File")}
 
 
-def find_plugin(found: Discovery | None = None) -> PluginManifest | None:
-    """The first installed plugin with the ``photos`` capability (no I/O but files)."""
+def find_plugin(
+    found: Discovery | None = None, disabled: frozenset[str] | None = None,
+) -> PluginManifest | None:
+    """The first enabled plugin with the ``photos`` capability (no I/O but files)."""
     found = found if found is not None else discover(blueferry_version=__version__)
-    plugins = found.with_capability(CAPABILITY_PHOTOS)
+    if disabled is None:
+        from blueferry.plugin_manager import PluginManager
+
+        disabled = PluginManager().disabled()
+    plugins = [p for p in found.with_capability(CAPABILITY_PHOTOS) if p.id not in disabled]
     return plugins[0] if plugins else None
 
 
