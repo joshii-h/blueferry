@@ -27,12 +27,14 @@ class _Harness:
             self.handlers[signal_name] = handler
             return SimpleNamespace(remove=lambda: self.removed_matches.append(signal_name))
 
-        bus = SimpleNamespace(add_signal_receiver=subscribe, get_object=lambda *_a: object())
+        bus = SimpleNamespace(add_signal_receiver=subscribe, get_object=lambda *_a, **_k: object())
         monkeypatch.setattr(mns_watch, "get_session_bus", lambda: bus)
         monkeypatch.setattr(
             mns_watch.dbus,
             "Interface",
-            lambda *_a: SimpleNamespace(GetManagedObjects=lambda **_k: existing or {}),
+            lambda *_a: SimpleNamespace(
+                GetManagedObjects=lambda **k: k["reply_handler"](existing or {}),
+            ),
         )
 
         def schedule(delay, callback):
