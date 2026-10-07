@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable
+from pathlib import Path
 
 from gi.repository import GLib
 
@@ -21,6 +23,14 @@ RECONCILE_SECONDS = 60
 # involve a Polkit prompt, still runs at most once per RECONCILE_SECONDS.
 RETRY_BASE_SECONDS = 2
 RETRY_ATTEMPTS = 5
+# Without the packaged Polkit rule, starting the helper unit asks for admin
+# authentication. A cancelled or denied prompt looks like any other failed
+# repair, so quick retries of the repair step would show up to six prompts in
+# about a minute. They are allowed only when no prompt can appear.
+COD_POLKIT_RULES = (
+    Path("/usr/share/polkit-1/rules.d/49-blueferry-cod.rules"),
+    Path("/etc/polkit-1/rules.d/49-blueferry-cod.rules"),
+)
 
 ReadClass = Callable[[str], int | None]
 Matches = Callable[[int | None], bool]
@@ -31,6 +41,13 @@ Cancel = Callable[[int], object]
 
 def _repair_with_packaged_helper(adapter: str) -> bool:
     return bluez_setup.set_cod(adapter=adapter, authorize=True)
+
+
+def repair_is_prompt_free() -> bool:
+    """True when the repair cannot show an authentication prompt."""
+    if os.geteuid() == 0:
+        return True
+    return any(path.is_file() for path in COD_POLKIT_RULES)
 
 
 class AdapterClassSupervisor:
@@ -49,6 +66,7 @@ class AdapterClassSupervisor:
         read_class: ReadClass = bluez_setup.current_cod,
         matches: Matches = bluez_setup.desired_cod_matches,
         repair: Repair = _repair_with_packaged_helper,
+        prompt_free: Callable[[], bool] = repair_is_prompt_free,
         schedule: Schedule = GLib.timeout_add_seconds,
         cancel: Cancel = GLib.source_remove,
     ) -> None:
@@ -56,6 +74,7 @@ class AdapterClassSupervisor:
         self._read_class = read_class
         self._matches = matches
         self._repair = repair
+        self._prompt_free = prompt_free
         self._schedule = schedule
         self._cancel = cancel
         self._running = False
@@ -157,9 +176,23 @@ class AdapterClassSupervisor:
             return True
         except Exception:
             log.warning("could not restore adapter Class-of-Device", exc_info=True)
-            return False
+            return not self._repair_retry_is_quiet()
         if repaired:
             log.info("adapter Class-of-Device restored through packaged helper")
             return True
         log.warning("packaged adapter-class helper did not repair the adapter")
-        return False
+        return not self._repair_retry_is_quiet()
+
+    def _repair_retry_is_quiet(self) -> bool:
+        """Allow quick repair retries only when they cannot prompt."""
+        try:
+            quiet = bool(self._prompt_free())
+        except Exception:
+            log.debug("could not check for the Class-of-Device Polkit rule", exc_info=True)
+            quiet = False
+        if not quiet:
+            log.info(
+                "not retrying the Class-of-Device repair quickly: without "
+                "BlueFerry's Polkit rule each attempt may ask for authentication"
+            )
+        return quiet

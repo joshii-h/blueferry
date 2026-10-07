@@ -379,7 +379,10 @@ A change to these rules has to be made in both places.
   permitted by a narrow Polkit rule. No general `btmgmt` or systemd access is
   exposed. A freshly restarted bluetoothd can answer with Busy (0x0a) or hide
   the adapter briefly, so a failed startup or restart check is retried after
-  2, 4, 8, 16, and 32 s before falling back to the periodic check.
+  2, 4, 8, 16, and 32 s before falling back to the periodic check. A failed
+  repair is retried quickly only when it cannot prompt (packaged Polkit rule
+  installed, or running as root); otherwise a cancelled authentication would
+  be asked again up to five times.
 - **Recovery:** `bluetooth_recovery` performs a last-resort power cycle of the
   selected controller only. It runs after a sustained ANCS outage on a setup
   that previously worked, tries an LE-only reset first, and allows one cycle

@@ -17,6 +17,7 @@ def _supervisor(calls, state, scheduled):
             state.__setitem__("class", 0x408),
             True,
         )[-1],
+        prompt_free=lambda: True,
         schedule=lambda delay, callback: scheduled.append((delay, callback)) or 7,
         cancel=lambda timer_id: calls.append(("cancel", timer_id)),
     )
@@ -131,12 +132,13 @@ class _BusyHelper:
         return True
 
 
-def _retrying_supervisor(state, repair, scheduled, cancelled):
+def _retrying_supervisor(state, repair, scheduled, cancelled, *, prompt_free=True):
     return AdapterClassSupervisor(
         "hci7",
         read_class=lambda _adapter: state["class"],
         matches=lambda value: value == 0x408,
         repair=repair,
+        prompt_free=lambda: prompt_free,
         schedule=lambda delay, callback: scheduled.append((delay, callback)) or len(scheduled),
         cancel=cancelled.append,
     )
@@ -215,3 +217,61 @@ def test_missing_adapter_after_restart_is_retried_and_stop_cancels_it() -> None:
     assert cancelled == [2, 1]
     assert scheduled[1][1]() is False
     assert len(scheduled) == 2
+
+
+def test_failed_repair_that_may_prompt_is_not_retried_quickly() -> None:
+    # Without the packaged Polkit rule a cancelled prompt fails like Busy;
+    # retrying it would ask again up to five times within a minute.
+    state = {"class": 0x104}
+    scheduled, cancelled = [], []
+    helper = _BusyHelper(state, failures=100)
+    supervisor = _retrying_supervisor(
+        state, helper, scheduled, cancelled, prompt_free=False
+    )
+
+    supervisor.start()
+    supervisor.poke()
+
+    assert helper.calls == 2
+    assert [delay for delay, _ in scheduled] == [
+        adapter_class_supervisor.RECONCILE_SECONDS
+    ]
+
+
+def test_missing_adapter_is_retried_quickly_even_when_repair_may_prompt() -> None:
+    # Reading the class never prompts, so the restart window stays covered.
+    state = {"class": None}
+    scheduled, cancelled = [], []
+    helper = _BusyHelper(state, failures=0)
+    supervisor = _retrying_supervisor(
+        state, helper, scheduled, cancelled, prompt_free=False
+    )
+
+    supervisor.start()
+    state["class"] = 0x104
+    assert scheduled[1][1]() is False
+
+    assert helper.calls == 1
+    assert state["class"] == 0x408
+
+
+def test_prompt_free_detection(monkeypatch, tmp_path) -> None:
+    rule = tmp_path / "49-blueferry-cod.rules"
+    monkeypatch.setattr(adapter_class_supervisor, "COD_POLKIT_RULES", (rule,))
+    monkeypatch.setattr(adapter_class_supervisor.os, "geteuid", lambda: 1000)
+    assert adapter_class_supervisor.repair_is_prompt_free() is False
+
+    rule.write_text("// rule\n")
+    assert adapter_class_supervisor.repair_is_prompt_free() is True
+
+    rule.unlink()
+    monkeypatch.setattr(adapter_class_supervisor.os, "geteuid", lambda: 0)
+    assert adapter_class_supervisor.repair_is_prompt_free() is True
+
+
+def test_packaged_rule_paths_match_the_packages() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    deb = (root / "packaging/deb/blueferry-backend.install").read_text()
+    assert str(adapter_class_supervisor.COD_POLKIT_RULES[0]).lstrip("/") in deb
