@@ -612,6 +612,12 @@ class BridgeController(QObject):
     def sendToTarget(self, key: str, urls: list) -> None:
         self._plugin_surfaces.send(str(key), list(urls or []))
 
+    @Slot(str, str, str, "QVariantList")
+    def sendFromPluginCard(self, plugin_id: str, target_id: str, label: str, urls: list) -> None:
+        """A card action with send_to, or files dropped on a card item."""
+        self._plugin_surfaces.send_from_card(
+            str(plugin_id), str(target_id), str(label), list(urls or []))
+
     @Property("QVariantMap", notify=companionToolsChanged)
     def companionTools(self):
         return self._companion.state()
