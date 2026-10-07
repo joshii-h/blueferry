@@ -39,7 +39,7 @@ Desktop-entry syntax, group `[BlueFerry Plugin]`:
 | `Id` | yes | Reverse-DNS id, e.g. `io.weirdware.blueferry.immich_photos`. |
 | `Name` | yes | Display name (plain text, ≤ 80 characters). |
 | `Version` | yes | The plugin's own version. |
-| `ApiVersion` | yes | Plugin contract version it implements: `MAJOR` or `MAJOR.MINOR` (currently `1.3`). Clients ignore unknown major versions, and a manifest that needs a newer minor than the running BlueFerry knows (`1.4` on a 1.3 BlueFerry) is ignored with a message. |
+| `ApiVersion` | yes | Plugin contract version it implements: `MAJOR` or `MAJOR.MINOR` (currently `1.4`). Clients ignore unknown major versions, and a manifest that needs a newer minor than the running BlueFerry knows (`1.4` on a 1.3 BlueFerry) is ignored with a message. |
 | `MinBlueFerry` | yes | Oldest BlueFerry release the plugin works with. |
 | `Capabilities` | yes | `;`-separated list. Known: `photos`, `card`, `share`, `notify` (1.2); reserved: `conversations`. Unknown entries are dropped; a manifest with none left is ignored. |
 | `Homepage`, `Source` | at least one | `https://` URLs. |
@@ -48,6 +48,7 @@ Desktop-entry syntax, group `[BlueFerry Plugin]`:
 | `Alias` | no | Short lowercase name for the CLI, e.g. `immich`. |
 | `ConfigTest` | no | `true`: the plugin implements `TestConfig` and the form shows "Test connection" (1.3). Needs `[Config …]` settings. |
 | `ConfigLogin` | no | A browser sign-in provider, today `nextcloud`: the form shows "Sign in with Nextcloud" (1.3). Clients ignore providers they do not know. Needs `[Config …]` settings. |
+| `ReplacesTools` | no | `;`-separated companion tools the plugin stands in for (1.4): `localsend` (the LocalSend app under Tools) or `uxplay`. While the plugin is enabled the clients hide that tool, so the app and the plugin never fight over a port. Unknown names are ignored. |
 
 ### Settings (`[Config <key>]`, ApiVersion 1.1)
 
@@ -345,8 +346,32 @@ class Drop(ShareService):
 
 `blueferry.plugin_api.testing.FakeHost` plays BlueFerry's side in tests,
 with the same validation: `host.card_items()`, `host.invoke(item, action)`,
-`host.share_targets()`, `host.send(target, paths)`, `host.card_changes`,
+`host.share_targets()`, `host.send(target, paths)`,
+`host.send_action(item, action, paths)` (1.4), `host.card_changes`,
 `host.notifications` and `host.click(notification)`.
+
+#### Card actions that send files (ApiVersion 1.4)
+
+A plugin with both `card` and `share` can put "Send files…" right on an
+item, e.g. on each device it found. The action carries the share target:
+
+```json
+{"id": "send", "label": "Send files…", "icon": "document-send", "kind": "primary",
+ "send_to": "ls-3f2a…"}
+```
+
+`send_to` matches the id rules and names one of the plugin's
+`ShareTargets`. BlueFerry then does not call `InvokeAction`: it asks for
+files (the Qt client opens a file dialog, the terminal client a path prompt,
+`blueferry cards --run PLUGIN:ITEM:ACTION FILE…` takes them as arguments)
+and calls `SendFiles(send_to, paths)` on the same plugin. In the Qt card
+files dragged onto such an item go to the `send_to` of its first sending
+action. Progress and errors show up on the card as for "Send to…". A
+`send_to` on a plugin without `share` is ignored (the action is an ordinary
+button). Clients that only know 1.3 ignore the key and call
+`InvokeAction(item, action)`; answer that with a hint such as "Use Send to…".
+In Python: `Action("send", "Send files…", "document-send", "primary",
+send_to=target_id)`.
 
 ### Browser sign-in: Nextcloud Login Flow v2 (ApiVersion 1.3)
 
@@ -409,6 +434,29 @@ class WebDav(ShareService):
 
 Errors are D-Bus errors under `io.weirdware.BlueFerry.Plugin.Error.*`
 (`Failed`, `RateLimited`). Messages are short and contain no personal data.
+
+### Plugin log file (ApiVersion 1.4)
+
+A D-Bus activated plugin inherits the bus daemon's stdout and stderr, which
+usually end on a console nobody reads. `plugin_api.service.run()` therefore
+adds a standard log file for every plugin (`run(..., log_file=False)` turns
+it off; `blueferry.plugin_api.logs.setup_logging(id)` does the same for other
+entry points):
+
+- `$XDG_STATE_HOME/blueferry/plugins/<Id>.log` (`~/.local/state/…` without
+  the variable), directory 0700, file 0600, never through a symlink;
+- at most 512 KiB, rotated to `.log.1` and `.log.2`;
+- level INFO, `BLUEFERRY_PLUGIN_LOG_LEVEL=DEBUG` in the plugin's environment
+  for more; uncaught exceptions (also in threads) and Python warnings are
+  included;
+- every line is passed through `logs.redact()`, which masks the values of
+  `token`, `password`, `pin`, `api_key`, `sessionId`, `Authorization` and
+  similar keys. It is a safety net: still never log secrets, message text,
+  names or addresses on purpose.
+
+The clients read the file: "Show log" next to the plugin in the Qt settings,
+`g` in the terminal client's plugin list and `blueferry plugins log ID
+[--lines N] [--path]`.
 
 ### Versioning
 
