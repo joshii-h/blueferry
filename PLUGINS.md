@@ -549,6 +549,16 @@ The Qt settings (Plugins) and the terminal client offer the same.
   file. The plugin's own settings and keyring entries stay.
 - Disabled plugins stay installed; clients skip them. The list lives in
   `~/.config/blueferry/plugins.json`.
+- A plugin process keeps running after its venv is replaced or deleted, and
+  server plugins (LocalSend, Shortcuts) never exit on their own. So after a
+  successful `update`, `remove` or `disable`, BlueFerry asks the session bus
+  which process owns the plugin's bus name and sends it SIGTERM, but only if
+  it runs as you and its executable, interpreter or script lies in the
+  plugin's old venv; it waits up to three seconds and never sends SIGKILL.
+  D-Bus activation starts the new version on next use. CLI, Qt and the
+  terminal client say "Stopped the running plugin" or, when the process did
+  not exit or runs from elsewhere (a developer checkout), that it was left
+  running.
 - A BlueFerry installed system-wide shadows the venv's
   `blueferry.plugin_api` (a regular package wins over the namespace
   portion). That is harmless while both are the same version.
