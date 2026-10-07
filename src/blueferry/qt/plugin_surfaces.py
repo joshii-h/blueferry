@@ -209,7 +209,10 @@ class PluginSurfaces(QObject):
         self, resolve: Callable[[], surfaces.ShareChoice | None], paths: list[str],
     ) -> None:
         def work() -> surfaces.Outcome:
-            choice = resolve()  # reads manifests: not on the UI thread
+            try:
+                choice = resolve()  # manifests and the plugin: not on the UI thread
+            except LookupError as error:
+                return surfaces.Outcome(False, str(error))
             if choice is None:
                 return surfaces.Outcome(False, _("The plugin can no longer send files."))
             try:

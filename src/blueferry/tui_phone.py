@@ -293,10 +293,17 @@ class PhoneScreen(ModalScreen[None]):
     @work(thread=True, group="phone-plugin-action", exit_on_error=False)
     def _open_card_send(self, plugin_id: str, target: str, label: str) -> None:
         """A card action with send_to: ask for paths, send to that target."""
-        choice = surfaces.card_choice(plugin_id, target, label)  # reads manifests
+        try:
+            choice: surfaces.ShareChoice | str | None = surfaces.card_choice(
+                plugin_id, target, label)  # manifests and the plugin: worker only
+        except LookupError as error:
+            choice = str(error)
         self.app.call_from_thread(self._show_card_send, choice)
 
-    def _show_card_send(self, choice: surfaces.ShareChoice | None) -> None:
+    def _show_card_send(self, choice: surfaces.ShareChoice | str | None) -> None:
+        if isinstance(choice, str):
+            self.notify(_plain(choice), severity="warning", markup=False)
+            return
         if choice is None:
             self.notify("The plugin can no longer send files.", severity="warning")
             return

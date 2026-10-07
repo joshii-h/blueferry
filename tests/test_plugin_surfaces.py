@@ -190,11 +190,17 @@ def test_card_choice_needs_an_enabled_share_plugin(monkeypatch) -> None:
                        extra="Alias=ls\n")
     monkeypatch.setattr(surfaces, "find_plugin", lambda plugin_id, capability: (
         sharing if capability == "share" and plugin_id == "io.example.ls" else None))
-    choice = surfaces.card_choice("io.example.ls", "ls-1", "iPhone\n")
+    factory = _factory({sharing.id: {"ShareTargets": json.dumps({"targets": [
+        {"id": "ls-1", "label": "iPhone", "icon": "phone"}]})}})
+    choice = surfaces.card_choice("io.example.ls", "ls-1", "iPhone\n",
+                                  client_factory=factory)
     assert choice is not None and choice.key == "io.example.ls:ls-1"
     assert choice.label == "iPhone" and choice.plugin_alias == "ls"
     assert surfaces.card_choice("io.example.other", "ls-1") is None
     assert surfaces.card_choice("io.example.ls", "bad:id") is None
+    # A card older than the device list: the target is gone.
+    with pytest.raises(LookupError, match="no longer there"):
+        surfaces.card_choice("io.example.ls", "ls-2", "iPad", client_factory=factory)
 
 
 def test_cli_cards_runs_a_sending_action_with_files(monkeypatch, tmp_path) -> None:

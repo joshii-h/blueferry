@@ -248,3 +248,17 @@ def test_send_from_card_resolves_the_target_off_the_ui_thread(app, tmp_path) -> 
     gone.send_from_card("io.example.ls", "ls-1", "iPhone", [str(picked)])
     _wait(lambda: gone.state()["message"] != "")
     assert gone.state()["messageOk"] is False
+
+
+def test_a_stale_card_target_says_to_refresh(app, tmp_path) -> None:
+    picked = tmp_path / "a.txt"
+    picked.write_text("x")
+
+    def stale(*_args):
+        raise LookupError("iPhone is no longer there. Refresh the card and try again.")
+
+    adapter = PluginSurfaces(load_cards=lambda: [], share_available=lambda: True,
+                             card_choice=stale)
+    adapter.send_from_card("io.example.ls", "ls-1", "iPhone", [str(picked)])
+    _wait(lambda: adapter.state()["message"] != "")
+    assert adapter.state()["messageOk"] is False and "Refresh" in adapter.state()["message"]

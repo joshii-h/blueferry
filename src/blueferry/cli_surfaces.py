@@ -99,7 +99,11 @@ def _run_sending(plugin_id: str, target: str, title: str, files: list[str]) -> N
     except ValueError as error:
         typer.echo(terminal_text(error), err=True)
         raise typer.Exit(code=2) from None
-    choice = _hooks["card_choice"](plugin_id, target, title)
+    try:
+        choice = _hooks["card_choice"](plugin_id, target, title)
+    except LookupError as error:
+        typer.echo(terminal_text(error), err=True)
+        raise typer.Exit(code=1) from None
     if choice is None:
         typer.echo("The plugin can no longer send files.", err=True)
         raise typer.Exit(code=1)

@@ -115,3 +115,25 @@ def test_level_comes_from_the_environment(tmp_path, clean_root_logger) -> None:
     path = plugin_logs.setup_logging("io.example.d", environ=env)
     logging.getLogger("io.example.d").debug("now visible")
     assert "now visible" in path.read_text()
+
+
+def test_a_symlinked_blueferry_directory_is_refused(tmp_path, clean_root_logger) -> None:
+    env = {"XDG_STATE_HOME": str(tmp_path / "state")}
+    (tmp_path / "state").mkdir()
+    (tmp_path / "elsewhere").mkdir()
+    (tmp_path / "state" / "blueferry").symlink_to(tmp_path / "elsewhere")
+    assert plugin_logs.setup_logging("io.example.s", environ=env) is None
+    assert not any((tmp_path / "elsewhere").iterdir())
+
+
+def test_other_handlers_keep_their_threshold(tmp_path, clean_root_logger) -> None:
+    import io
+
+    stream = io.StringIO()
+    other = logging.StreamHandler(stream)
+    clean_root_logger.addHandler(other)
+    clean_root_logger.setLevel(logging.WARNING)
+    path = plugin_logs.setup_logging("io.example.t", environ={"XDG_STATE_HOME": str(tmp_path)})
+    logging.getLogger("io.example.t").info("only in the file")
+    assert "only in the file" in path.read_text() and stream.getvalue() == ""
+    assert stat.S_IMODE(os.stat(path.parent.parent).st_mode) == 0o700

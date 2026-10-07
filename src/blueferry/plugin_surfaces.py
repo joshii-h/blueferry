@@ -257,14 +257,29 @@ def resolve_choice(choices: Sequence[ShareChoice], spec: str | None) -> ShareCho
         target=plain_text(spec, 120), targets=", ".join(choice.key for choice in matches)))
 
 
-def card_choice(plugin_id: str, target_id: str, label: str = "") -> ShareChoice | None:
-    """The share target behind a card action with ``send_to`` (1.4), or None
-    when the plugin is gone, disabled or has no ``share``; reads manifests."""
+def card_choice(
+    plugin_id: str, target_id: str, label: str = "", *,
+    client_factory: ClientFactory = PluginClient,
+) -> ShareChoice | None:
+    """*Blocking.* The share target behind a card action with ``send_to``
+    (1.4), or None when the plugin is gone, disabled or has no ``share``.
+
+    Asks the plugin whether it still offers the target (a card can be
+    older than the device list); LookupError with a message if not.
+    """
     if not valid_id(target_id):
         return None
     plugin = find_plugin(plugin_id, CAPABILITY_SHARE)
     if plugin is None:
         return None
+    try:
+        offered = {target.id for target in client_factory(plugin).share_targets()}
+    except PluginError as error:
+        raise LookupError(_("{plugin}: {reason}").format(
+            plugin=plugin.name, reason=_reason(error))) from None
+    if target_id not in offered:
+        raise LookupError(_("{target} is no longer there. Refresh the card and try "
+                            "again.").format(target=plain_text(label, 80) or _("The target")))
     return ShareChoice(plugin.id, plugin.name, target_id,
                        plain_text(label, 80) or plugin.name, "", plugin.alias)
 

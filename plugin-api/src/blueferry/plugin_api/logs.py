@@ -117,13 +117,23 @@ class PrivateRotatingFileHandler(logging.handlers.RotatingFileHandler):
         return os.fdopen(descriptor, "a", encoding="utf-8", errors="replace")
 
 
-def _private_directory(path: Path) -> None:
-    path.mkdir(parents=True, exist_ok=True, mode=0o700)
-    info = os.lstat(path)
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
-        raise OSError("the log directory is not a directory of this user")
-    if info.st_mode & 0o077:
-        os.chmod(path, 0o700)
+def _private_directory(path: Path, base: Path) -> None:
+    """Create ``path`` below ``base`` one level at a time: every created or
+    existing level must be a real directory of this user (no symlink), and
+    the levels this module owns (``blueferry``, ``plugins``) are 0700."""
+    base.mkdir(parents=True, exist_ok=True)
+    current = base
+    for part in path.relative_to(base).parts:
+        current = current / part
+        try:
+            current.mkdir(mode=0o700)
+        except FileExistsError:
+            pass
+        info = os.lstat(current)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+            raise OSError("the log directory is not a directory of this user")
+        if info.st_mode & 0o077:
+            os.chmod(current, 0o700)
 
 
 def _level(environ: Mapping[str, str]) -> int:
@@ -178,7 +188,7 @@ def setup_logging(
             return Path(handler.baseFilename)  # type: ignore[attr-defined]
     try:
         path = log_path(plugin_id, env)
-        _private_directory(path.parent)
+        _private_directory(path.parent, state_home(env))
         handler = PrivateRotatingFileHandler(
             path, maxBytes=max_bytes, backupCount=backups, encoding="utf-8",
         )
@@ -189,9 +199,14 @@ def setup_logging(
     handler.setFormatter(RedactingFormatter(FORMAT))
     level = _level(env)
     handler.setLevel(level)
-    root.addHandler(handler)
     if root.level == logging.NOTSET or root.level > level:
+        # Let the file see INFO without making the plugin's other handlers
+        # (stderr) chattier than before: they keep the old threshold.
+        for other in root.handlers:
+            if other.level == logging.NOTSET and root.level != logging.NOTSET:
+                other.setLevel(root.level)
         root.setLevel(level)
+    root.addHandler(handler)
     logging.captureWarnings(True)
     _install_hooks()
     return path

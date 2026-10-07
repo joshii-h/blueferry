@@ -132,8 +132,9 @@ ColumnLayout {
                         parent: item
                         anchors.fill: parent
                         enabled: item.dropsFiles && !section.working
+                        // Only local files: a link dragged from a browser is no file.
                         onEntered: drag => {
-                            if (!drag.hasUrls)
+                            if (!drag.hasUrls || drag.urls.some(url => !String(url).startsWith("file:")))
                                 drag.accepted = false
                         }
                         onDropped: drop => {
