@@ -6,7 +6,8 @@ and main-loop hand-offs run inline. ``ServiceTransport`` lets a
 directly, through the same validation the real D-Bus transport gets.
 ``ScriptedTransport`` replays canned replies for client-only tests.
 ``FakeHost`` plays BlueFerry's side of the ApiVersion 1.2 surfaces (card,
-share, notify) against a service, with the clients' own validation.
+share, notify) and the 1.3 settings helpers (TestConfig, ConfigLogin)
+against a service, with the clients' own validation.
 """
 from __future__ import annotations
 
@@ -18,9 +19,10 @@ from typing import Any
 from . import (
     PHOTOS_INTERFACE,
     PLUGIN_INTERFACE,
+    config_flow,
     surfaces,
 )
-from .client import PluginClient, PluginError
+from .client import ConfigResult, PluginClient, PluginError
 from .manifest import PluginManifest, parse_manifest
 from .service import PluginService
 
@@ -120,6 +122,13 @@ class FakeHost:
     ``host.click(notification)`` presses its action button. Replies pass the
     same validation as in BlueFerry, so text is cut to the limits and an
     ``open_uri`` outside ``cache_root`` comes back as None.
+
+    Settings (ApiVersion 1.3): ``host.get_config()``, ``host.set_config(v)``,
+    ``host.test_config(values)`` ("Test connection") and
+    ``host.sign_in(values)``, which runs ConfigLogin and then polls
+    ConfigLoginStatus until a final state (``max_polls``, no sleeping) and
+    records the opened sign-in URL in ``host.opened``. ``host.cancel_sign_in``
+    sends ConfigLoginCancel.
     """
 
     def __init__(
@@ -128,6 +137,7 @@ class FakeHost:
         self.service = service
         self.card_changes = 0
         self.notifications: list[surfaces.Notification] = []
+        self.opened: list[str] = []
         self.transport = ServiceTransport(service)
         self.client = PluginClient(
             service.manifest, transport=self.transport,
@@ -169,3 +179,37 @@ class FakeHost:
         return self.client.invoke_action(
             surfaces.NOTIFY_ITEM_ID, notification.action_id, {}, notify=True,
         )
+
+    # ---- settings (ApiVersion 1.3) ------------------------------------------------
+
+    def get_config(self) -> dict[str, object]:
+        return self.client.get_config()
+
+    def set_config(self, values: Mapping[str, object]) -> ConfigResult:
+        return self.client.set_config(values)
+
+    def test_config(self, values: Mapping[str, object]) -> config_flow.ConfigTestResult:
+        """The user pressed "Test connection" with these typed values."""
+        return self.client.test_config(values)
+
+    def sign_in(
+        self, values: Mapping[str, object] | None = None, *, max_polls: int = 50,
+    ) -> config_flow.LoginStep:
+        """The user pressed "Sign in with …": start, open, poll to the end.
+
+        Returns the final step; a flow still pending after ``max_polls``
+        comes back as ``pending``.
+        """
+        step = self.client.config_login(values or {})
+        if step.state != "open":
+            return step
+        self.opened.append(step.open_uri)
+        login_id = step.login_id
+        for _poll in range(max_polls):
+            status = self.client.config_login_status(login_id)
+            if status.final:
+                return status
+        return config_flow.LoginStep("pending", login_id=login_id)
+
+    def cancel_sign_in(self, login_id: str) -> None:
+        self.client.config_login_cancel(login_id)

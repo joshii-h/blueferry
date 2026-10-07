@@ -1,18 +1,30 @@
 """Plugin API 1.3: the guided settings form, TestConfig and ConfigLogin."""
 from __future__ import annotations
 
+import json
+
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from blueferry.plugin_api.client import PluginError
 from blueferry.plugin_api.config import (
+    SECRET_MASK,
     ConfigError,
     validate,
     value_text,
     visible_fields,
 )
+from blueferry.plugin_api.config_flow import (
+    ConfigTestResult,
+    FlowError,
+    LoginStep,
+    parse_config_test,
+    parse_login_step,
+)
 from blueferry.plugin_api.manifest import ManifestError
-from blueferry.plugin_api.testing import manifest
+from blueferry.plugin_api.service import CardService
+from blueferry.plugin_api.testing import FakeHost, inline_service, manifest
 
 FORM = """
 [ConfigGroup account]
@@ -198,3 +210,139 @@ def test_a_pattern_never_raises_anything_but_config_error(text) -> None:
         field.coerce(text)
     except ConfigError:
         pass
+
+
+# ---- TestConfig and ConfigLogin over the full client validation ------------------
+
+NEXTCLOUD = """
+[Config url]
+Label=Server URL
+Type=url
+Required=true
+
+[Config user]
+Label=User
+Type=string
+
+[Config app_password]
+Label=App password
+Type=secret
+Required=true
+"""
+
+
+class _Nextcloud(CardService):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.stored: dict[str, object] = {}
+        self.tested: list[dict] = []
+        self.polls = 0
+        self.cancelled: list[str] = []
+
+    def config_values(self):
+        return {**self.stored, "app_password": bool(self.stored.get("app_password"))}
+
+    def apply_config(self, values) -> None:
+        self.stored.update(values)
+
+    def test_config(self, values):
+        self.tested.append(dict(values))
+        if values["url"] == "https://down.example":
+            raise ConfigError("url", "the server did not answer")
+        return ConfigTestResult(True, "Connected as anna\x1b[31m to Nextcloud 31")
+
+    def config_login(self, provider, values):
+        assert provider == "nextcloud" and "app_password" not in values
+        if values["url"] == "https://flow.example":
+            return LoginStep("open", login_id="flow-1",
+                             open_uri="https://flow.example/login/v2/flow/abc")
+        return {"state": "open", "login_id": "x", "open_uri": "http://evil.example/"}
+
+    def config_login_status(self, login_id):
+        self.polls += 1
+        if self.polls < 3:
+            return {"state": "pending"}
+        self.stored.update(url="https://flow.example", user="anna", app_password="secret")
+        return LoginStep("done", "Connected as anna")
+
+    def config_login_cancel(self, login_id) -> None:
+        self.cancelled.append(login_id)
+
+
+def _host(header: str = "ConfigTest=true\nConfigLogin=nextcloud\n"):
+    plugin = manifest("io.example.nextcloud", capabilities="card;", api_version="1.3",
+                      extra=header + NEXTCLOUD)
+    service = inline_service(_Nextcloud, plugin)
+    return FakeHost(service), service
+
+
+def test_test_config_checks_typed_values_without_saving() -> None:
+    host, service = _host()
+    result = host.test_config({"url": "https://cloud.example", "app_password": "typed"})
+    assert result.ok and result.message.startswith("Connected as anna")
+    assert "\x1b" not in result.message
+    assert service.tested[-1]["app_password"] == "typed" and service.stored == {}
+    result = host.test_config({"url": "https://down.example", "app_password": "x"})
+    assert not result.ok and result.errors == {"url": "the server did not answer"}
+    # The schema still runs first; nothing reaches the hook then.
+    result = host.test_config({"url": "ftp://x"})
+    assert not result.ok and set(result.errors) == {"url", "app_password"}
+    assert len(service.tested) == 2
+
+
+def test_sign_in_opens_the_browser_polls_and_never_returns_the_password() -> None:
+    host, service = _host()
+    step = host.sign_in({"url": "https://flow.example", "app_password": "ignored"})
+    assert step.state == "done" and step.message == "Connected as anna"
+    assert host.opened == ["https://flow.example/login/v2/flow/abc"]
+    assert service.polls == 3
+    shown = host.get_config()
+    assert shown["user"] == "anna" and shown["app_password"] == SECRET_MASK
+    assert "secret" not in json.dumps(shown)
+    host.cancel_sign_in("flow-1")
+    assert service.cancelled == ["flow-1"]
+
+
+def test_sign_in_refuses_plain_http_bad_ids_and_missing_offers() -> None:
+    host, _service = _host()
+    with pytest.raises(PluginError, match="not https"):
+        host.sign_in({"url": "https://other.example"})
+    step = host.sign_in({"url": "ftp://nope"})
+    assert step.state == "error" and step.message.startswith("url:")
+    with pytest.raises(PluginError, match="sign-in id"):
+        host.client.config_login_status("../x")
+    plain, _service = _host(header="")
+    with pytest.raises(PluginError, match="cannot test"):
+        plain.test_config({})
+    with pytest.raises(PluginError, match="no browser sign-in"):
+        plain.sign_in({})
+    # Called anyway (an old or rogue client), the plugin refuses too.
+    outcome: list = []
+    plain.service.TestConfig("{}", reply=outcome.append, error=outcome.append, sender=":1.2")
+    plain.service.ConfigLogin("nextcloud", "{}", reply=outcome.append, error=outcome.append,
+                              sender=":1.2")
+    assert "cannot test" in str(outcome[0]) and "no browser sign-in" in str(outcome[1])
+
+
+def test_an_unknown_provider_shows_no_button() -> None:
+    host, _service = _host(header="ConfigLogin=future-cloud\n")
+    assert host.client.login_provider() == ""
+
+
+@pytest.mark.parametrize("reply", [
+    "nope", "[]", '{"state": "maybe"}', '{"state": "open", "login_id": "a b", '
+    '"open_uri": "https://x.example"}', '{"state": "open", "login_id": "a"}',
+])
+def test_broken_login_replies_are_errors(reply) -> None:
+    with pytest.raises(FlowError):
+        parse_login_step(reply, start=True)
+
+
+def test_status_replies_are_plain_text_and_states_are_closed() -> None:
+    step = parse_login_step('{"state": "expired", "message": "too\\nlate"}', start=False)
+    assert step.final and step.message == "too late"
+    with pytest.raises(FlowError):
+        parse_login_step('{"state": "open"}', start=False)
+    assert parse_config_test('{"ok": false}').message == "The test failed."
+    with pytest.raises(FlowError):
+        parse_config_test('{"ok": "yes"}')

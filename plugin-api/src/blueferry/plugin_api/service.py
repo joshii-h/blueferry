@@ -25,11 +25,13 @@ import dbus.service
 from . import (
     API_MINOR,
     API_VERSION,
+    LOGIN_PROVIDERS,
     MAX_RECENT_PHOTOS,
     MAX_REPLY_BYTES,
     OBJECT_PATH,
     PHOTOS_INTERFACE,
     PLUGIN_INTERFACE,
+    config_flow,
     surfaces,
 )
 from .config import ConfigError, masked, parse_update, validate
@@ -110,6 +112,41 @@ class PluginService(dbus.service.Object):
         (for example a key the server refuses).
         """
         raise PluginCallError("this plugin has no settings")
+
+    def test_config(
+        self, values: dict[str, object],
+    ) -> config_flow.ConfigTestResult | dict[str, object]:
+        """Blocking; worker thread. ApiVersion 1.3, with ``ConfigTest=true``.
+
+        Check ``values`` (validated like for :meth:`apply_config`; a secret
+        the user did not retype is missing, use the stored one) against the
+        server without storing anything. Return ``ConfigTestResult(ok,
+        message)``, e.g. ``"Connected as anna to Nextcloud 31"``, or raise
+        :class:`~blueferry.plugin_api.config.ConfigError` for one field.
+        """
+        raise PluginCallError("this plugin cannot test its settings")
+
+    def config_login(
+        self, provider: str, values: dict[str, object],
+    ) -> config_flow.LoginStep | dict[str, object]:
+        """Blocking; worker thread. ApiVersion 1.3, with ``ConfigLogin=``.
+
+        Start the browser sign-in for ``provider`` (the manifest's value).
+        ``values`` are the form's typed non-secret values, checked against
+        the schema but not stored. Return ``LoginStep("open", login_id=…,
+        open_uri=…)``; the client opens the URI and polls
+        :meth:`config_login_status`. Store what the provider hands over
+        (server, user, app password) yourself, never send it back.
+        """
+        raise PluginCallError("this plugin has no browser sign-in")
+
+    def config_login_status(self, login_id: str) -> config_flow.LoginStep | dict[str, object]:
+        """Blocking; worker thread. ``pending``, then ``done`` (stored;
+        message "Connected as …"), ``error``, ``expired`` or ``cancelled``."""
+        raise PluginCallError("this plugin has no browser sign-in")
+
+    def config_login_cancel(self, login_id: str) -> None:
+        """Blocking; worker thread. Stop the flow; no answer expected."""
 
     # ---- helpers ---------------------------------------------------------
 
@@ -204,6 +241,59 @@ class PluginService(dbus.service.Object):
         text = str(update)
         self.run_async(lambda: self._set_config(text), reply, error)
 
+    @dbus.service.method(
+        PLUGIN_INTERFACE, in_signature="s", out_signature="s",
+        async_callbacks=("reply", "error"), sender_keyword="sender",
+    )
+    def TestConfig(self, update, reply, error, sender=None) -> None:
+        self.admit(sender)
+        text = str(update)
+        self.run_async(lambda: self._test_config(text), reply, error)
+
+    @dbus.service.method(
+        PLUGIN_INTERFACE, in_signature="ss", out_signature="s",
+        async_callbacks=("reply", "error"), sender_keyword="sender",
+    )
+    def ConfigLogin(self, provider, values, reply, error, sender=None) -> None:
+        self.admit(sender)
+        name, text = str(provider), str(values)
+        self.run_async(lambda: self._config_login(name, text), reply, error)
+
+    @dbus.service.method(
+        PLUGIN_INTERFACE, in_signature="s", out_signature="s",
+        async_callbacks=("reply", "error"), sender_keyword="sender",
+    )
+    def ConfigLoginStatus(self, login_id, reply, error, sender=None) -> None:
+        self.admit(sender)
+        ident = str(login_id)
+
+        def work() -> str:
+            self._login_provider()
+            if not config_flow.valid_login_id(ident):
+                raise PluginCallError("not a sign-in id")
+            return _flow_json(lambda: config_flow.login_step_json(
+                self.config_login_status(ident), start=False,
+            ))
+
+        self.run_async(work, reply, error)
+
+    @dbus.service.method(
+        PLUGIN_INTERFACE, in_signature="s", out_signature="s",
+        async_callbacks=("reply", "error"), sender_keyword="sender",
+    )
+    def ConfigLoginCancel(self, login_id, reply, error, sender=None) -> None:
+        self.admit(sender)
+        ident = str(login_id)
+
+        def work() -> str:
+            self._login_provider()
+            if not config_flow.valid_login_id(ident):
+                raise PluginCallError("not a sign-in id")
+            self.config_login_cancel(ident)
+            return json.dumps({"ok": True})
+
+        self.run_async(work, reply, error)
+
     def _fields(self):
         if not self.manifest.config:
             raise PluginCallError("this plugin has no settings")
@@ -228,6 +318,67 @@ class PluginService(dbus.service.Object):
             return json.dumps({"ok": False, "errors": {failure.field: failure.message}})
         log.info("plugin settings saved (%d fields)", len(values))
         return json.dumps({"ok": True})
+
+    def _test_config(self, text: str) -> str:
+        fields = self._fields()
+        if not self.manifest.config_test:
+            raise PluginCallError("this plugin cannot test its settings")
+        try:
+            update = parse_update(text)
+        except ConfigError as failure:
+            return config_flow.config_test_json(config_flow.ConfigTestResult(
+                False, failure.message, {failure.field: failure.message},
+            ))
+        values, errors = validate(fields, self.config_values(), update)
+        if errors:
+            return config_flow.config_test_json(config_flow.ConfigTestResult(
+                False, "Check the marked settings.", errors,
+            ))
+        try:
+            result = self.test_config(values)
+        except ConfigError as failure:
+            result = config_flow.ConfigTestResult(
+                False, failure.message, {failure.field: failure.message} if failure.field else {},
+            )
+        log.info("plugin settings tested")
+        return _flow_json(lambda: config_flow.config_test_json(result))
+
+    def _login_provider(self) -> str:
+        provider = self.manifest.config_login
+        if not provider:
+            raise PluginCallError("this plugin has no browser sign-in")
+        return provider
+
+    def _config_login(self, provider: str, text: str) -> str:
+        fields = self._fields()
+        if provider != self._login_provider() or provider not in LOGIN_PROVIDERS:
+            raise PluginCallError("this plugin has no such sign-in")
+        try:
+            update = parse_update(text)
+        except ConfigError as failure:
+            raise PluginCallError(failure.message) from None
+        secrets = {field.key for field in fields if field.secret}
+        typed = {key: value for key, value in update.items() if key not in secrets}
+        values, errors = validate(fields, self.config_values(), typed)
+        # The sign-in fills the secrets, so a missing one is no error here.
+        reasons = {key: reason for key, reason in errors.items() if key not in secrets}
+        if reasons:
+            key, reason = next(iter(reasons.items()))
+            return config_flow.login_step_json(
+                config_flow.LoginStep("error", f"{key}: {reason}"), start=True,
+            )
+        log.info("plugin sign-in started")
+        return _flow_json(lambda: config_flow.login_step_json(
+            self.config_login(provider, values), start=True,
+        ))
+
+
+def _flow_json(serialise: Callable[[], str]) -> str:
+    """A hook result that breaks the contract fails with the reason."""
+    try:
+        return serialise()
+    except (config_flow.FlowError, TypeError) as error:
+        raise PluginCallError(str(error)) from None
 
 
 class PhotosService(PluginService):

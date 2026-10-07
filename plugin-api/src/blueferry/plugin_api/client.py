@@ -18,15 +18,21 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from . import (
+    LOGIN_PROVIDERS,
     MAX_RECENT_PHOTOS,
     MAX_REPLY_BYTES,
+    METHOD_CONFIG_LOGIN,
+    METHOD_CONFIG_LOGIN_CANCEL,
+    METHOD_CONFIG_LOGIN_STATUS,
     METHOD_GET_CARD_ITEMS,
     METHOD_INVOKE_ACTION,
     METHOD_SEND_FILES,
     METHOD_SHARE_TARGETS,
+    METHOD_TEST_CONFIG,
     OBJECT_PATH,
     PHOTOS_INTERFACE,
     PLUGIN_INTERFACE,
+    config_flow,
     surfaces,
 )
 from .config import SECRET_MASK, ConfigError
@@ -37,6 +43,10 @@ LIST_TIMEOUT_SEC = 90.0
 FETCH_TIMEOUT_SEC = 600.0
 # SetConfig may check the new settings against the plugin's server.
 CONFIG_TIMEOUT_SEC = 60.0
+# ApiVersion 1.3: TestConfig talks to the server; ConfigLogin only starts a
+# browser flow and ConfigLoginStatus answers from the plugin's own state.
+TEST_TIMEOUT_SEC = 60.0
+LOGIN_TIMEOUT_SEC = 30.0
 # ApiVersion 1.2 surfaces. SendFiles only starts a transfer; long ones
 # report progress on a card item.
 CARD_TIMEOUT_SEC = 15.0
@@ -232,8 +242,7 @@ class PluginClient:
                 result[field.key] = field.empty()
         return result
 
-    def set_config(self, values: Mapping[str, object]) -> ConfigResult:
-        """Send changed settings; a secret only when a new one was typed."""
+    def _update(self, values: Mapping[str, object], *, secrets: bool = True) -> dict[str, object]:
         fields = {field.key: field for field in self.manifest.config}
         if not fields:
             raise PluginError("this plugin has no settings")
@@ -242,9 +251,14 @@ class PluginClient:
             field = fields.get(key)
             if field is None:
                 continue
-            if field.secret and value in (None, "", SECRET_MASK):
+            if field.secret and (not secrets or value in (None, "", SECRET_MASK)):
                 continue
             update[key] = value
+        return update
+
+    def set_config(self, values: Mapping[str, object]) -> ConfigResult:
+        """Send changed settings; a secret only when a new one was typed."""
+        update = self._update(values)
         reply = self._json(
             PLUGIN_INTERFACE, "SetConfig", "s", (json.dumps(update),), CONFIG_TIMEOUT_SEC,
         )
@@ -258,6 +272,58 @@ class PluginClient:
         if not reply["ok"] and not reasons:
             reasons = {"": "the plugin rejected the settings"}
         return ConfigResult(ok=bool(reply["ok"]), errors=reasons)
+
+    # ---- settings helpers (ApiVersion 1.3) ------------------------------------------
+
+    def test_config(self, values: Mapping[str, object]) -> config_flow.ConfigTestResult:
+        """TestConfig: check typed values without saving them."""
+        if not self.manifest.config_test:
+            raise PluginError("this plugin cannot test its settings")
+        update = self._update(values)
+        return self._flow(
+            config_flow.parse_config_test, METHOD_TEST_CONFIG, "s", (json.dumps(update),),
+            TEST_TIMEOUT_SEC,
+        )
+
+    def login_provider(self) -> str:
+        """The manifest's ConfigLogin provider if this client knows it, else ""."""
+        provider = self.manifest.config_login
+        return provider if provider in LOGIN_PROVIDERS else ""
+
+    def config_login(self, values: Mapping[str, object]) -> config_flow.LoginStep:
+        """ConfigLogin: start the browser sign-in with the typed non-secret
+        values. An ``open`` step carries a checked https ``open_uri``."""
+        provider = self.login_provider()
+        if not provider:
+            raise PluginError("this plugin has no browser sign-in")
+        payload = config_flow.form_values_json(self._update(values, secrets=False))
+        return self._flow(
+            lambda reply: config_flow.parse_login_step(reply, start=True),
+            METHOD_CONFIG_LOGIN, "ss", (provider, payload), LOGIN_TIMEOUT_SEC, precheck=True,
+        )
+
+    def config_login_status(self, login_id: str) -> config_flow.LoginStep:
+        if not config_flow.valid_login_id(login_id):
+            raise PluginError("not a sign-in id")
+        return self._flow(
+            lambda reply: config_flow.parse_login_step(reply, start=False),
+            METHOD_CONFIG_LOGIN_STATUS, "s", (login_id,), LOGIN_TIMEOUT_SEC,
+        )
+
+    def config_login_cancel(self, login_id: str) -> None:
+        if not config_flow.valid_login_id(login_id):
+            raise PluginError("not a sign-in id")
+        self._call(PLUGIN_INTERFACE, METHOD_CONFIG_LOGIN_CANCEL, "s", (login_id,),
+                   LOGIN_TIMEOUT_SEC)
+
+    def _flow(self, parse: Callable[[object], Any], method: str, signature: str, args: tuple,
+              timeout: float, *, precheck: bool = False) -> Any:
+        reply = self._call(PLUGIN_INTERFACE, method, signature, args, timeout,
+                           precheck=precheck)
+        try:
+            return parse(reply)
+        except config_flow.FlowError as error:
+            raise PluginError(str(error)) from None
 
     # ---- surfaces (ApiVersion 1.2) ------------------------------------------------
 
