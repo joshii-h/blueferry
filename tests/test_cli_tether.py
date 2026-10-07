@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 from typer.testing import CliRunner
@@ -97,9 +98,17 @@ def test_without_wait_a_failed_request_exits_1(fake) -> None:
 
 
 def test_help_documents_the_exit_status(fake) -> None:
-    result = runner.invoke(cli.app, ["tether", "--help"])
+    # Under GitHub Actions Typer forces Rich into terminal mode, so with Rich
+    # installed the help has ANSI codes and panel borders inside wrapped
+    # lines. Compare the plain words.
+    result = runner.invoke(
+        cli.app,
+        ["tether", "--help"],
+        env={"NO_COLOR": "1", "TERM": "dumb", "COLUMNS": "200"},
+    )
     assert result.exit_code == 0
-    text = " ".join(result.output.split())
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    text = " ".join(plain.replace("\u2502", " ").split())
     assert "Exit status: 0" in text
     assert "1 when it was not reached" in text
     assert "2 when the request was rejected" in text

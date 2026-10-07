@@ -1,6 +1,7 @@
 """blueferry-tray: pure presenter logic plus an offscreen smoke test."""
 from __future__ import annotations
 
+import importlib.util
 import os
 import subprocess  # nosec B404 - runs the smoke script in a fresh process
 import sys
@@ -14,6 +15,13 @@ from blueferry.qt import tray_presenter as presenter
 from blueferry.tether_status import TetherStatus
 
 ROOT = Path(__file__).resolve().parents[1]
+
+# The smoke tests start the real tray in a child process. Distributions
+# without PySide6 (the Ubuntu package build) skip them; the presenter tests
+# above them stay pure Python.
+needs_pyside6 = pytest.mark.skipif(
+    importlib.util.find_spec("PySide6") is None, reason="PySide6 is not installed",
+)
 
 
 def _thread(*read_flags: bool, outgoing: bool = False) -> Thread:
@@ -146,6 +154,7 @@ _SMOKE = textwrap.dedent("""
 """)
 
 
+@needs_pyside6
 @pytest.mark.parametrize("use_private_bus", [False, True])
 def test_tray_smoke_offscreen(use_private_bus: bool) -> None:
     address = os.environ.get("BLUEFERRY_TEST_DBUS_ADDRESS", "") if use_private_bus else ""
@@ -281,6 +290,7 @@ _SHARE_SMOKE = textwrap.dedent("""
 """)
 
 
+@needs_pyside6
 def test_tray_groups_its_menu_and_offers_send_to() -> None:
     env = {
         **os.environ,
