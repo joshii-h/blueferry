@@ -47,6 +47,7 @@ src/blueferry/qt/qml/FeatureSwitch.qml
 src/blueferry/qt/qml/PluginConfigForm.qml
 src/blueferry/qt/qml/PluginStoreCard.qml
 src/blueferry/plugin_settings_view.py
+src/blueferry/plugin_stopper.py
 src/blueferry/qt/plugin_settings.py
 src/blueferry/plugin_surfaces.py
 src/blueferry/qt/qml/ui/ListRow.qml
