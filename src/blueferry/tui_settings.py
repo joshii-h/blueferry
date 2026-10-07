@@ -13,6 +13,7 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, ClassVar
 
 from rich.text import Text
@@ -24,7 +25,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Collapsible, Input, OptionList, Select, Static
 from textual.widgets.option_list import Option
 
-from blueferry import companion_tools
+from blueferry import companion_tools, plugin_logs
 from blueferry import plugin_settings_view as view
 from blueferry import tui_design as design
 from blueferry.client import BackendError
@@ -122,6 +123,32 @@ class ConfirmScreen(ModalScreen[bool]):
 
     def action_cancel(self) -> None:
         self.dismiss(False)
+
+
+class LogScreen(ModalScreen[None]):
+    """The last lines of a plugin's log file, as plain text."""
+
+    BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "close", "Close", show=False)]
+
+    def __init__(self, title: str, text: str, path: str) -> None:
+        super().__init__()
+        self._title, self._text, self._path = title, text, path
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="plugin-log-dialog", classes="dialog"):
+            yield Static(self._title, classes="dialog-title", markup=False)
+            with VerticalScroll(id="plugin-log-body"):
+                yield Static(Text(terminal_text(self._text)), id="plugin-log-text")
+            yield Static(Text(terminal_text(self._path), style="dim"), classes="dialog-copy")
+            with Horizontal(classes="dialog-actions"):
+                yield Button("Close", id="plugin-log-close")
+
+    def on_mount(self) -> None:
+        self.query_one("#plugin-log-body", VerticalScroll).scroll_end(animate=False)
+
+    @on(Button.Pressed, "#plugin-log-close")
+    def action_close(self) -> None:
+        self.dismiss(None)
 
 
 class TextPromptScreen(ModalScreen[str | None]):
@@ -665,6 +692,7 @@ class PluginsScreen(ModalScreen[None]):
         Binding("u", "update", "Update", show=False),
         Binding("x", "remove", "Remove", show=False),
         Binding("c", "configure", "Settings", show=False),
+        Binding("g", "log", "Log", show=False),
         Binding("l", "indexes", "Plugin lists", show=False),
         Binding("r", "reload", "Refresh", show=False),
     ]
@@ -693,8 +721,9 @@ class PluginsScreen(ModalScreen[None]):
             yield Static("Add Plugins (Enter installs)", classes="field-label section-title")
             yield OptionList(id="plugins-store")
             yield Static("", id="plugins-hint", classes="dialog-copy")
-            yield Static("c settings · e enable/disable · u update · x remove · i install URL · "
-                         "l plugin lists · r refresh · Esc close", classes="key-hints")
+            yield Static("c settings · g log · e enable/disable · u update · x remove · "
+                         "i install URL · l plugin lists · r refresh · Esc close",
+                         classes="key-hints")
             with Horizontal(classes="dialog-actions"):
                 yield Button("Close", id="plugins-close")
 
@@ -844,6 +873,23 @@ class PluginsScreen(ModalScreen[None]):
             self.notify("This plugin has no settings.", severity="warning")
             return
         self.app.push_screen(PluginConfigScreen(entry.manifest, self._client(entry.manifest)))
+
+    def action_log(self) -> None:
+        entry = self._selected_entry()
+        if entry is None:
+            return
+        self._load_log(entry.manifest.id, entry.manifest.name)
+
+    @work(thread=True, group="plugins-log", exit_on_error=False)
+    def _load_log(self, plugin_id: str, name: str) -> None:
+        path, text = plugin_logs.tail(plugin_id)
+        self.app.call_from_thread(self._show_log, name, path, text)
+
+    def _show_log(self, name: str, path: Path | None, text: str) -> None:
+        if path is None:
+            self.notify("This plugin has not written a log yet.", severity="warning")
+            return
+        self.app.push_screen(LogScreen(f"Log: {name}", text or "(empty)", str(path)))
 
     def action_indexes(self) -> None:
         current = ", ".join(index_urls(self._manager.settings()))

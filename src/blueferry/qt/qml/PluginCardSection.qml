@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls as Controls
+import QtQuick.Dialogs as Dialogs
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import "ui"
@@ -10,6 +11,9 @@ import "ui"
 // every enabled card plugin offers, each with up to three action buttons.
 // A plugin that crashed or answered garbage shows a dimmed hint instead.
 // Everything here is plain text; calls run in the controller's plugin pool.
+// An action with sendTo (ApiVersion 1.4, e.g. "Send files…" on a LocalSend
+// device) opens a file dialog and sends to that target instead of invoking;
+// files dropped on such an item go to the same target.
 ColumnLayout {
     id: section
     objectName: "pluginCardSection"
@@ -18,6 +22,25 @@ ColumnLayout {
     readonly property var surfaces: section.bridge.pluginSurfaces || ({})
     readonly property var cards: section.surfaces.cards || []
     readonly property bool working: (section.surfaces.busy || "") !== ""
+    // {pluginId, target, label} of the action whose file dialog is open.
+    property var pendingSend: null
+
+    // One click on an action: send files (sendTo) or let the plugin act.
+    function runAction(pluginId, item, action) {
+        if ((action.sendTo || "") !== "") {
+            section.pendingSend = {pluginId: pluginId, target: action.sendTo, label: item.title}
+            sendDialog.open()
+            return
+        }
+        section.bridge.invokePluginAction(pluginId, item.id, action.id)
+    }
+    // The file dialog's answer (also called by tests).
+    function finishSend(urls) {
+        const pending = section.pendingSend
+        section.pendingSend = null
+        if (pending !== null && urls.length > 0)
+            section.bridge.sendFromPluginCard(pending.pluginId, pending.target, pending.label, urls)
+    }
 
     Layout.fillWidth: true
     spacing: 0
@@ -96,10 +119,32 @@ ColumnLayout {
                     subtitle: item.modelData.subtitle
                     pinActions: true
                     enabled: !section.working
+                    readonly property bool dropsFiles: (item.modelData.dropTarget || "") !== ""
+                    highlighted: dropArea.containsDrag
                     // A click on the row runs the item's primary action.
                     onClicked: if (item.primary !== null)
-                        section.bridge.invokePluginAction(plugin.modelData.pluginId,
-                                                          item.modelData.id, item.primary.id)
+                        section.runAction(plugin.modelData.pluginId, item.modelData, item.primary)
+
+                    // Files dragged from the file manager onto a device.
+                    DropArea {
+                        id: dropArea
+                        objectName: "pluginDropArea"
+                        parent: item
+                        anchors.fill: parent
+                        enabled: item.dropsFiles && !section.working
+                        // Only local files: a link dragged from a browser is no file.
+                        onEntered: drag => {
+                            if (!drag.hasUrls || drag.urls.some(url => !String(url).startsWith("file:")))
+                                drag.accepted = false
+                        }
+                        onDropped: drop => {
+                            if (!drop.hasUrls)
+                                return
+                            drop.acceptProposedAction()
+                            section.bridge.sendFromPluginCard(plugin.modelData.pluginId,
+                                item.modelData.dropTarget, item.modelData.title, drop.urls)
+                        }
+                    }
 
                     Repeater {
                         model: (item.modelData.actions || []).filter(action => action.primary !== true)
@@ -114,8 +159,8 @@ ColumnLayout {
                             Accessible.name: text
                             Controls.ToolTip.text: text
                             Controls.ToolTip.visible: hovered && display === Controls.AbstractButton.IconOnly
-                            onClicked: section.bridge.invokePluginAction(
-                                plugin.modelData.pluginId, item.modelData.id, actionButton.modelData.id)
+                            onClicked: section.runAction(
+                                plugin.modelData.pluginId, item.modelData, actionButton.modelData)
                         }
                     }
                     Controls.ToolButton {
@@ -128,12 +173,22 @@ ColumnLayout {
                         Accessible.name: text
                         Controls.ToolTip.text: text
                         Controls.ToolTip.visible: hovered
-                        onClicked: section.bridge.invokePluginAction(
-                            plugin.modelData.pluginId, item.modelData.id, item.primary.id)
+                        onClicked: section.runAction(
+                            plugin.modelData.pluginId, item.modelData, item.primary)
                     }
                 }
             }
         }
+    }
+
+    Dialogs.FileDialog {
+        id: sendDialog
+        objectName: "pluginSendDialog"
+        title: section.pendingSend !== null
+            ? qsTr("Send Files to %1").arg(section.pendingSend.label) : qsTr("Choose Files to Send")
+        fileMode: Dialogs.FileDialog.OpenFiles
+        onAccepted: section.finishSend(selectedFiles)
+        onRejected: section.pendingSend = null
     }
 
     Notice {

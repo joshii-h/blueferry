@@ -32,6 +32,7 @@ from . import (
     PHOTOS_INTERFACE,
     PLUGIN_INTERFACE,
     config_flow,
+    logs,
     surfaces,
 )
 from .config import ConfigError, masked, parse_update, validate
@@ -563,14 +564,23 @@ def run(
     make_service: Callable[[Any], PluginService],
     *,
     idle_seconds: int = 600,
+    log_file: bool = True,
 ) -> int:
-    """Own the plugin's bus name and serve until idle; return an exit code."""
+    """Own the plugin's bus name and serve until idle; return an exit code.
+
+    Logging goes to the plugin's standard file as well (see
+    :mod:`blueferry.plugin_api.logs`), so a D-Bus activated plugin's log
+    lines are not lost on a console nobody reads.
+    """
     from dbus.mainloop.glib import DBusGMainLoop
     from gi.repository import GLib
 
     DBusGMainLoop(set_as_default=True)
     bus = dbus.SessionBus()
     service = make_service(bus)
+    if log_file:
+        logs.setup_logging(service.manifest.id)
+        log.info("%s %s started", service.manifest.id, service.manifest.version)
     try:
         name = dbus.service.BusName(
             service.manifest.bus_name, bus, allow_replacement=False,

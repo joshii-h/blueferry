@@ -52,7 +52,7 @@ def test_a_crashing_or_garbled_plugin_becomes_a_dimmed_hint() -> None:
     assert "did not answer" in cards[1].hint and "invalid JSON" in cards[2].hint
     rows = surfaces.card_rows(cards)
     assert rows[0]["items"][0]["actions"] == [
-        {"id": "open", "label": "Open", "icon": "", "primary": True}]
+        {"id": "open", "label": "Open", "icon": "", "primary": True, "sendTo": ""}]
     assert rows[1]["items"] == [] and rows[1]["ok"] is False
 
 
@@ -153,7 +153,7 @@ def test_cli_send_lists_resolves_and_reports(monkeypatch, tmp_path) -> None:
 def test_cli_cards_prints_items_and_runs_actions(monkeypatch) -> None:
     from blueferry.plugin_api.surfaces import Action, CardItem
 
-    monkeypatch.setitem(cli_surfaces._hooks, "cards", lambda: [
+    monkeypatch.setitem(cli_surfaces._hooks, "cards", lambda *_plugins: [
         surfaces.PluginCard(CALENDAR.id, "Calendar", True, "", [
             CardItem("next", "Dentist", subtitle="10:00", actions=[Action("open", "Open")])]),
         surfaces.PluginCard(LOCALSEND.id, "LocalSend", False, "Unavailable: timeout"),
@@ -181,3 +181,59 @@ def test_more_card_plugins_than_shown_are_named_in_one_line() -> None:
         plugin.id: {"GetCardItems": '{"items": []}'} for plugin in many}))
     assert len(cards) == surfaces.MAX_CARD_PLUGINS + 1
     assert not cards[-1].ok and cards[-1].hint.startswith("Not shown: Example, Example.")
+
+
+def test_card_choice_needs_an_enabled_share_plugin(monkeypatch) -> None:
+    from blueferry.plugin_api.testing import manifest
+
+    sharing = manifest("io.example.ls", capabilities="card;share;", api_version="1.4",
+                       extra="Alias=ls\n")
+    monkeypatch.setattr(surfaces, "find_plugin", lambda plugin_id, capability: (
+        sharing if capability == "share" and plugin_id == "io.example.ls" else None))
+    factory = _factory({sharing.id: {"ShareTargets": json.dumps({"targets": [
+        {"id": "ls-1", "label": "iPhone", "icon": "phone"}]})}})
+    choice = surfaces.card_choice("io.example.ls", "ls-1", "iPhone\n",
+                                  client_factory=factory)
+    assert choice is not None and choice.key == "io.example.ls:ls-1"
+    assert choice.label == "iPhone" and choice.plugin_alias == "ls"
+    assert surfaces.card_choice("io.example.other", "ls-1") is None
+    assert surfaces.card_choice("io.example.ls", "bad:id") is None
+    # A card older than the device list: the target is gone.
+    with pytest.raises(LookupError, match="no longer there"):
+        surfaces.card_choice("io.example.ls", "ls-2", "iPad", client_factory=factory)
+
+
+def test_cli_cards_runs_a_sending_action_with_files(monkeypatch, tmp_path) -> None:
+    from blueferry.plugin_api.surfaces import Action, CardItem
+
+    payload = tmp_path / "a.jpg"
+    payload.write_bytes(b"x")
+    card = surfaces.PluginCard(LOCALSEND.id, "LocalSend", True, "", [
+        CardItem("dev-phone", "iPhone", actions=[
+            Action("send", "Send files…", kind="primary", send_to="ls-1"),
+            Action("trust", "Always accept")])], can_send=True)
+    asked: list[list] = []
+    monkeypatch.setitem(cli_surfaces._hooks, "cards",
+                        lambda *plugins: asked.append(list(plugins)) or [card])
+    monkeypatch.setitem(cli_surfaces._hooks, "find", lambda plugin_id, cap: LOCALSEND)
+    invoked, sent = [], []
+    monkeypatch.setitem(cli_surfaces._hooks, "invoke", lambda plugin, item, action: (
+        invoked.append((item, action)) or surfaces.Outcome(True, "Trusted")))
+    monkeypatch.setitem(cli_surfaces._hooks, "card_choice", lambda plugin, target, title: (
+        surfaces.ShareChoice(plugin, "LocalSend", target, title)))
+    monkeypatch.setitem(cli_surfaces._hooks, "send", lambda choice, paths: (
+        sent.append((choice.key, choice.label, paths)) or surfaces.Outcome(True, "Sending")))
+    runner = CliRunner()
+    listed = runner.invoke(app, ["cards"])
+    assert "Send files… (sends files: add FILE…)" in listed.output
+    action = f"{LOCALSEND.id}:dev-phone:send"
+    without = runner.invoke(app, ["cards", "--run", action])
+    assert without.exit_code == 2 and "sends files" in without.output
+    done = runner.invoke(app, ["cards", "--run", action, str(payload)])
+    assert done.exit_code == 0 and "Sending" in done.output
+    assert sent == [(f"{LOCALSEND.id}:ls-1", "iPhone", [str(payload.resolve())])]
+    extra = runner.invoke(app, ["cards", "--run", f"{LOCALSEND.id}:dev-phone:trust", "x"])
+    assert extra.exit_code == 2 and "takes no files" in extra.output
+    trusted = runner.invoke(app, ["cards", "--run", f"{LOCALSEND.id}:dev-phone:trust"])
+    assert trusted.exit_code == 0 and invoked == [("dev-phone", "trust")]
+    assert [[LOCALSEND]] in asked  # only that plugin is asked for its card

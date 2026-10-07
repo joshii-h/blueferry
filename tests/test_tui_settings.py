@@ -6,6 +6,7 @@ import json
 from textual.widgets import Input, OptionList
 
 from blueferry.doctor_report import DoctorReport
+from blueferry.plugin_api import logs as api_logs
 from blueferry.plugin_api.client import ConfigResult, PluginStatus
 from blueferry.plugin_api.config import SECRET_MASK
 from blueferry.plugin_index import PluginIndex
@@ -13,6 +14,7 @@ from blueferry.plugin_manager import PluginManager
 from blueferry.tui import BlueFerryApp, TuiState
 from blueferry.tui_settings import (
     ConfirmScreen,
+    LogScreen,
     PluginConfigScreen,
     PluginsScreen,
     SettingsScreen,
@@ -105,6 +107,7 @@ def test_plugins_install_from_the_store_after_confirmation_and_configure(
     tmp_path, monkeypatch,
 ) -> None:
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     runner = FakeRunner()
     secret = "[Config api_key]\nLabel=API key\nType=secret\n\n[Config url]"
     runner.files = {
@@ -149,6 +152,18 @@ def test_plugins_install_from_the_store_after_confirmation_and_configure(
             await pilot.click("#config-save")
             await _until(pilot, lambda: _Client.saved)
             assert _Client.saved[0]["api_key"] == "n3w"
+            await _until(pilot, lambda: isinstance(app.screen, PluginsScreen))
+            await pilot.press("g")
+            await _until(pilot, lambda: "This plugin has not written a log yet." in [
+                note.message for note in app._notifications])
+            log = api_logs.log_path("io.example.demo")
+            log.parent.mkdir(parents=True, exist_ok=True)
+            log.write_text("ready\nescape \x1b[2J done\n")
+            await pilot.press("g")
+            await _until(pilot, lambda: isinstance(app.screen, LogScreen))
+            shown = _plain(app, "#plugin-log-text")
+            assert "ready" in shown and "done" in shown and "\x1b" not in shown
+            await pilot.press("escape")
             await _until(pilot, lambda: isinstance(app.screen, PluginsScreen))
             manager.stopper.state = "stopped"
             await pilot.press("e")

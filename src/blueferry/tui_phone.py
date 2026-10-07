@@ -282,8 +282,32 @@ class PhoneScreen(ModalScreen[None]):
         if not option_id.startswith("action:"):
             return
         index = int(option_id[7:])
-        if 0 <= index < len(actions):
+        if not 0 <= index < len(actions):
+            return
+        target, label = tui_plugins.card_sends(self._cards)[index]
+        if target:
+            self._open_card_send(actions[index][0], target, label)
+        else:
             self._run_plugin_action(*actions[index])
+
+    @work(thread=True, group="phone-plugin-action", exit_on_error=False)
+    def _open_card_send(self, plugin_id: str, target: str, label: str) -> None:
+        """A card action with send_to: ask for paths, send to that target."""
+        try:
+            choice: surfaces.ShareChoice | str | None = surfaces.card_choice(
+                plugin_id, target, label)  # manifests and the plugin: worker only
+        except LookupError as error:
+            choice = str(error)
+        self.app.call_from_thread(self._show_card_send, choice)
+
+    def _show_card_send(self, choice: surfaces.ShareChoice | str | None) -> None:
+        if isinstance(choice, str):
+            self.notify(_plain(choice), severity="warning", markup=False)
+            return
+        if choice is None:
+            self.notify("The plugin can no longer send files.", severity="warning")
+            return
+        self.app.push_screen(self._send_screen(on_sent=self.load_plugins, choice=choice))
 
     @work(thread=True, group="phone-plugin-action", exit_on_error=False)
     def _run_plugin_action(self, plugin_id: str, item_id: str, action_id: str) -> None:
@@ -439,6 +463,10 @@ class PhoneScreen(ModalScreen[None]):
             usable = self._needs_pairing
         else:
             tool = self._tools.get(action) if self._tools is not None else None
+            if tool is None and action == companion_tools.SEND and self._tools is not None:
+                # The LocalSend plugin replaced the app (ReplacesTools).
+                self.notify(companion_tools.REPLACED_SEND_HINT, markup=False)
+                return
             usable = tool is not None and tool.enabled
             if tool is not None and not tool.enabled:
                 self.notify(_plain(tool.subtitle), severity="warning", markup=False)

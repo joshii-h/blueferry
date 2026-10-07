@@ -40,6 +40,7 @@ class PluginSurfaces(QObject):
         invoke: Callable[..., surfaces.Outcome] = surfaces.invoke,
         find: Callable[[str, str], Any] = surfaces.find_plugin,
         send: Callable[..., surfaces.Outcome] = surfaces.send,
+        card_choice: Callable[..., surfaces.ShareChoice | None] = surfaces.card_choice,
         opener: Callable[[str], None] = open_url,
         bus: Any = None,
         pool: QThreadPool | None = None,
@@ -52,6 +53,7 @@ class PluginSurfaces(QObject):
         self._invoke = invoke
         self._find = find
         self._send = send
+        self._card_choice = card_choice
         self._open = opener
         if pool is None:
             pool = QThreadPool(self)
@@ -188,8 +190,31 @@ class PluginSurfaces(QObject):
         # either file: URLs or paths.
         paths = [local_path(url) for url in urls]
         self._update(busy=f"send:{key}", message="")
+        self._send_paths(lambda: choice, paths)
 
+    def send_from_card(
+        self, plugin_id: str, target_id: str, label: str, urls: Sequence[object],
+    ) -> None:
+        """A card action with ``send_to`` (or files dropped on its item):
+        hand the files to that target of the same plugin (ApiVersion 1.4)."""
+        if self._state["busy"]:
+            return
+        paths = [local_path(url) for url in urls]
+        if not paths:
+            return
+        self._update(busy=f"send:{plugin_id}:{target_id}", message="")
+        self._send_paths(lambda: self._card_choice(plugin_id, target_id, label), paths)
+
+    def _send_paths(
+        self, resolve: Callable[[], surfaces.ShareChoice | None], paths: list[str],
+    ) -> None:
         def work() -> surfaces.Outcome:
+            try:
+                choice = resolve()  # manifests and the plugin: not on the UI thread
+            except LookupError as error:
+                return surfaces.Outcome(False, str(error))
+            if choice is None:
+                return surfaces.Outcome(False, _("The plugin can no longer send files."))
             try:
                 files = checked_share_paths(paths)  # stat()s: not on the UI thread
             except ValueError as error:

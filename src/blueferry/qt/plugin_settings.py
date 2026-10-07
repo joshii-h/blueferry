@@ -17,10 +17,12 @@ final state, :data:`LOGIN_TIMEOUT_SECONDS` or until the form closes.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QObject, QThreadPool, QTimer, QUrl, Signal
 
+from blueferry import plugin_logs
 from blueferry import plugin_settings_view as view
 from blueferry.i18n import _
 from blueferry.plugin_api.client import PluginClient
@@ -413,6 +415,17 @@ class PluginSettings(QObject):
         url = view.help_link(manifest, key) if manifest is not None else ""
         if url:
             self._open(url)
+
+    def open_log(self, plugin_id: str) -> None:
+        """"Show Log": the plugin's standard log file in the text viewer."""
+        def done(path: object) -> None:
+            if isinstance(path, Path):
+                self._open(path.as_uri())
+            else:
+                self._say(_("This plugin has not written a log yet. Plugins for plugin API "
+                            "1.4 start one the first time they run."), False)
+
+        self._work("log", lambda: plugin_logs.find_log(plugin_id), done)
 
     def close_config(self) -> None:
         self._stop_login()

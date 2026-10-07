@@ -15,9 +15,10 @@ API_VERSION = 1
 # generic UI surfaces (capabilities ``card``, ``share`` and ``notify``); 3
 # added the guided settings form (placeholders, examples, help links, groups,
 # pre-checks, ShowIf) with Plugin1.TestConfig and the ConfigLogin browser
-# sign-in. A manifest that needs a newer minor than this is ignored with a
-# message.
-API_MINOR = 3
+# sign-in; 4 added card actions that send files (``send_to``), the manifest
+# key ``ReplacesTools`` and the standard plugin log file. A manifest that
+# needs a newer minor than this is ignored with a message.
+API_MINOR = 4
 SUPPORTED_API_VERSIONS = frozenset({1})
 
 BUS_NAME_PREFIX = "io.weirdware.BlueFerry.Plugin."
@@ -52,6 +53,13 @@ KNOWN_CAPABILITIES = frozenset({
     CAPABILITY_PHOTOS, "conversations", CAPABILITY_CARD, CAPABILITY_SHARE, CAPABILITY_NOTIFY,
 })
 
+# ApiVersion 1.4: companion tools a plugin can stand in for
+# (``ReplacesTools=localsend;``). The clients hide a replaced tool while the
+# plugin is enabled; unknown names are ignored.
+TOOL_LOCALSEND = "localsend"
+TOOL_UXPLAY = "uxplay"
+KNOWN_TOOLS = frozenset({TOOL_LOCALSEND, TOOL_UXPLAY})
+
 # Everything a plugin returns is untrusted: clients reject larger replies.
 MAX_REPLY_BYTES = 512 * 1024
 MAX_RECENT_PHOTOS = 200
@@ -65,6 +73,7 @@ __all__ = [
     "CAPABILITY_PHOTOS",
     "CAPABILITY_SHARE",
     "KNOWN_CAPABILITIES",
+    "KNOWN_TOOLS",
     "LOGIN_NEXTCLOUD",
     "LOGIN_PROVIDERS",
     "MAX_RECENT_PHOTOS",
@@ -84,4 +93,6 @@ __all__ = [
     "SIGNAL_NOTIFY",
     "SUPPORTED_API_VERSIONS",
     "SURFACES_INTERFACE",
+    "TOOL_LOCALSEND",
+    "TOOL_UXPLAY",
 ]

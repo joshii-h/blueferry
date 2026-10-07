@@ -559,6 +559,10 @@ class BridgeController(QObject):
     def cancelPluginSignIn(self) -> None:
         self._plugin_settings.cancel_sign_in()
 
+    @Slot(str)
+    def openPluginLog(self, plugin_id: str) -> None:
+        self._plugin_settings.open_log(str(plugin_id))
+
     @Slot(str, str)
     def openPluginHelp(self, plugin_id: str, key: str) -> None:
         self._plugin_settings.open_help(str(plugin_id), str(key))
@@ -611,6 +615,12 @@ class BridgeController(QObject):
     @Slot(str, "QVariantList")
     def sendToTarget(self, key: str, urls: list) -> None:
         self._plugin_surfaces.send(str(key), list(urls or []))
+
+    @Slot(str, str, str, "QVariantList")
+    def sendFromPluginCard(self, plugin_id: str, target_id: str, label: str, urls: list) -> None:
+        """A card action with send_to, or files dropped on a card item."""
+        self._plugin_surfaces.send_from_card(
+            str(plugin_id), str(target_id), str(label), list(urls or []))
 
     @Property("QVariantMap", notify=companionToolsChanged)
     def companionTools(self):

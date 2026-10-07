@@ -793,6 +793,7 @@ def settings_window(qml_engine):
             function signInPlugin(id, values) { record("signInPlugin", [id, values]); }
             function cancelPluginSignIn() { record("cancelPluginSignIn", []); }
             function openPluginHelp(id, key) { record("openPluginHelp", [id, key]); }
+            function openPluginLog(id) { record("openPluginLog", [id]); }
             function setPluginIndexes(urls) { record("setPluginIndexes", [urls]); }
             function clearPluginMessage() { record("clearPluginMessage", []); }
         }
@@ -3103,6 +3104,11 @@ def test_settings_plugins_list_store_form_and_confirmation(qml_engine, settings_
     engine = qmlEngine(heading)
     engine.globalObject().setProperty("pluginHeading", engine.newQObject(heading))
     assert _evaluate(engine, "pluginHeading.textFormat === 0") is True
+    log_button = _visual_find(card, "pluginLogButton")
+    QMetaObject.invokeMethod(log_button, "clicked")
+    assert _evaluate(qml_engine, "testBridge.calls")[-1] == {
+        "method": "openPluginLog", "args": ["io.example.demo"],
+    }
     soon = _settings_object(window, "storeCard_io.example.cal")
     soon_button = _visual_find(soon, "storeAction")
     assert soon_button.property("enabled") is False

@@ -338,3 +338,26 @@ def test_closing_the_form_cancels_a_running_sign_in(guided) -> None:
     settings.close_config()
     assert settings._login is None and settings.state()["config"] == {}
     _wait(lambda: _GuidedClient.log.count(("cancel", "flow-1")) == 2)
+
+
+def test_show_log_opens_the_plugin_log_or_explains(app, tmp_path, monkeypatch) -> None:
+    from blueferry.plugin_api import logs as api_logs
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    opened: list[str] = []
+    manager = PluginManager(data_home=tmp_path / "data", settings_path=tmp_path / "p.json",
+                            runner=FakeRunner(), python="/usr/bin/python3",
+                            stopper=FakeStopper())
+    settings = PluginSettings(manager=lambda: manager, client=_Client, opener=opened.append,
+                              index=lambda: PluginIndex(fetch=lambda _url: INDEX,
+                                                        cache=tmp_path / "cache"))
+    settings.open_log("io.example.ls")
+    _wait(lambda: settings.state()["message"] != "")
+    assert settings.state()["messageOk"] is False and "not written a log" in (
+        settings.state()["message"])
+    path = api_logs.log_path("io.example.ls")
+    path.parent.mkdir(parents=True)
+    path.write_text("started\n")
+    settings.open_log("io.example.ls")
+    _wait(lambda: bool(opened))
+    assert opened == [path.as_uri()]

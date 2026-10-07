@@ -269,7 +269,7 @@ def inert_companion_tools(monkeypatch):
         which=lambda _name: None, desktop_app=lambda _id: None,
         command_app=refuse, run=refuse, open_uri=refuse, kill=refuse,
         runtime_dir=lambda: pathlib.Path("/nonexistent/blueferry-test-runtime"),
-        is_mount=lambda _path: False,
+        is_mount=lambda _path: False, replaced_tools=frozenset,
     )
     monkeypatch.setattr(companion_tools, "default_system", lambda: inert)
 

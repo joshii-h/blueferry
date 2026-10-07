@@ -18,7 +18,7 @@ from blueferry.i18n import _
 from blueferry.plugin_api import CAPABILITY_CARD, CAPABILITY_SHARE
 from blueferry.plugin_api.client import PluginClient, PluginError, plain_text
 from blueferry.plugin_api.manifest import Discovery, PluginManifest, discover
-from blueferry.plugin_api.surfaces import CardItem
+from blueferry.plugin_api.surfaces import Action, CardItem, valid_id
 from blueferry.plugin_prefs import disabled_plugins
 
 ClientFactory = Callable[[PluginManifest], PluginClient]
@@ -61,6 +61,9 @@ class PluginCard:
     # Shown dimmed instead of the items when ``ok`` is false.
     hint: str = ""
     items: list[CardItem] = field(default_factory=list)
+    # The plugin also has ``share``: its actions with ``send_to`` (1.4) pick
+    # files and call SendFiles. Without it they are ordinary buttons.
+    can_send: bool = False
 
 
 def load_cards(
@@ -83,7 +86,8 @@ def load_cards(
                                     _("Unavailable: {reason}").format(
                                         reason=type(error).__name__)))
             continue
-        cards.append(PluginCard(plugin.id, plugin.name, True, "", items))
+        cards.append(PluginCard(plugin.id, plugin.name, True, "", items,
+                                plugin.has(CAPABILITY_SHARE)))
     skipped = plugins[MAX_CARD_PLUGINS:]
     if skipped:
         cards.append(PluginCard(
@@ -94,8 +98,22 @@ def load_cards(
     return cards
 
 
+def send_target(card: PluginCard, action: Action) -> str:
+    """The share target a card action sends files to, or ``""``."""
+    return (action.send_to or "") if card.can_send else ""
+
+
+def drop_target(card: PluginCard, item: CardItem) -> str:
+    """Where files dropped on ``item`` go (its first sending action), or ``""``."""
+    return (item.send_target or "") if card.can_send else ""
+
+
 def card_rows(cards: Iterable[PluginCard]) -> list[dict[str, object]]:
-    """Plain dicts for QML: one entry per plugin with its items."""
+    """Plain dicts for QML: one entry per plugin with its items.
+
+    ``sendTo`` on an action and ``dropTarget`` on an item are share target
+    ids (ApiVersion 1.4); empty when the action only runs InvokeAction.
+    """
     return [
         {
             "pluginId": card.plugin_id, "name": card.name, "ok": card.ok, "hint": card.hint,
@@ -103,9 +121,11 @@ def card_rows(cards: Iterable[PluginCard]) -> list[dict[str, object]]:
                 {
                     "id": item.id, "icon": item.icon or "preferences-plugin",
                     "title": item.title, "subtitle": item.subtitle or "",
+                    "dropTarget": drop_target(card, item),
                     "actions": [
                         {"id": action.id, "label": action.label, "icon": action.icon or "",
-                         "primary": action.kind == "primary"}
+                         "primary": action.kind == "primary",
+                         "sendTo": send_target(card, action)}
                         for action in item.actions
                     ],
                 }
@@ -235,6 +255,33 @@ def resolve_choice(choices: Sequence[ShareChoice], spec: str | None) -> ShareCho
             target=plain_text(spec, 120), targets=listing))
     raise LookupError(_("{target} has several targets: {targets}").format(
         target=plain_text(spec, 120), targets=", ".join(choice.key for choice in matches)))
+
+
+def card_choice(
+    plugin_id: str, target_id: str, label: str = "", *,
+    client_factory: ClientFactory = PluginClient,
+) -> ShareChoice | None:
+    """*Blocking.* The share target behind a card action with ``send_to``
+    (1.4), or None when the plugin is gone, disabled or has no ``share``.
+
+    Asks the plugin whether it still offers the target (a card can be
+    older than the device list); LookupError with a message if not.
+    """
+    if not valid_id(target_id):
+        return None
+    plugin = find_plugin(plugin_id, CAPABILITY_SHARE)
+    if plugin is None:
+        return None
+    try:
+        offered = {target.id for target in client_factory(plugin).share_targets()}
+    except PluginError as error:
+        raise LookupError(_("{plugin}: {reason}").format(
+            plugin=plugin.name, reason=_reason(error))) from None
+    if target_id not in offered:
+        raise LookupError(_("{target} is no longer there. Refresh the card and try "
+                            "again.").format(target=plain_text(label, 80) or _("The target")))
+    return ShareChoice(plugin.id, plugin.name, target_id,
+                       plain_text(label, 80) or plugin.name, "", plugin.alias)
 
 
 def send(

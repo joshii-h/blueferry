@@ -112,7 +112,13 @@ class CompanionTools(QObject):
         if action not in companion_tools.ACTIONS or self._busy:
             return
         if action not in companion_tools.BLOCKING_ACTIONS:
-            self._report(companion_tools.perform(self._system, action), action)
+            # The snapshot already left out what a plugin replaces; reading
+            # the manifests again here would touch the disk on the UI thread.
+            hidden = frozenset(
+                key for key in (companion_tools.MIRROR, companion_tools.SEND)
+                if self._probed and self._snapshot.get(key) is None
+            )
+            self._report(companion_tools.perform(self._system, action, hidden=hidden), action)
             self.refresh()
             return
         self._busy = action

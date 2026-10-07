@@ -11,6 +11,14 @@ early); the clients parse whatever arrives with the ``parse_*`` functions,
 which never trust the plugin: strings become one line of plain text cut to
 the limits below, malformed entries are dropped, and only the top-level
 shape raises :class:`SurfaceError`.
+
+ApiVersion 1.4 lets an action send files: ``Action(..., send_to=TARGET)``
+on a card item of a plugin that also has the ``share`` capability. The
+clients then ask for files (a file dialog, a path prompt, the CLI's
+arguments) and call ``SendFiles(TARGET, paths)`` instead of
+``InvokeAction``; the Qt card also accepts files dropped on that item.
+Older clients ignore ``send_to`` and call ``InvokeAction`` as before, so
+the plugin should answer that with a hint ("use Send to…").
 """
 from __future__ import annotations
 
@@ -76,23 +84,36 @@ def _require_id(value: str, what: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class Action:
-    """A button on a card item. ``kind="primary"`` is the item's main action."""
+    """A button on a card item. ``kind="primary"`` is the item's main action.
+
+    ``send_to`` (ApiVersion 1.4) names one of the plugin's share targets:
+    the client picks files and calls ``SendFiles(send_to, paths)`` instead
+    of ``InvokeAction``.
+    """
 
     id: str
     label: str
     icon: str | None = None
     kind: str = "button"
+    send_to: str | None = None
 
     def __post_init__(self) -> None:
         _require_id(self.id, "Action.id")
         if self.kind not in ACTION_KINDS:
             raise ValueError(f"Action.kind must be one of {ACTION_KINDS}")
+        if self.send_to is not None:
+            _require_id(self.send_to, "Action.send_to")
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        data: dict[str, object] = {
             "id": self.id, "label": plain(self.label, MAX_LABEL),
             "icon": icon_name(self.icon) or None, "kind": self.kind,
         }
+        if self.send_to is not None:
+            # Only when set: a 1.3 host that checks the exact keys still
+            # accepts every other action.
+            data["send_to"] = self.send_to
+        return data
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +130,12 @@ class CardItem:
         _require_id(self.id, "CardItem.id")
         if len(self.actions) > MAX_ACTIONS:
             raise ValueError(f"a card item has at most {MAX_ACTIONS} actions")
+
+    @property
+    def send_target(self) -> str | None:
+        """The share target files dropped on this item go to (ApiVersion 1.4):
+        the ``send_to`` of its first sending action."""
+        return next((action.send_to for action in self.actions if action.send_to), None)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -224,9 +251,11 @@ def _action(entry: object) -> Action | None:
     if not label:
         return None
     kind = entry.get("kind")
+    send_to = entry.get("send_to")
     return Action(
         id=str(entry["id"]), label=label, icon=icon_name(entry.get("icon")) or None,
         kind=str(kind) if kind in ACTION_KINDS else "button",
+        send_to=str(send_to) if valid_id(send_to) else None,
     )
 
 
