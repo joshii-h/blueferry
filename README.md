@@ -983,6 +983,19 @@ Plugins with the `card`, `share` or `notify` capability (plugin API 1.2, see
   blueferry cards --run io.example.calendar:next:open
   ```
 
+- **Sending straight from the card** (plugin API 1.4): an item such as a
+  LocalSend device can carry "Send files…". In Qt it opens a file dialog
+  (or drop files onto the item), in the terminal client it asks for paths,
+  and `blueferry cards --run PLUGIN:ITEM:ACTION FILE…` takes them as
+  arguments.
+- A plugin can **replace a companion tool**: while the LocalSend plugin is
+  enabled, the LocalSend app disappears from Tools, because both would
+  answer on port 53317.
+- **Plugin logs**: plugins for API 1.4 write
+  `~/.local/state/blueferry/plugins/<id>.log` (owner-only, rotated, secrets
+  masked). Open it with **Show Log** under Settings > Plugins, `g` in the
+  terminal plugin list, or `blueferry plugins log localsend`.
+
 - **Popups** from `notify` plugins appear through BlueFerry's notification
   setting: off with "none", only the plugin name without
   `BLUEFERRY_SHOW_NOTIFICATION_CONTENT`, at most six a minute per plugin.
