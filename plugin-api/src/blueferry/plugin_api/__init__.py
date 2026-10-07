@@ -12,9 +12,12 @@ from __future__ import annotations
 API_VERSION = 1
 # Compatible additions within API_VERSION: 1 added the optional settings
 # schema (``[Config <key>]``) with Plugin1.GetConfig/SetConfig; 2 added the
-# generic UI surfaces (capabilities ``card``, ``share`` and ``notify``). A
-# manifest that needs a newer minor than this is ignored with a message.
-API_MINOR = 2
+# generic UI surfaces (capabilities ``card``, ``share`` and ``notify``); 3
+# added the guided settings form (placeholders, examples, help links, groups,
+# pre-checks, ShowIf) with Plugin1.TestConfig and the ConfigLogin browser
+# sign-in. A manifest that needs a newer minor than this is ignored with a
+# message.
+API_MINOR = 3
 SUPPORTED_API_VERSIONS = frozenset({1})
 
 BUS_NAME_PREFIX = "io.weirdware.BlueFerry.Plugin."
@@ -30,6 +33,16 @@ METHOD_SHARE_TARGETS = "ShareTargets"
 METHOD_SEND_FILES = "SendFiles"
 SIGNAL_CARD_CHANGED = "CardChanged"
 SIGNAL_NOTIFY = "Notify"
+# ApiVersion 1.3 settings helpers, also on PLUGIN_INTERFACE. TestConfig is
+# offered with ``ConfigTest=true``; the ConfigLogin* trio with
+# ``ConfigLogin=<provider>`` in the [BlueFerry Plugin] group.
+METHOD_TEST_CONFIG = "TestConfig"
+METHOD_CONFIG_LOGIN = "ConfigLogin"
+METHOD_CONFIG_LOGIN_STATUS = "ConfigLoginStatus"
+METHOD_CONFIG_LOGIN_CANCEL = "ConfigLoginCancel"
+# Browser sign-in flows clients know how to label; others are ignored.
+LOGIN_NEXTCLOUD = "nextcloud"
+LOGIN_PROVIDERS = frozenset({LOGIN_NEXTCLOUD})
 
 CAPABILITY_PHOTOS = "photos"
 CAPABILITY_CARD = "card"
@@ -52,12 +65,18 @@ __all__ = [
     "CAPABILITY_PHOTOS",
     "CAPABILITY_SHARE",
     "KNOWN_CAPABILITIES",
+    "LOGIN_NEXTCLOUD",
+    "LOGIN_PROVIDERS",
     "MAX_RECENT_PHOTOS",
     "MAX_REPLY_BYTES",
+    "METHOD_CONFIG_LOGIN",
+    "METHOD_CONFIG_LOGIN_CANCEL",
+    "METHOD_CONFIG_LOGIN_STATUS",
     "METHOD_GET_CARD_ITEMS",
     "METHOD_INVOKE_ACTION",
     "METHOD_SEND_FILES",
     "METHOD_SHARE_TARGETS",
+    "METHOD_TEST_CONFIG",
     "OBJECT_PATH",
     "PHOTOS_INTERFACE",
     "PLUGIN_INTERFACE",

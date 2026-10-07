@@ -19,6 +19,7 @@ Example ``~/.local/share/blueferry/plugins/io.example.photos.plugin``::
     Label=Server URL
     Type=url
     Required=true
+    Placeholder=https://photos.example.org
 
 Discovery never runs anything; it only parses files. A manifest that is
 malformed, too large or written for an unsupported ``ApiVersion`` is ignored
@@ -41,7 +42,8 @@ from . import (
     SUPPORTED_API_VERSIONS,
 )
 from .config import GROUP_PREFIX as CONFIG_GROUP_PREFIX
-from .config import ConfigField, parse_fields
+from .config import SECTION_PREFIX as CONFIG_SECTION_PREFIX
+from .config import ConfigField, ConfigGroup, form_groups, parse_fields, parse_groups
 
 GROUP = "BlueFerry Plugin"
 SUFFIX = ".plugin"
@@ -54,6 +56,9 @@ _ALIAS = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 _VERSION = re.compile(r"^\d+(\.\d+){0,3}([-+.~][0-9A-Za-z.]+)?$")
 _URL = re.compile(r"^https://[^\s/]+(/\S*)?$")
 _API_VERSION = re.compile(r"^(\d{1,3})(?:\.(\d{1,3}))?$")
+# ConfigLogin names a browser sign-in flow; clients show a button only for
+# providers they know (see LOGIN_PROVIDERS) and ignore others.
+_LOGIN_PROVIDER = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 _REQUIRED = (
     "Id", "Name", "Version", "ApiVersion", "MinBlueFerry", "Capabilities", "Exec",
 )
@@ -81,6 +86,11 @@ class PluginManifest:
     config: tuple[ConfigField, ...] = ()
     # Minor revision of the contract (``ApiVersion=1.2``); at most API_MINOR.
     api_minor: int = 0
+    # ApiVersion 1.3: the form's sections in display order, whether the
+    # plugin implements TestConfig, and its ConfigLogin provider (or "").
+    config_groups: tuple[ConfigGroup, ...] = ()
+    config_test: bool = False
+    config_login: str = ""
 
     @property
     def bus_name(self) -> str:
@@ -118,10 +128,15 @@ def version_tuple(value: str) -> tuple[int, ...]:
     return tuple(int(part) for part in match.group(1).split("."))
 
 
-def _keyfile(text: str) -> tuple[dict[str, str], list[tuple[str, dict[str, str]]]]:
-    """The ``[BlueFerry Plugin]`` keys and the ``[Config <key>]`` groups."""
+_Groups = list[tuple[str, dict[str, str]]]
+
+
+def _keyfile(text: str) -> tuple[dict[str, str], _Groups, _Groups]:
+    """The ``[BlueFerry Plugin]`` keys, the ``[Config <key>]`` groups and
+    the ``[ConfigGroup <name>]`` sections."""
     values: dict[str, str] = {}
-    config: list[tuple[str, dict[str, str]]] = []
+    config: _Groups = []
+    sections: _Groups = []
     target: dict[str, str] | None = None
     group = None
     for raw in text.splitlines():
@@ -135,6 +150,9 @@ def _keyfile(text: str) -> tuple[dict[str, str], list[tuple[str, dict[str, str]]
             elif group.startswith(CONFIG_GROUP_PREFIX):
                 target = {}
                 config.append((group[len(CONFIG_GROUP_PREFIX):].strip(), target))
+            elif group.startswith(CONFIG_SECTION_PREFIX):
+                target = {}
+                sections.append((group[len(CONFIG_SECTION_PREFIX):].strip(), target))
             else:
                 target = None
             continue
@@ -152,7 +170,16 @@ def _keyfile(text: str) -> tuple[dict[str, str], list[tuple[str, dict[str, str]]
         target[key] = value.strip()
     if group is None and not values:
         raise ManifestError(f"missing [{GROUP}] group")
-    return values, config
+    return values, config, sections
+
+
+def _config_flag(value: str, key: str) -> bool:
+    lowered = value.strip().casefold()
+    if lowered in ("", "false", "no", "0", "off"):
+        return False
+    if lowered in ("true", "yes", "1", "on"):
+        return True
+    raise ManifestError(f"{key} must be true or false")
 
 
 def _argv(value: str, key: str) -> tuple[str, ...]:
@@ -176,7 +203,7 @@ def parse_manifest(
     """Parse and validate one manifest; raise ManifestError to skip it."""
     if len(text.encode("utf-8", "surrogatepass")) > MAX_MANIFEST_BYTES:
         raise ManifestError("manifest is too large")
-    values, config_groups = _keyfile(text)
+    values, config_groups, config_sections = _keyfile(text)
     missing = [key for key in _REQUIRED if not values.get(key)]
     if missing:
         raise ManifestError("missing " + ", ".join(missing))
@@ -224,9 +251,16 @@ def parse_manifest(
     if len(name) > 80 or any(ord(ch) < 32 for ch in name):
         raise ManifestError("Name is too long or contains control characters")
     try:
-        config = parse_fields(config_groups)
+        sections = parse_groups(config_sections)
+        config = parse_fields(config_groups, sections)
     except ValueError as error:
         raise ManifestError(str(error)) from None
+    config_test = _config_flag(values.get("ConfigTest", ""), "ConfigTest")
+    config_login = values.get("ConfigLogin", "").strip()
+    if config_login and not _LOGIN_PROVIDER.fullmatch(config_login):
+        raise ManifestError("ConfigLogin must be a short lowercase provider name")
+    if (config_test or config_login) and not config:
+        raise ManifestError("ConfigTest and ConfigLogin need [Config …] settings")
     return PluginManifest(
         id=plugin_id,
         name=name,
@@ -242,6 +276,9 @@ def parse_manifest(
         path=path,
         config=config,
         api_minor=api_minor,
+        config_groups=form_groups(config, sections),
+        config_test=config_test,
+        config_login=config_login,
     )
 
 
