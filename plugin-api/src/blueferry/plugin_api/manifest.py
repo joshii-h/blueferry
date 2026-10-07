@@ -39,6 +39,7 @@ from . import (
     API_MINOR,
     BUS_NAME_PREFIX,
     KNOWN_CAPABILITIES,
+    KNOWN_TOOLS,
     SUPPORTED_API_VERSIONS,
 )
 from .config import GROUP_PREFIX as CONFIG_GROUP_PREFIX
@@ -91,6 +92,8 @@ class PluginManifest:
     config_groups: tuple[ConfigGroup, ...] = ()
     config_test: bool = False
     config_login: str = ""
+    # ApiVersion 1.4: companion tools (KNOWN_TOOLS) this plugin replaces.
+    replaces_tools: tuple[str, ...] = ()
 
     @property
     def bus_name(self) -> str:
@@ -261,6 +264,15 @@ def parse_manifest(
         raise ManifestError("ConfigLogin must be a short lowercase provider name")
     if (config_test or config_login) and not config:
         raise ManifestError("ConfigTest and ConfigLogin need [Config …] settings")
+    replaces = []
+    for part in values.get("ReplacesTools", "").split(";"):
+        tool = part.strip()
+        if not tool:
+            continue
+        if not _LOGIN_PROVIDER.fullmatch(tool):
+            raise ManifestError("ReplacesTools must list short lowercase tool names")
+        if tool in KNOWN_TOOLS and tool not in replaces:
+            replaces.append(tool)
     return PluginManifest(
         id=plugin_id,
         name=name,
@@ -279,6 +291,7 @@ def parse_manifest(
         config_groups=form_groups(config, sections),
         config_test=config_test,
         config_login=config_login,
+        replaces_tools=tuple(replaces),
     )
 
 

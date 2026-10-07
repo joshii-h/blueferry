@@ -76,13 +76,13 @@ class _Everything(CardService, ShareService, NotifyService):
 
 def test_capabilities_and_minor_version_are_known() -> None:
     assert {"card", "share", "notify"} <= KNOWN_CAPABILITIES
-    assert API_MINOR == 3
+    assert API_MINOR == 4
     assert _manifest().api_minor == 2
 
 
 def test_a_manifest_needing_a_newer_minor_is_ignored_with_a_reason() -> None:
-    with pytest.raises(ManifestError, match=r"needs plugin API 1\.4; this BlueFerry supports 1\.3"):
-        _manifest(version="1.4")
+    with pytest.raises(ManifestError, match=r"needs plugin API 1\.5; this BlueFerry supports 1\.4"):
+        _manifest(version="1.5")
 
 
 def test_value_types_reject_bad_ids_early() -> None:

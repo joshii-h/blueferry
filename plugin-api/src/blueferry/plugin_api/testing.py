@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from . import (
+    CAPABILITY_SHARE,
     PHOTOS_INTERFACE,
     PLUGIN_INTERFACE,
     config_flow,
@@ -116,7 +117,9 @@ class FakeHost:
 
     ``host = FakeHost(inline_service(MyPlugin, manifest))`` then
     ``host.card_items()``, ``host.invoke(item, action)``,
-    ``host.share_targets()``, ``host.send(target, paths)``. Signals are
+    ``host.share_targets()``, ``host.send(target, paths)`` and, for a card
+    action with ``send_to`` (1.4), ``host.send_action(item, action, paths)``.
+    Signals are
     captured instead of sent: ``host.card_changes`` counts CardChanged,
     ``host.notifications`` holds every validated Notify, and
     ``host.click(notification)`` presses its action button. Replies pass the
@@ -171,6 +174,27 @@ class FakeHost:
 
     def send(self, target_id: str, paths: list[str]) -> surfaces.SendResult:
         return self.client.send_files(target_id, [str(path) for path in paths])
+
+    def send_action(
+        self, item_id: str, action_id: str, paths: list[str],
+    ) -> surfaces.SendResult:
+        """The user chose a card action with ``send_to`` (ApiVersion 1.4)
+        and picked ``paths``, or dropped them on the item (``action_id``
+        None is not allowed: name the sending action).
+
+        Like BlueFerry, this fetches the card, requires the action to name a
+        share target of a plugin with the ``share`` capability, and calls
+        ``SendFiles`` (never ``InvokeAction``).
+        """
+        if not self.service.manifest.has(CAPABILITY_SHARE):
+            raise PluginError("a sending action needs the share capability")
+        item = next((entry for entry in self.card_items() if entry.id == item_id), None)
+        if item is None:
+            raise PluginError(f"no card item {item_id!r}")
+        action = next((entry for entry in item.actions if entry.id == action_id), None)
+        if action is None or not action.send_to:
+            raise PluginError(f"{item_id}:{action_id} does not send files")
+        return self.send(action.send_to, paths)
 
     def click(self, notification: surfaces.Notification) -> surfaces.ActionResult:
         """The user pressed the popup's action button."""
