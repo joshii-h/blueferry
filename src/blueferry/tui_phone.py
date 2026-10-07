@@ -17,6 +17,7 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.widgets import Button, OptionList, Static
 
@@ -304,8 +305,14 @@ class PhoneScreen(ModalScreen[None]):
         self.app.push_screen(self._send_screen(on_sent=self.load_plugins))
 
     def render_phone(self) -> None:
+        try:
+            switches = self.query_one("#phone-switches", Static)
+        except NoMatches:
+            # A status snapshot can arrive after the screen is pushed but
+            # before it is composed. on_mount renders it once it is.
+            return
         status = self._status().to_dict()
-        self.query_one("#phone-switches", Static).update(switches_text(status, self._tether()))
+        switches.update(switches_text(status, self._tether()))
         self.query_one("#phone-tools", Static).update(tools_text(
             self._tools, busy=self._tool_busy, needs_pairing=self._needs_pairing,
         ))
