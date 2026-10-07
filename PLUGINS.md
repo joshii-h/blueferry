@@ -39,13 +39,15 @@ Desktop-entry syntax, group `[BlueFerry Plugin]`:
 | `Id` | yes | Reverse-DNS id, e.g. `io.weirdware.blueferry.immich_photos`. |
 | `Name` | yes | Display name (plain text, ≤ 80 characters). |
 | `Version` | yes | The plugin's own version. |
-| `ApiVersion` | yes | Plugin contract version it implements: `MAJOR` or `MAJOR.MINOR` (currently `1.2`). Clients ignore unknown major versions, and a manifest that needs a newer minor than the running BlueFerry knows (`1.3` on a 1.2 BlueFerry) is ignored with a message. |
+| `ApiVersion` | yes | Plugin contract version it implements: `MAJOR` or `MAJOR.MINOR` (currently `1.3`). Clients ignore unknown major versions, and a manifest that needs a newer minor than the running BlueFerry knows (`1.4` on a 1.3 BlueFerry) is ignored with a message. |
 | `MinBlueFerry` | yes | Oldest BlueFerry release the plugin works with. |
 | `Capabilities` | yes | `;`-separated list. Known: `photos`, `card`, `share`, `notify` (1.2); reserved: `conversations`. Unknown entries are dropped; a manifest with none left is ignored. |
 | `Homepage`, `Source` | at least one | `https://` URLs. |
 | `Exec` | yes | Command line that serves the plugin on the bus (used for its D-Bus service file). |
 | `Cli` | no | Command line for the plugin's own CLI; `blueferry plugins <alias> …` forwards to it. |
 | `Alias` | no | Short lowercase name for the CLI, e.g. `immich`. |
+| `ConfigTest` | no | `true`: the plugin implements `TestConfig` and the form shows "Test connection" (1.3). Needs `[Config …]` settings. |
+| `ConfigLogin` | no | A browser sign-in provider, today `nextcloud`: the form shows "Sign in with Nextcloud" (1.3). Clients ignore providers they do not know. Needs `[Config …]` settings. |
 
 ### Settings (`[Config <key>]`, ApiVersion 1.1)
 
@@ -61,7 +63,7 @@ characters, at most 24 settings).
 | `Default` | no | Value of an unset field. Not allowed for `secret`. |
 | `Help` | no | One line under the field (≤ 300 characters). |
 | `Choices` | for `choice` | `;`-separated simple words. |
-| `Min`, `Max` | no | Bounds for `int`. |
+| `Min`, `Max` | no | Bounds for `int` (only there). |
 
 ```
 [Config url]
@@ -77,6 +79,152 @@ Required=true
 
 A malformed settings group makes clients ignore the whole manifest, like any
 other manifest error.
+
+### Guided settings (ApiVersion 1.3)
+
+Optional keys that help people fill in a form without knowing the service.
+A 1.2 BlueFerry ignores them, so a plugin may use them and still declare
+`ApiVersion=1.2`; declare `1.3` when it also implements `TestConfig` or
+`ConfigLogin`. Every value is plain text on one line (no control or bidi
+characters).
+
+| Key in `[Config <key>]` | Meaning |
+| --- | --- |
+| `Placeholder` | Sample value shown greyed out in the empty field, e.g. `https://cloud.example.com` (≤ 120). For a stored secret the client shows "Stored — leave empty to keep" instead. |
+| `Example` | One short example under the field, shown as "Example: …" (≤ 160). |
+| `HelpUrl` | "Where do I find this?" link under the field: an `https://` URL (≤ 300), opened in the browser through the desktop launcher. |
+| `Group` | Section name, `[a-z][a-z0-9_]{0,31}`. Built in without a declaration: `account` ("Account"), `options` ("Options"), `advanced` ("Advanced", folded). Others need a `[ConfigGroup <name>]` section. |
+| `Advanced` | `true`: short for `Group=advanced`. |
+| `Pattern` | Regular expression the whole value must match (`string`, `url`, `secret`; ≤ 200). Only plain syntax: no `(?…)` groups, no backreferences, no quantified group holding a quantifier (`(a+)+`), so it cannot hang the form. |
+| `ErrorText` | The message when `Pattern`, `Min` or `Max` fails, e.g. "Use 10 to 100." (≤ 160). Without it clients say "does not have the expected format" or "must be at least …". |
+| `ShowIf` | `<key>=<value>`: show the field only while an *earlier*, non-secret setting has this value (`true`/`false` for a `bool`, one of the choices for a `choice`). A hidden field is not required, and a field that depends on a hidden field is hidden too. |
+
+`[ConfigGroup <name>]` sections declare or relabel a section:
+
+| Key | Meaning |
+| --- | --- |
+| `Label` | Section heading (≤ 40). Optional for the built-in names. |
+| `Help` | One line under the heading (≤ 300). |
+| `Collapsed` | `true` folds the section until the user opens it (default: `true` for `advanced`, `false` otherwise). A folded section with an error opens itself. |
+
+At most 8 sections. Fields without a group come first, `advanced` comes last,
+the others in the order of their first field.
+
+The client pre-checks every edit (type, `Required`, `Pattern`, `Min`/`Max`
+of the visible fields) and keeps **Save** disabled until the required fields
+are filled and valid. The pre-check only helps: the plugin validates again in
+`SetConfig` and its answer decides.
+
+Complete example (a WebDAV plugin with a Nextcloud sign-in):
+
+```
+[BlueFerry Plugin]
+Id=io.example.webdav
+Name=WebDAV files
+Version=0.3.0
+ApiVersion=1.3
+MinBlueFerry=0.9
+Capabilities=share;card;
+Source=https://git.example.org/blueferry-plugin-webdav
+Exec=blueferry-plugin-webdav serve
+Alias=webdav
+ConfigTest=true
+ConfigLogin=nextcloud
+
+[ConfigGroup account]
+Label=Account
+Help=Sign in with Nextcloud, or enter an app password by hand.
+
+[ConfigGroup pictures]
+Label=Pictures
+Collapsed=false
+
+[Config url]
+Label=Server URL
+Type=url
+Required=true
+Group=account
+Placeholder=https://cloud.example.com
+Example=https://cloud.example.com/nextcloud
+Help=The address you open in the browser to reach your files.
+
+[Config user]
+Label=User name
+Type=string
+Required=true
+Group=account
+Placeholder=anna
+
+[Config app_password]
+Label=App password
+Type=secret
+Required=true
+Group=account
+Pattern=[A-Za-z0-9-]{20,80}
+ErrorText=Copy the whole app password, including the dashes.
+Help=An app password, not your login password: it can be revoked on its own.
+HelpUrl=https://docs.nextcloud.com/server/latest/user_manual/en/session_management.html
+
+[Config folder]
+Label=Folder
+Type=string
+Default=/Ablage
+Group=options
+Pattern=/.*
+ErrorText=Start the folder with a /, e.g. /Ablage.
+Help=Where files sent from this computer land.
+
+[Config resize]
+Label=Make pictures smaller
+Type=bool
+Group=pictures
+Help=Saves space and upload time; the original stays on this computer.
+
+[Config max_side]
+Label=Longest side (pixels)
+Type=int
+Min=320
+Max=8000
+Default=2048
+ErrorText=Use 320 to 8000 pixels.
+Group=pictures
+ShowIf=resize=true
+
+[Config timeout]
+Label=Timeout (seconds)
+Type=int
+Min=5
+Max=300
+Default=30
+Advanced=true
+```
+
+#### Writing good settings text
+
+- **Label**: a short noun, 1 to 3 words, no colon or trailing period
+  ("Server URL", "App password"). Name the thing the user has, not the
+  variable ("Server URL", not "base_url").
+- **Help** answers *why* or *where from* in one sentence: "Create one in
+  Immich under Account Settings > API Keys." Do not repeat the label.
+  Say what an empty optional field does ("Leave empty for all cameras.").
+- **Placeholder** is a realistic value in the expected format, not an
+  instruction ("https://photos.example.com", not "Enter URL").
+- **Example** shows a variant the placeholder does not, e.g. a sub-path or
+  a local address: "https://cloud.example.com/nextcloud or
+  http://localhost:8080".
+- **HelpUrl** points to the page that shows where to find the value, ideally
+  the service's own documentation; not to your README's top.
+- **ErrorText** says how to fix it, not only what is wrong: "Use 320 to 8000
+  pixels." instead of "invalid".
+- **Groups**: put what is needed to connect into `account`, everyday
+  choices into `options`, and tuning (timeouts, paths, limits) into
+  `advanced`. A form with three fields needs no groups.
+- Prefer `ConfigLogin` over asking for a token by hand when the service has
+  a browser flow, and offer `ConfigTest` whenever a server is involved: a
+  green "Connected as anna" is the best help text.
+- Messages from `TestConfig` and the sign-in are one line, in the user's
+  terms ("The server answered, but the API key was refused."), and never
+  contain the secret.
 
 ## Bus contract (ApiVersion 1)
 
@@ -95,6 +243,10 @@ other manifest error.
 | `Status()` | `→ s` | JSON `{state, detail?, server?}`; `state` is `ok`, `unconfigured`, `error` or `busy`. |
 | `GetConfig()` | `→ s` | Since 1.1, plugins with settings. JSON `{values: {key: value}}` for every manifest setting. A `secret` is `"********"` when stored and `""` when not; its value never leaves the plugin. |
 | `SetConfig(s json)` | `→ s` | Since 1.1. A JSON object with the settings to change (at most 16 KiB). The plugin validates it against its schema and answers `{ok: true}` or `{ok: false, errors: {key: reason}}` (`""` for the whole form). A `secret` that is missing, empty or the mask keeps its stored value; unknown keys are errors. |
+| `TestConfig(s json)` | `→ s` | Since 1.3, with `ConfigTest=true`. Same argument as `SetConfig`, but nothing is stored: the plugin validates the values and checks them against its server. Answers `{ok, message, errors?}`; `message` is one line such as "Connected as anna to Nextcloud 31". Clients wait up to 60 s. |
+| `ConfigLogin(s provider, s values)` | `→ s` | Since 1.3, with `ConfigLogin=<provider>`. Starts a browser sign-in. `values` is a JSON object with the form's typed **non-secret** values (not saved yet), so the plugin knows the server. Answers `{state: "open", login_id, open_uri, message?}`, `{state: "done", message}` (signed in without a browser) or `{state: "error", message}`. `login_id` matches `[A-Za-z0-9_.-]{1,64}`, `open_uri` is https (http only on localhost); clients refuse anything else. |
+| `ConfigLoginStatus(s login_id)` | `→ s` | `{state, message?}` with `state` `pending`, `done`, `error`, `expired` or `cancelled`. Clients poll every 2 s for at most 20 minutes. On `done` the plugin has already stored the credentials; `message` says "Connected as …". |
+| `ConfigLoginCancel(s login_id)` | `→ s` | The user cancelled or closed the form; stop polling the provider. Answers `{ok: true}`. |
 
 `io.weirdware.BlueFerry.Photos1` (capability `photos`):
 
@@ -196,6 +348,65 @@ with the same validation: `host.card_items()`, `host.invoke(item, action)`,
 `host.share_targets()`, `host.send(target, paths)`, `host.card_changes`,
 `host.notifications` and `host.click(notification)`.
 
+### Browser sign-in: Nextcloud Login Flow v2 (ApiVersion 1.3)
+
+With `ConfigLogin=nextcloud` the settings form shows **Sign in with
+Nextcloud** next to the fields, the terminal client the same button, and
+`blueferry plugins config ID --set url=… --login` does it from a shell. Nobody
+has to create an app password by hand:
+
+1. The user types the server URL and presses the button. BlueFerry calls
+   `ConfigLogin("nextcloud", '{"url": "https://cloud.example.com"}')`.
+2. The plugin sends `POST <url>/index.php/login/v2` (with a recognisable
+   `User-Agent`, e.g. "BlueFerry WebDAV") and gets `{poll: {token,
+   endpoint}, login}`. It keeps `token` and `endpoint` to itself and answers
+   `{state: "open", login_id: "<own id>", open_uri: "<login>"}`.
+3. BlueFerry opens `open_uri` in the default browser through the desktop
+   launcher, shows "Waiting for the sign-in in your browser…" and a
+   **Cancel sign-in** button, and calls `ConfigLoginStatus(login_id)` every
+   2 seconds.
+4. The plugin polls `endpoint` with `token` (`POST`, form field `token`):
+   404 means `pending`; 200 brings `{server, loginName, appPassword}`. The
+   plugin checks that `server` is https (or the URL the user typed), stores
+   the server, the user name and the app password (keyring), and answers
+   `{state: "done", message: "Connected as <loginName>"}`. A `card` plugin
+   may also emit `CardChanged()`.
+5. BlueFerry shows the message, reloads the form (the password now shows as
+   stored) and the plugin's status. After 20 minutes without an answer it
+   reports `expired` and calls `ConfigLoginCancel`; so does closing the form.
+
+The app password goes from Nextcloud straight into the plugin; it never
+passes through BlueFerry, a D-Bus reply or a log. Other providers (an OAuth
+device flow, for example) can follow the same three methods under a new
+`ConfigLogin` name once clients know how to label them.
+
+```python
+from blueferry.plugin_api.config import ConfigError
+from blueferry.plugin_api.config_flow import ConfigTestResult, LoginStep
+from blueferry.plugin_api.service import ShareService
+
+class WebDav(ShareService):
+    def test_config(self, values):              # worker thread; nothing is saved
+        user = self.check_server(values["url"], values.get("app_password"))
+        if user is None:
+            raise ConfigError("app_password", "The server refused this app password.")
+        return ConfigTestResult(True, f"Connected as {user}")
+
+    def config_login(self, provider, values):   # worker thread
+        flow = self.start_login_flow(values["url"])         # POST …/login/v2
+        return LoginStep("open", login_id=flow.id, open_uri=flow.login_url)
+
+    def config_login_status(self, login_id):    # worker thread, every 2 s
+        result = self.poll_login_flow(login_id)             # 404 → None
+        if result is None:
+            return LoginStep("pending")
+        self.store(result.server, result.login_name, result.app_password)
+        return LoginStep("done", f"Connected as {result.login_name}")
+
+    def config_login_cancel(self, login_id):
+        self.forget_login_flow(login_id)
+```
+
 Errors are D-Bus errors under `io.weirdware.BlueFerry.Plugin.Error.*`
 (`Failed`, `RateLimited`). Messages are short and contain no personal data.
 
@@ -264,7 +475,10 @@ Tests use `blueferry.plugin_api.testing`: `inline_service()` runs worker and
 main-loop hand-offs inline, `ServiceTransport` lets a real `PluginClient`
 call the service in-process through the full validation,
 `ScriptedTransport` replays canned replies, and `FakeHost` drives the 1.2
-surfaces (see above).
+surfaces (see above) and the 1.3 settings helpers: `host.test_config(values)`,
+`host.sign_in(values)` (ConfigLogin, then ConfigLoginStatus until a final
+state; the opened URL lands in `host.opened`), `host.cancel_sign_in(id)`,
+`host.get_config()` and `host.set_config(values)`.
 
 ### Plugin from its own repository
 

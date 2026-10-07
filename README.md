@@ -937,6 +937,12 @@ The plugin lives in its own repository,
    --set url=https://photos.example.org --secret api_key`. The key is stored in
    the desktop keyring, or in an owner-only file without one.
 
+Plugin settings forms explain themselves: examples and "Where do I find
+this?" links per field, Save only once the required fields are valid, and,
+where a plugin offers it, **Test connection** (`--test` on the command line)
+and a browser sign-in such as **Sign in with Nextcloud** (`--login`). See
+[PLUGINS.md](PLUGINS.md#guided-settings-apiversion-13).
+
 Then use the **Photos** tab in the Qt client (click opens the original in
 the default viewer; an opened photo can be dragged into other apps), key `g`
 in the terminal client (Enter opens, `c` copies the path), or:

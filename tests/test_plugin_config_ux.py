@@ -391,3 +391,20 @@ def test_check_form_waits_for_required_fields_and_shows_typed_errors() -> None:
     })
     assert shown["errors"] == {"image_quality": "Use a value from 10 to 100."}
     assert view.check_form(parsed, {}, {"url": ""})["errors"] == {"url": "is required"}
+
+
+def test_the_example_manifest_in_plugins_md_parses() -> None:
+    from pathlib import Path
+
+    from blueferry.plugin_api.manifest import parse_manifest
+
+    text = (Path(__file__).resolve().parents[1] / "PLUGINS.md").read_text(encoding="utf-8")
+    start = text.index("Complete example")
+    block = text[text.index("```\n", start) + 4:]
+    block = block[:block.index("```")]
+    parsed = parse_manifest(block)
+    assert parsed.api_minor == 3 and parsed.config_test and parsed.config_login == "nextcloud"
+    assert [g.name for g in parsed.config_groups] == ["account", "options", "pictures", "advanced"]
+    keys = {field.key: field for field in parsed.config}
+    assert keys["max_side"].show_if == ("resize", "true")
+    assert keys["app_password"].coerce("abcde-fghij-klmno-pqrst-uvwxy")
