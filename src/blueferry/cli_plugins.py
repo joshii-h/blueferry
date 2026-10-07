@@ -1,7 +1,7 @@
 """`blueferry plugins`: manage plugins and forward to a plugin's own CLI.
 
 ``list``, ``install``, ``update``, ``remove``, ``enable``, ``disable``,
-``config``, ``available``/``search`` and ``index`` manage plugins (see
+``config``, ``log``, ``available``/``search`` and ``index`` manage plugins (see
 :mod:`blueferry.plugin_manager` and :mod:`blueferry.plugin_index`).
 Anything else is an alias: ``blueferry plugins <alias> ARGS…`` replaces this
 process with the plugin's ``Cli=`` command so prompts (an API key without
@@ -18,7 +18,7 @@ from collections.abc import Callable, Sequence
 
 import typer
 
-from blueferry import __version__, companion_tools
+from blueferry import __version__, companion_tools, plugin_logs
 from blueferry.plugin_api import SUPPORTED_API_VERSIONS
 from blueferry.plugin_api.client import PluginClient, PluginError
 from blueferry.plugin_api.config import SECRET_MASK
@@ -37,7 +37,7 @@ from blueferry.plugin_stopper import StopOutcome, stop_note
 from blueferry.text_safety import terminal_text
 
 COMMANDS = frozenset({
-    "list", "install", "update", "remove", "enable", "disable", "config",
+    "list", "install", "update", "remove", "enable", "disable", "config", "log",
     "available", "search", "index",
 })
 
@@ -308,6 +308,21 @@ def _sign_in(client: PluginClient, update: dict[str, object]) -> None:
     _echo(step.message or "Signed in.")
 
 
+def _log(plugin_id: str, lines: int, path_only: bool) -> None:
+    """The plugin's standard log file (plugin API 1.4), as plain text."""
+    path, text = plugin_logs.tail(plugin_id, max(1, min(lines, 5000)))
+    if path is None:
+        _fail(f"{plugin_id} has not written a log yet. Plugins for plugin API 1.4 log to "
+              f"~/.local/state/blueferry/plugins/{plugin_id}.log once they run.")
+        return
+    if path_only:
+        _echo(str(path))
+        return
+    for line in text.splitlines():
+        _echo(line)
+    _echo(f"({path})", err=True)
+
+
 def _available(manager: PluginManager, term: str, refresh: bool) -> None:
     entries, _ignored = manager.entries()
     catalog = _hooks["index"]().catalog(
@@ -387,6 +402,11 @@ def _parser() -> argparse.ArgumentParser:
                         help="let the plugin check these values without saving them")
     config.add_argument("--login", action="store_true",
                         help="sign in through the browser (plugins with ConfigLogin)")
+    log = commands.add_parser("log", help="show a plugin's log file")
+    log.add_argument("id")
+    log.add_argument("--lines", "-n", type=int, default=plugin_logs.DEFAULT_LINES,
+                     help="how many of the last lines (default 200)")
+    log.add_argument("--path", action="store_true", help="only print the file's path")
     for name in ("available", "search"):
         command = commands.add_parser(name, help="plugins offered by the plugin indexes")
         command.add_argument("term", nargs="?" if name == "available" else None, default="")
@@ -425,6 +445,8 @@ def manage(args: Sequence[str]) -> None:
         elif command == "config":
             _config(manager, options.id, options.set, options.secret,
                     test=options.test, login=options.login)
+        elif command == "log":
+            _log(options.id, options.lines, options.path)
         elif command in ("available", "search"):
             _available(manager, options.term or "", options.refresh)
         elif command == "index":
@@ -437,13 +459,13 @@ def plugins(
     args: list[str] = typer.Argument(  # noqa: B008 - Typer's declaration style
         None, metavar="COMMAND | ALIAS [ARGS]...",
         help="list, install URL, update ID, remove ID, enable/disable ID, config ID, "
-             "available, search TERM, index; an alias runs that plugin's CLI.",
+             "log ID, available, search TERM, index; an alias runs that plugin's CLI.",
     ),
 ) -> None:
     """Manage out-of-process plugins or run a plugin's own CLI."""
     if not args:
         typer.echo("Usage: blueferry plugins list | install URL [--ref REF] [--yes] | "
-                   "update ID | remove ID | enable ID | disable ID | config ID | "
+                   "update ID | remove ID | enable ID | disable ID | config ID | log ID | "
                    "available | search TERM | index | ALIAS [ARGS]...")
         raise typer.Exit(code=2)
     if args[0] in COMMANDS or args[0] in ("-h", "--help"):
