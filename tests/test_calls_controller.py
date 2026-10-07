@@ -593,14 +593,31 @@ def test_dbus_transport_never_activates_or_resolves_owners_synchronously() -> No
     assert message.get_args_list() == ["Powered", True]
     assert timeout == OFONO_CALL_TIMEOUT_SEC and kwargs == {"require_main_loop": True}
 
-    # Reply and error mapping match dbus-python's call_async.
-    reply = dbus.lowlevel.MethodReturnMessage(message)
-    handler(reply)
-    get_modems = bus.sent[1][0]
-    listing = dbus.lowlevel.MethodReturnMessage(get_modems)
-    listing.append([(MODEM, {"Type": "hfp"})], signature="a(oa{sv})")
-    bus.sent[1][1](listing)
-    handler(dbus.lowlevel.ErrorMessage(message, "org.freedesktop.DBus.Error.AccessDenied", "no"))
+    # Reply and error mapping match dbus-python's call_async. The calls were
+    # never sent, so they have no serial, and libdbus aborts the process
+    # when a reply is built for serial 0 (Arch and Ubuntu enable those
+    # checks). Stand-ins of the real message types carry the replies instead.
+    class Reply(dbus.lowlevel.MethodReturnMessage):
+        def __init__(self, *args) -> None:
+            self.args = list(args)
+
+        def get_args_list(self, **_kwargs):
+            return self.args
+
+    class Error(dbus.lowlevel.ErrorMessage):
+        def __init__(self, name, *args) -> None:
+            self.name = name
+            self.args = list(args)
+
+        def get_error_name(self):
+            return self.name
+
+        def get_args_list(self, **_kwargs):
+            return self.args
+
+    handler(Reply())
+    bus.sent[1][1](Reply(dbus.Array([dbus.Struct((dbus.ObjectPath(MODEM), {"Type": "hfp"}))])))
+    handler(Error("org.freedesktop.DBus.Error.AccessDenied", "no"))
     assert replies[0] == () and replies[1][0][0] == MODEM
     assert access_denied(errors[0]) and errors[0].get_dbus_message() == "no"
 
