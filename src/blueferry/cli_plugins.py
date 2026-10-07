@@ -13,14 +13,16 @@ import argparse
 import getpass
 import json
 import os
+import time
 from collections.abc import Callable, Sequence
 
 import typer
 
-from blueferry import __version__
+from blueferry import __version__, companion_tools
 from blueferry.plugin_api import SUPPORTED_API_VERSIONS
 from blueferry.plugin_api.client import PluginClient, PluginError
 from blueferry.plugin_api.config import SECRET_MASK
+from blueferry.plugin_api.config_flow import LOGIN_POLL_SECONDS, LOGIN_TIMEOUT_SECONDS
 from blueferry.plugin_api.manifest import Discovery, discover
 from blueferry.plugin_index import (
     DEFAULT_INDEX_URL,
@@ -56,6 +58,8 @@ _hooks: dict[str, Callable] = {
     "client": PluginClient,
     "confirm": lambda text: typer.confirm(text, default=False),
     "secret": lambda prompt: getpass.getpass(prompt),
+    "open_uri": lambda uri: companion_tools.default_system().open_uri(uri),
+    "sleep": time.sleep,
 }
 
 
@@ -171,7 +175,7 @@ def _remove(manager: PluginManager, plugin_id: str, yes: bool) -> None:
 
 
 def _config(manager: PluginManager, plugin_id: str, assignments: Sequence[str],
-            secrets: Sequence[str]) -> None:
+            secrets: Sequence[str], *, test: bool = False, login: bool = False) -> None:
     plugin = _hooks["discover"]().find(plugin_id)
     if plugin is None:
         _fail(f"No plugin {plugin_id} is installed.", 2)
@@ -203,8 +207,13 @@ def _config(manager: PluginManager, plugin_id: str, assignments: Sequence[str],
                   f"{', '.join(f.key for f in plugin.config if f.secret)}", 2)
             return
         update[key] = _hooks["secret"](f"{field.label} (input hidden): ").strip()
+    if test:
+        _test_config(client, update)
+        return
+    if login:
+        _sign_in(client, update)
     try:
-        if update:
+        if update and not login:
             result = client.set_config(update)
             if not result.ok:
                 for key, reason in result.errors.items():
@@ -221,6 +230,54 @@ def _config(manager: PluginManager, plugin_id: str, assignments: Sequence[str],
             shown = "(stored)" if shown == SECRET_MASK else "(not set)"
         _echo(f"{field.key} = {json.dumps(shown) if not field.secret else shown}"
               f"  # {field.label}{' (required)' if field.required else ''}")
+
+
+def _test_config(client: PluginClient, update: dict[str, object]) -> None:
+    """``--test``: the plugin checks the given values; nothing is saved."""
+    try:
+        result = client.test_config(update)
+    except PluginError as error:
+        _fail(error)
+        return
+    for key, reason in result.errors.items():
+        _echo(f"{key or 'settings'}: {reason}", err=True)
+    _echo(("OK: " if result.ok else "Failed: ") + result.message, err=not result.ok)
+    if not result.ok:
+        raise typer.Exit(code=1)
+
+
+def _sign_in(client: PluginClient, update: dict[str, object]) -> None:
+    """``--login``: the plugin's browser sign-in, e.g. Nextcloud Login Flow v2."""
+    try:
+        step = client.config_login(update)
+        if step.state == "open":
+            _echo(f"Opening the sign-in page: {step.open_uri}")
+            try:
+                _hooks["open_uri"](step.open_uri)
+            except Exception:  # a missing browser is fine: the URL is printed
+                _echo("Open the address above in a browser.")
+            _echo("Waiting for the sign-in… (Ctrl+C cancels)")
+            login_id = step.login_id
+            deadline = time.monotonic() + LOGIN_TIMEOUT_SECONDS
+            try:
+                while not step.final:
+                    if time.monotonic() > deadline:
+                        client.config_login_cancel(login_id)
+                        _fail("The sign-in expired. Start it again.")
+                        return
+                    _hooks["sleep"](LOGIN_POLL_SECONDS)
+                    step = client.config_login_status(login_id)
+            except KeyboardInterrupt:
+                client.config_login_cancel(login_id)
+                _fail("Cancelled.")
+                return
+    except PluginError as error:
+        _fail(error)
+        return
+    if step.state != "done":
+        _fail(step.message or f"The sign-in ended: {step.state}")
+        return
+    _echo(step.message or "Signed in.")
 
 
 def _available(manager: PluginManager, term: str, refresh: bool) -> None:
@@ -296,6 +353,10 @@ def _parser() -> argparse.ArgumentParser:
     config.add_argument("--set", action="append", default=[], metavar="KEY=VALUE")
     config.add_argument("--secret", action="append", default=[], metavar="KEY",
                         help="prompt for a secret without echo")
+    config.add_argument("--test", action="store_true",
+                        help="let the plugin check these values without saving them")
+    config.add_argument("--login", action="store_true",
+                        help="sign in through the browser (plugins with ConfigLogin)")
     for name in ("available", "search"):
         command = commands.add_parser(name, help="plugins offered by the plugin indexes")
         command.add_argument("term", nargs="?" if name == "available" else None, default="")
@@ -327,7 +388,8 @@ def manage(args: Sequence[str]) -> None:
             manager.set_enabled(options.id, command == "enable")
             _echo(f"{options.id} {command}d.")
         elif command == "config":
-            _config(manager, options.id, options.set, options.secret)
+            _config(manager, options.id, options.set, options.secret,
+                    test=options.test, login=options.login)
         elif command in ("available", "search"):
             _available(manager, options.term or "", options.refresh)
         elif command == "index":

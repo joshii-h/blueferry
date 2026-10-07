@@ -157,3 +157,65 @@ def test_config_reads_and_writes_through_the_plugin(hooks, managed, monkeypatch)
     result = CliRunner().invoke(app, ["plugins", "config", "io.example.photos",
                                       "--set", "api_key=visible"])
     assert result.exit_code == 2
+
+
+def test_config_test_and_browser_sign_in(hooks, monkeypatch) -> None:
+    from blueferry.plugin_api.config_flow import ConfigTestResult, LoginStep
+
+    state, _executed = hooks
+    plugin = manifest(api_version="1.3", extra=(
+        "ConfigTest=true\nConfigLogin=nextcloud\n"
+        "[Config url]\nLabel=Server URL\nType=url\nRequired=true\n"
+        "[Config token]\nLabel=App password\nType=secret\n"
+    ))
+    state["discovery"] = Discovery((plugin,))
+    calls: list[tuple] = []
+
+    class Client:
+        def __init__(self, _manifest) -> None:
+            self.polls = 0
+
+        def test_config(self, values):
+            calls.append(("test", dict(values)))
+            ok = values.get("url") == "https://good.example"
+            return ConfigTestResult(ok, "Connected as anna" if ok else "No answer",
+                                    {} if ok else {"url": "unreachable"})
+
+        def config_login(self, values):
+            calls.append(("login", dict(values)))
+            return LoginStep("open", login_id="f1", open_uri="https://good.example/login/v2/f")
+
+        def config_login_status(self, login_id):
+            self.polls += 1
+            return LoginStep("done" if self.polls > 1 else "pending", "Connected as anna")
+
+        def config_login_cancel(self, login_id):
+            calls.append(("cancel", login_id))
+
+        def set_config(self, values):
+            calls.append(("set", dict(values)))
+
+        def get_config(self):
+            return {"url": "https://good.example", "token": "********"}
+
+    opened: list[str] = []
+    monkeypatch.setitem(cli_plugins._hooks, "client", Client)
+    monkeypatch.setitem(cli_plugins._hooks, "open_uri", opened.append)
+    monkeypatch.setitem(cli_plugins._hooks, "sleep", lambda _seconds: None)
+    result = CliRunner().invoke(app, [
+        "plugins", "config", "io.example.photos", "--set", "url=https://good.example", "--test",
+    ])
+    assert result.exit_code == 0 and "OK: Connected as anna" in result.output
+    result = CliRunner().invoke(app, [
+        "plugins", "config", "io.example.photos", "--set", "url=https://bad.example", "--test",
+    ])
+    assert result.exit_code == 1 and "url: unreachable" in result.output
+    assert not any(call[0] == "set" for call in calls)
+    result = CliRunner().invoke(app, [
+        "plugins", "config", "io.example.photos", "--set", "url=https://good.example", "--login",
+    ])
+    assert result.exit_code == 0, result.output
+    assert opened == ["https://good.example/login/v2/f"]
+    assert "Connected as anna" in result.output and "token = (stored)" in result.output
+    assert ("login", {"url": "https://good.example"}) in calls
+    assert not any(call[0] == "set" for call in calls)
