@@ -103,17 +103,42 @@ PLUGINS = {
     }],
     "pending": {}, "config": {
         "id": "io.weirdware.blueferry.immich_photos", "name": "Immich photos",
-        "loaded": True, "errors": {"camera_model": "is too long"}, "fields": [
+        "loaded": True, "errors": {}, "checkErrors": {"camera_model": "is too long"},
+        "groups": [
+            {"name": "account", "label": "Account", "collapsed": False,
+             "help": "The Immich server BlueFerry reads your photos from."},
+            {"name": "options", "label": "Options", "collapsed": False, "help": ""},
+            {"name": "advanced", "label": "Advanced", "collapsed": True, "help": ""},
+        ],
+        "actions": {"test": True, "login": "", "loginLabel": ""},
+        "status": {"kind": "test", "ok": True, "pending": False,
+                   "text": "Connected as anna to Immich 1.135; 12,408 photos."},
+        "fields": [
             {"key": "url", "label": "Server URL", "type": "url", "required": True,
-             "help": "For example https://photos.example.org", "choices": [],
-             "minimum": 0, "maximum": 0, "value": "https://photos.joshuahirsig.xyz",
-             "stored": False},
+             "help": "The address you open in the browser to see your photos.",
+             "choices": [], "minimum": 0, "maximum": 0, "value": "https://photos.joshuahirsig.xyz",
+             "stored": False, "placeholder": "https://photos.example.com",
+             "example": "https://immich.example.com or http://localhost:2283",
+             "helpUrl": "", "group": "account", "showIfKey": "", "showIfValue": ""},
             {"key": "api_key", "label": "API key", "type": "secret", "required": True,
-             "help": "Needs asset.read, asset.view and asset.download.", "choices": [],
-             "minimum": 0, "maximum": 0, "value": "", "stored": True},
-            {"key": "camera_model", "label": "Camera model", "type": "string",
-             "required": False, "help": "Only photos from this camera, e.g. iPhone 16 Pro.",
-             "choices": [], "minimum": 0, "maximum": 0, "value": "", "stored": False},
+             "help": "Create one in Immich under Account Settings > API Keys with "
+             "asset.read, asset.view and asset.download.", "choices": [],
+             "minimum": 0, "maximum": 0, "value": "", "stored": True, "placeholder": "",
+             "example": "", "helpUrl": "https://immich.app/docs/features/command-line-interface#obtain-the-api-key",
+             "group": "account", "showIfKey": "", "showIfValue": ""},
+            {"key": "videos", "label": "Include videos", "type": "bool", "required": False,
+             "help": "", "choices": [], "minimum": 0, "maximum": 0, "value": True,
+             "stored": False, "placeholder": "", "example": "", "helpUrl": "",
+             "group": "options", "showIfKey": "", "showIfValue": ""},
+            {"key": "camera_model", "label": "Only this camera", "type": "string",
+             "required": False, "help": "Leave empty to show photos from every device.",
+             "choices": [], "minimum": 0, "maximum": 0, "value": "", "stored": False,
+             "placeholder": "iPhone 16 Pro", "example": "", "helpUrl": "",
+             "group": "options", "showIfKey": "", "showIfValue": ""},
+            {"key": "limit", "label": "Photos to load", "type": "int", "required": False,
+             "help": "", "choices": [], "minimum": 1, "maximum": 200, "value": 60,
+             "stored": False, "placeholder": "", "example": "", "helpUrl": "",
+             "group": "advanced", "showIfKey": "", "showIfValue": ""},
         ]},
     "store": {"loaded": True, "problems": [], "items": [
         {"id": "io.weirdware.blueferry.immich_photos", "name": "Immich photos",
@@ -278,6 +303,19 @@ QtObject {
     function loadPluginConfig(id) {}
     function savePluginConfig(id, values) {}
     function closePluginConfig() {}
+    function checkPluginConfig(id, values) {
+        const fields = (pluginSettings.config || {}).fields || []
+        const merged = {}
+        fields.forEach(f => merged[f.key] = (f.key in values) ? values[f.key] : f.value)
+        const visible = fields.filter(f => !f.showIfKey
+            || String(merged[f.showIfKey]) === f.showIfValue).map(f => f.key)
+        const errors = (pluginSettings.config || {}).checkErrors || {}
+        return {errors: errors, visible: visible, valid: Object.keys(errors).length === 0}
+    }
+    function testPluginConfig(id, values) {}
+    function signInPlugin(id, values) {}
+    function cancelPluginSignIn() {}
+    function openPluginHelp(id, key) {}
     function setPluginIndexes(urls) {}
     function clearPluginMessage() {}
     function setNotificationPolicy(policy) {}
@@ -443,6 +481,82 @@ def _render_settings(bridge, window, scheme: str, out_dir: Path) -> None:
     path = out_dir / f"settings-{scheme}-narrow-plugins.png"
     window.grabWindow().save(str(path))
     print(path)
+    _render_plugin_form(bridge, window, page, scheme, out_dir)
+
+
+NEXTCLOUD_FORM = {
+    "id": "io.weirdware.blueferry.immich_photos", "name": "WebDAV files", "loaded": True,
+    "errors": {}, "checkErrors": {"base_path": "Start the folder with a /, e.g. /Ablage."},
+    "groups": [
+        {"name": "account", "label": "Account", "collapsed": False,
+         "help": "Sign in with Nextcloud, or enter an app password by hand."},
+        {"name": "advanced", "label": "Advanced", "collapsed": True, "help": ""},
+    ],
+    "actions": {"test": True, "login": "nextcloud", "loginLabel": "Sign in with Nextcloud"},
+    "status": {"kind": "login", "ok": True, "pending": True,
+               "text": "Waiting for the sign-in in your browser…"},
+    "fields": [
+        {"key": "url", "label": "Server URL", "type": "url", "required": True,
+         "help": "", "choices": [], "minimum": 0, "maximum": 0, "value": "",
+         "stored": False, "placeholder": "https://cloud.example.com", "example": "",
+         "helpUrl": "", "group": "account", "showIfKey": "", "showIfValue": ""},
+        {"key": "user", "label": "User name", "type": "string", "required": True,
+         "help": "", "choices": [], "minimum": 0, "maximum": 0, "value": "",
+         "stored": False, "placeholder": "anna", "example": "", "helpUrl": "",
+         "group": "account", "showIfKey": "", "showIfValue": ""},
+        {"key": "app_password", "label": "App password", "type": "secret", "required": True,
+         "help": "Nextcloud > Settings > Security > Devices & sessions.", "choices": [],
+         "minimum": 0, "maximum": 0, "value": "", "stored": False, "placeholder": "",
+         "example": "", "helpUrl": "https://docs.nextcloud.com/server/latest/user_manual/en/session_management.html",
+         "group": "account", "showIfKey": "", "showIfValue": ""},
+        {"key": "base_path", "label": "Folder", "type": "string", "required": False,
+         "help": "Where sent files land.", "choices": [], "minimum": 0, "maximum": 0,
+         "value": "Ablage", "stored": False, "placeholder": "/Ablage", "example": "/Documents/iPhone",
+         "helpUrl": "", "group": "advanced", "showIfKey": "", "showIfValue": ""},
+        {"key": "images", "label": "Resize pictures", "type": "bool", "required": False,
+         "help": "", "choices": [], "minimum": 0, "maximum": 0, "value": True,
+         "stored": False, "placeholder": "", "example": "", "helpUrl": "",
+         "group": "advanced", "showIfKey": "", "showIfValue": ""},
+        {"key": "image_size", "label": "Longest side", "type": "int", "required": False,
+         "help": "Pixels.", "choices": [], "minimum": 320, "maximum": 8000, "value": 2048,
+         "stored": False, "placeholder": "", "example": "", "helpUrl": "",
+         "group": "advanced", "showIfKey": "images", "showIfValue": "true"},
+    ],
+}
+
+
+def _render_plugin_form(bridge, window, page, scheme: str, out_dir: Path) -> None:
+    """The guided settings form: a tested Immich form, then a Nextcloud
+    sign-in in progress with Advanced open and a pre-check error."""
+    from PySide6.QtCore import QObject
+    from PySide6.QtTest import QTest
+
+    page.setProperty("category", "plugins")
+    for width in (SIZES[0][0], SIZES[-1][0]):
+        window.resize(width, 1500)
+        QTest.qWait(500)
+        path = out_dir / f"settings-{scheme}-plugin-form-{width}.png"
+        window.grabWindow().save(str(path))
+        print(path)
+    window.resize(SIZES[-1][0], 1500)
+    bridge.setProperty("pluginSettings", dict(PLUGINS, config=dict(
+        NEXTCLOUD_FORM, status={}, checkErrors={})))
+    QTest.qWait(500)
+    path = out_dir / f"settings-{scheme}-plugin-form-nextcloud.png"
+    window.grabWindow().save(str(path))
+    print(path)
+    bridge.setProperty("pluginSettings", dict(PLUGINS, config=NEXTCLOUD_FORM))
+    QTest.qWait(300)
+    form = window.findChild(QObject, "pluginConfigForm")
+    if form is not None:
+        form.setProperty("expanded", {"advanced": True})
+    window.resize(SIZES[0][0], 1500)
+    QTest.qWait(500)
+    path = out_dir / f"settings-{scheme}-plugin-form-signin.png"
+    window.grabWindow().save(str(path))
+    print(path)
+    bridge.setProperty("pluginSettings", PLUGINS)
+    QTest.qWait(200)
 
 
 def _render_calls(bridge, window, scheme: str, out_dir: Path) -> None:

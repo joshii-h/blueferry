@@ -779,6 +779,20 @@ def settings_window(qml_engine):
             function loadPluginConfig(id) { record("loadPluginConfig", [id]); }
             function savePluginConfig(id, values) { record("savePluginConfig", [id, values]); }
             function closePluginConfig() { record("closePluginConfig", []); }
+            property var checkErrors: ({})
+            function checkPluginConfig(id, values) {
+                const fields = (pluginSettings.config || {}).fields || []
+                const merged = {}
+                fields.forEach(f => merged[f.key] = (f.key in values) ? values[f.key] : f.value)
+                const visible = fields.filter(f => !f.showIfKey
+                    || String(merged[f.showIfKey]) === f.showIfValue).map(f => f.key)
+                return {errors: checkErrors, visible: visible,
+                        valid: Object.keys(checkErrors).length === 0}
+            }
+            function testPluginConfig(id, values) { record("testPluginConfig", [id, values]); }
+            function signInPlugin(id, values) { record("signInPlugin", [id, values]); }
+            function cancelPluginSignIn() { record("cancelPluginSignIn", []); }
+            function openPluginHelp(id, key) { record("openPluginHelp", [id, key]); }
             function setPluginIndexes(urls) { record("setPluginIndexes", [urls]); }
             function clearPluginMessage() { record("clearPluginMessage", []); }
         }
@@ -3111,4 +3125,102 @@ def test_settings_plugins_list_store_form_and_confirmation(qml_engine, settings_
     assert dialog.property("opened") or dialog.property("visible")
     secret = _settings_object(window, "configField_api_key")
     assert secret.property("text") == "" and "leave empty" in secret.property("placeholderText")
+    _evaluate(qml_engine, "testWindow.closePhoneSettings()")
+
+
+def _guided_field(key, label, kind, **extra):
+    row = {"key": key, "label": label, "type": kind, "required": False, "help": "",
+           "choices": [], "minimum": 0, "maximum": 100, "value": "", "stored": False,
+           "placeholder": "", "example": "", "helpUrl": "", "group": "",
+           "showIfKey": "", "showIfValue": ""}
+    row.update(extra)
+    return row
+
+
+def test_guided_plugin_form_groups_checks_tests_and_signs_in(qml_engine, settings_window):
+    window, bridge = settings_window
+    bridge.setProperty("status", {"daemon": True})
+    plugin = {"id": "io.example.cloud", "name": "Cloud", "version": "1.0", "capabilities": [],
+              "source": "https://git.example.org/cloud", "ref": "", "managed": True,
+              "enabled": True, "state": "unconfigured", "stateText": "Needs setup",
+              "detail": "", "hasConfig": True}
+    config = {
+        "id": "io.example.cloud", "name": "Cloud", "loaded": True, "errors": {},
+        "groups": [{"name": "account", "label": "Konto", "help": "Your server.",
+                    "collapsed": False},
+                   {"name": "advanced", "label": "Advanced", "help": "", "collapsed": True}],
+        "actions": {"test": True, "login": "nextcloud", "loginLabel": "Sign in with Nextcloud"},
+        "status": {},
+        "fields": [
+            _guided_field("url", "Server URL", "url", required=True, group="account",
+                          placeholder="https://cloud.example.com",
+                          example="https://cloud.example.com/nextcloud",
+                          helpUrl="https://docs.example.com/url"),
+            _guided_field("token", "App password", "secret", required=True,
+                          group="account", stored=True),
+            _guided_field("resize", "Resize", "bool", group="advanced", value=False),
+            _guided_field("size", "Size", "int", group="advanced", value=50,
+                          showIfKey="resize", showIfValue="true"),
+        ],
+    }
+    bridge.setProperty("pluginSettings", {
+        "loaded": True, "busy": "", "message": "", "messageOk": True, "plugins": [plugin],
+        "ignored": [], "pending": {}, "config": config,
+        "store": {"loaded": True, "problems": [], "items": []}, "indexes": [],
+        "defaultIndex": "https://example.org/index.json",
+    })
+    bridge.setProperty("checkErrors", {"url": "must be an https:// URL"})
+    _open_category(qml_engine, window, "plugins")
+    form = _settings_object(window, "pluginConfigForm")
+    engine = qmlEngine(form)
+    engine.globalObject().setProperty("guidedForm", engine.newQObject(form))
+    url = _visual_find(form, "configField_url")
+    assert url.property("placeholderText") == "https://cloud.example.com"
+    example = _visual_find(form, "configExample_url")
+    assert example.property("text") == "Example: https://cloud.example.com/nextcloud"
+    secret = _visual_find(form, "configField_token")
+    assert "leave empty" in secret.property("placeholderText")
+    engine.globalObject().setProperty("guidedSecret", engine.newQObject(secret))
+    assert _evaluate(engine, "guidedSecret.echoMode === 2") is True
+    QMetaObject.invokeMethod(_visual_find(form, "configReveal_token"), "clicked")
+    QGuiApplication.processEvents()
+    assert _evaluate(engine, "guidedSecret.echoMode === 0") is True
+    QMetaObject.invokeMethod(_visual_find(form, "configHelp_url"), "clicked")
+    calls = _evaluate(qml_engine, "testBridge.calls")
+    assert calls[-1] == {"method": "openPluginHelp", "args": ["io.example.cloud", "url"]}
+    # Advanced starts folded; ShowIf hides "size" while resize is off.
+    advanced = _visual_find(form, "configGroup_advanced")
+    assert advanced.property("open") is False
+    assert _evaluate(engine, "guidedForm.shown('size')") is False
+    _evaluate(engine, "guidedForm.set('resize', true)")
+    assert _evaluate(engine, "guidedForm.shown('size')") is True
+    # A pre-check error shows inline and keeps Save and Test off.
+    error = _visual_find(form, "configError_url")
+    assert error.property("visible") and error.property("text") == "must be an https:// URL"
+    save = _visual_find(form, "pluginConfigSave")
+    test = _visual_find(form, "pluginConfigTest")
+    assert save.property("enabled") is False and test.property("enabled") is False
+    bridge.setProperty("checkErrors", {})
+    _evaluate(engine, "guidedForm.set('url', 'https://cloud.example')")
+    assert save.property("enabled") is True and test.property("enabled") is True
+    QMetaObject.invokeMethod(test, "clicked")
+    assert _evaluate(qml_engine, "testBridge.calls")[-1]["method"] == "testPluginConfig"
+    sign_in = _visual_find(form, "pluginConfigSignIn")
+    assert sign_in.property("text") == "Sign in with Nextcloud"
+    QMetaObject.invokeMethod(sign_in, "clicked")
+    last = _evaluate(qml_engine, "testBridge.calls")[-1]
+    assert last["method"] == "signInPlugin" and last["args"][0] == "io.example.cloud"
+    # A pending sign-in swaps the button for Cancel and shows the status line;
+    # the typed value survives the state update.
+    state = bridge.property("pluginSettings")
+    bridge.setProperty("pluginSettings", {**state, "config": {**config, "status": {
+        "kind": "login", "ok": True, "pending": True, "text": "Waiting <b>…</b>"}}})
+    QGuiApplication.processEvents()
+    status = _visual_find(form, "pluginConfigStatus")
+    assert status.property("visible") and "&lt;b&gt;" in status.property("text")
+    assert _visual_find(form, "pluginConfigSignIn").property("visible") is False
+    cancel = _visual_find(form, "pluginConfigCancelSignIn")
+    QMetaObject.invokeMethod(cancel, "clicked")
+    assert _evaluate(qml_engine, "testBridge.calls")[-1]["method"] == "cancelPluginSignIn"
+    assert _visual_find(form, "configField_url").property("text") == "https://cloud.example"
     _evaluate(qml_engine, "testWindow.closePhoneSettings()")
