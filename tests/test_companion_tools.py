@@ -41,6 +41,7 @@ class Fake:
         self.processes: dict[int, list[str]] = {}
         self.mounts: set[Path] = set()
         self.on_run = None
+        self.replaced: frozenset[str] = frozenset()
 
     def system(self) -> System:
         def runtime_dir() -> Path:
@@ -74,6 +75,7 @@ class Fake:
             process_argv=self.processes.get,
             kill=kill,
             is_mount=lambda path: path in self.mounts,
+            replaced_tools=lambda: self.replaced,
         )
 
 
@@ -154,6 +156,41 @@ def test_localsend_prefers_the_flatpak_entry_then_path(tmp_path) -> None:
     state = tools.send_state(missing.system())
     assert (state.installed, state.enabled) == (False, False)
     assert tools.start_localsend(missing.system()).ok is False
+
+
+def test_a_plugin_replacing_localsend_hides_the_app_and_explains(tmp_path) -> None:
+    fake = Fake(tmp_path, installed={"localsend", "uxplay"},
+                desktop={tools.LOCALSEND_DESKTOP_ID})
+    fake.replaced = frozenset({"localsend", "unknown-tool"})
+    system = fake.system()
+    keys = [tool.key for tool in tools.snapshot(system, tools.PhotoProbe()).tools]
+    assert tools.SEND not in keys and tools.MIRROR in keys
+    refused = tools.perform(system, tools.SEND)
+    assert not refused.ok and "Send files" in refused.message
+    assert fake.desktop[tools.LOCALSEND_DESKTOP_ID].launches == 0
+    # A client that knows what is hidden passes it and reads no manifests.
+    assert tools.perform(system, tools.SEND, hidden=frozenset()).ok
+    assert fake.desktop[tools.LOCALSEND_DESKTOP_ID].launches == 1
+    fake.replaced = frozenset({"uxplay"})
+    assert "replaces" in tools.perform(fake.system(), tools.MIRROR).message
+
+
+def test_replaced_by_plugins_reads_enabled_manifests_only(tmp_path, monkeypatch) -> None:
+    data = tmp_path / "data"
+    plugins = data / "blueferry" / "plugins"
+    plugins.mkdir(parents=True)
+    monkeypatch.setenv("XDG_DATA_HOME", str(data))
+    monkeypatch.setenv("XDG_DATA_DIRS", str(tmp_path / "none"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    (plugins / "io.example.ls.plugin").write_text(
+        "[BlueFerry Plugin]\nId=io.example.ls\nName=LS\nVersion=1\nApiVersion=1.4\n"
+        "MinBlueFerry=0.1\nCapabilities=share;\nHomepage=https://example.org\n"
+        "Exec=ls-plugin serve\nReplacesTools=localsend;\n")
+    assert tools.replaced_by_plugins() == frozenset({"localsend"})
+    prefs = tmp_path / "config" / "blueferry" / "plugins.json"
+    prefs.parent.mkdir(parents=True)
+    prefs.write_text('{"disabled": ["io.example.ls"]}')
+    assert tools.replaced_by_plugins() == frozenset()
 
 
 # ---- photos ----------------------------------------------------------------------

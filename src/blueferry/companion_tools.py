@@ -7,7 +7,9 @@ These are client-side conveniences, not part of the daemon or its D-Bus API:
     ``uxplay-battlestation.desktop`` entry is preferred; otherwise ``uxplay``
     from PATH is started with this computer's host name.
 ``send``
-    LocalSend (the Flathub app, or ``localsend`` from PATH).
+    LocalSend (the Flathub app, or ``localsend`` from PATH). Hidden while an
+    enabled plugin declares ``ReplacesTools=localsend`` (the LocalSend
+    plugin answers on the same port, so the app would only get in its way).
 ``photos`` / ``eject``
     The iPhone's camera roll over USB through ifuse, mounted below
     ``$XDG_RUNTIME_DIR/blueferry`` and opened in the file manager.
@@ -172,6 +174,25 @@ def process_argv(pid: int) -> list[str] | None:
     return [part.decode("utf-8", "replace") for part in raw.split(b"\0") if part]
 
 
+def replaced_by_plugins() -> frozenset[str]:
+    """Tool names (``localsend``, ``uxplay``) an enabled plugin replaces
+    (manifest key ``ReplacesTools``). *Blocking*: reads the manifests, starts
+    nothing; any problem counts as "nothing replaced"."""
+    try:
+        from blueferry import __version__
+        from blueferry.plugin_api.manifest import discover
+        from blueferry.plugin_prefs import disabled_plugins
+
+        found = discover(blueferry_version=__version__)
+        disabled = disabled_plugins()
+    except Exception:  # a broken plugin setup must not hide the tools
+        return frozenset()
+    return frozenset(
+        tool for plugin in found.plugins if plugin.id not in disabled
+        for tool in plugin.replaces_tools
+    )
+
+
 @dataclass(slots=True)
 class System:
     """Everything that touches the system, replaceable in tests."""
@@ -186,6 +207,7 @@ class System:
     process_argv: Callable[[int], list[str] | None] = process_argv
     kill: Callable[[int, int], None] = os.kill
     is_mount: Callable[[Path], bool] = os.path.ismount
+    replaced_tools: Callable[[], frozenset[str]] = replaced_by_plugins
 
 
 def default_system() -> System:
@@ -472,14 +494,37 @@ def pair_iphone(system: System) -> ActionResult:
 
 # ---- shared entry points ------------------------------------------------------
 
+# Manifest names (ReplacesTools) of the tools a plugin can stand in for.
+_TOOL_NAMES = {SEND: "localsend", MIRROR: "uxplay"}
+
+
+def replaced(system: System) -> frozenset[str]:
+    """Keys of the tools an enabled plugin replaces. *Blocking* (manifests)."""
+    names = system.replaced_tools()
+    return frozenset(key for key, name in _TOOL_NAMES.items() if name in names)
+
+
 def snapshot(system: System, probe: PhotoProbe | None = None) -> Snapshot:
-    """*Blocking* unless ``probe`` is given: the state of all four entries."""
+    """*Blocking*: the state of every entry no plugin replaces."""
     photos, eject = photos_states(probe if probe is not None else probe_photos(system))
-    return Snapshot((mirror_state(system), send_state(system), photos, eject))
+    hidden = replaced(system)
+    return Snapshot(tuple(
+        tool for tool in (mirror_state(system), send_state(system), photos, eject)
+        if tool.key not in hidden
+    ))
 
 
-def perform(system: System, action: str) -> ActionResult:
-    """Run one action. *Blocking* for the actions in BLOCKING_ACTIONS."""
+REPLACED_SEND_HINT = _(
+    "LocalSend runs inside BlueFerry now: choose “Send files…” on a device "
+    "under From Plugins, or run “blueferry send FILE”.")
+
+
+def perform(
+    system: System, action: str, *, hidden: frozenset[str] | None = None,
+) -> ActionResult:
+    """Run one action. *Blocking* for the actions in BLOCKING_ACTIONS, and
+    for mirror and send unless ``hidden`` (the keys a plugin replaces, e.g.
+    from the last snapshot) is given; otherwise the manifests are read."""
     handlers: dict[str, Callable[[System], ActionResult]] = {
         MIRROR: toggle_mirroring,
         SEND: start_localsend,
@@ -490,4 +535,8 @@ def perform(system: System, action: str) -> ActionResult:
     handler = handlers.get(action)
     if handler is None:
         return ActionResult(False, _("Unknown tool {name!r}.").format(name=action))
+    if action in _TOOL_NAMES and action in (replaced(system) if hidden is None else hidden):
+        if action == SEND:
+            return ActionResult(False, REPLACED_SEND_HINT)
+        return ActionResult(False, _("A BlueFerry plugin replaces this tool."))
     return handler(system)

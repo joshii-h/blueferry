@@ -456,6 +456,10 @@ class PhoneScreen(ModalScreen[None]):
             usable = self._needs_pairing
         else:
             tool = self._tools.get(action) if self._tools is not None else None
+            if tool is None and action == companion_tools.SEND and self._tools is not None:
+                # The LocalSend plugin replaced the app (ReplacesTools).
+                self.notify(companion_tools.REPLACED_SEND_HINT, markup=False)
+                return
             usable = tool is not None and tool.enabled
             if tool is not None and not tool.enabled:
                 self.notify(_plain(tool.subtitle), severity="warning", markup=False)
