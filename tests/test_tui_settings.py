@@ -153,3 +153,124 @@ def test_plugins_install_from_the_store_after_confirmation_and_configure(
             await _until(pilot, lambda: manager.disabled() == {"io.example.demo"})
 
     _run(scenario())
+
+
+GUIDED = """ConfigTest=true
+ConfigLogin=nextcloud
+
+[Config url]
+Label=Server URL
+Type=url
+Required=true
+Group=account
+Placeholder=https://cloud.example.com
+Example=https://cloud.example.com/nextcloud
+HelpUrl=https://docs.example.com/url
+
+[Config app_password]
+Label=App password
+Type=secret
+Required=true
+Group=account
+
+[Config resize]
+Label=Resize pictures
+Type=bool
+Advanced=true
+
+[Config size]
+Label=Longest side
+Type=int
+Min=320
+Max=8000
+Default=2048
+Advanced=true
+ShowIf=resize=true
+ErrorText=Use 320 to 8000 pixels.
+"""
+
+
+def test_guided_plugin_form_checks_tests_and_signs_in() -> None:
+    from textual.widgets import Button, Checkbox, Collapsible
+
+    from blueferry.plugin_api.client import PluginClient
+    from blueferry.plugin_api.config_flow import ConfigTestResult, LoginStep
+    from blueferry.plugin_api.service import CardService
+    from blueferry.plugin_api.testing import ServiceTransport, inline_service, manifest
+
+    class Cloud(CardService):
+        stored: dict = {}  # noqa: RUF012 - one instance per test
+        polls = 0
+
+        def config_values(self):
+            return dict(self.stored)
+
+        def apply_config(self, values):
+            self.stored.update(values)
+
+        def test_config(self, values):
+            return ConfigTestResult(True, f"Connected to {values['url']}")
+
+        def config_login(self, provider, values):
+            return LoginStep("open", login_id="f1", open_uri="https://cloud.example/login/v2/f")
+
+        def config_login_status(self, login_id):
+            Cloud.polls += 1
+            if Cloud.polls < 2:
+                return LoginStep("pending")
+            self.stored.update(url="https://cloud.example", app_password="pw")
+            return LoginStep("done", "Connected as anna")
+
+    plugin = manifest("io.example.cloud", capabilities="card;", api_version="1.3", extra=GUIDED)
+    client = PluginClient(plugin, transport=ServiceTransport(inline_service(Cloud, plugin)))
+    opened: list[str] = []
+
+    async def scenario() -> None:
+        app = BlueFerryApp(TuiState(_Backend()), monitor_factory=lambda: None)
+        async with app.run_test(size=(140, 60)) as pilot:
+            app.push_screen(PluginConfigScreen(plugin, client, opener=opened.append,
+                                               poll_seconds=0.01))
+            await _until(pilot, lambda: isinstance(app.screen, PluginConfigScreen))
+            screen = app.screen
+            await _until(pilot, lambda: bool(screen.query("#config-url")))
+            url = screen.query_one("#config-url", Input)
+            assert url.placeholder == "https://cloud.example.com"
+            assert "Example: https://cloud.example.com/nextcloud" in _texts(screen)
+            assert screen.query_one("#group-advanced", Collapsible).collapsed
+            save = screen.query_one("#config-save", Button)
+            await _until(pilot, lambda: save.disabled)
+            assert not screen.query_one("#row-size").display
+            screen.query_one("#config-resize", Checkbox).value = True
+            await _until(pilot, lambda: screen.query_one("#row-size").display)
+            url.value = "http://cloud.example"
+            await _until(pilot, lambda: "https" in _plain(app, "#error-url"))
+            url.value = "https://cloud.example"
+            screen.query_one("#config-app_password", Input).value = "typed"
+            await _until(pilot, lambda: not save.disabled)
+            screen.query_one("#config-size", Input).value = "9"
+            await _until(pilot, lambda: _plain(app, "#error-size") == "Use 320 to 8000 pixels.")
+            assert save.disabled
+            screen.query_one("#config-size", Input).value = "1024"
+            await _until(pilot, lambda: not save.disabled)
+            secret = screen.query_one("#config-app_password", Input)
+            assert secret.password
+            screen.query_one("#reveal-app_password", Button).press()
+            await _until(pilot, lambda: not secret.password)
+            screen.query_one("#help-url", Button).press()
+            await _until(pilot, lambda: opened == ["https://docs.example.com/url"])
+            screen.query_one("#config-test", Button).press()
+            await _until(pilot, lambda: "Connected to https://cloud.example"
+                         in _plain(app, "#config-status"))
+            assert Cloud.stored == {}
+            screen.query_one("#config-login", Button).press()
+            await _until(pilot, lambda: "Connected as anna" in _plain(app, "#config-status"))
+            assert opened[-1] == "https://cloud.example/login/v2/f"
+            await _until(pilot, lambda: "stored" in secret.placeholder)
+
+    _run(scenario())
+
+
+def _texts(screen) -> str:
+    from textual.widgets import Static
+
+    return "\n".join(str(widget.render()) for widget in screen.query(Static))

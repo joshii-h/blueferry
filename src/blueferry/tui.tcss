@@ -653,3 +653,55 @@ ModalScreen {
     height: auto;
     max-height: 10;
 }
+
+/* Plugin settings form (ApiVersion 1.3), like the Qt PluginConfigForm. */
+.config-row {
+    height: auto;
+}
+
+.config-input {
+    height: auto;
+}
+
+.config-input Input {
+    width: 1fr;
+}
+
+.config-reveal {
+    min-width: 8;
+}
+
+.config-help {
+    height: auto;
+    padding: 0 1;
+    color: #64748b;
+}
+
+.config-error {
+    height: auto;
+    padding: 0 1;
+    color: #f87171;
+}
+
+.config-link {
+    height: 1;
+    min-width: 0;
+    border: none;
+    background: transparent;
+    color: #7dd3fc;
+    text-style: underline;
+}
+
+.config-status {
+    height: auto;
+    padding: 0 1;
+    color: #86efac;
+}
+
+.config-status-error {
+    color: #f87171;
+}
+
+.hidden {
+    display: none;
+}

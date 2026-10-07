@@ -10,6 +10,8 @@ text is plain.
 """
 from __future__ import annotations
 
+import threading
+import time
 from collections.abc import Callable
 from typing import Any, ClassVar
 
@@ -19,14 +21,17 @@ from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Checkbox, Input, OptionList, Select, Static
+from textual.widgets import Button, Checkbox, Collapsible, Input, OptionList, Select, Static
 from textual.widgets.option_list import Option
 
+from blueferry import companion_tools
 from blueferry import plugin_settings_view as view
+from blueferry import tui_design as design
 from blueferry.client import BackendError
 from blueferry.doctor_report import DoctorReport, run_doctor
 from blueferry.features import FEATURES
 from blueferry.plugin_api.client import PluginClient, PluginError
+from blueferry.plugin_api.config_flow import LOGIN_POLL_SECONDS, LOGIN_TIMEOUT_SECONDS, LoginStep
 from blueferry.plugin_api.manifest import PluginManifest
 from blueferry.plugin_index import (
     DEFAULT_INDEX_URL,
@@ -346,38 +351,104 @@ class SettingsScreen(ModalScreen[None]):
 
 
 class PluginConfigScreen(ModalScreen[None]):
-    """A form from a plugin's settings schema; secrets are typed, never shown."""
+    """A form from a plugin's settings schema; secrets are typed, never shown.
+
+    Same form as the Qt client (ApiVersion 1.3): sections, "Advanced"
+    folded, placeholders, examples, a help link per field, inline errors
+    from the pre-check, Test connection, the browser sign-in and one status
+    line. Save stays disabled until the visible required fields are valid.
+    """
 
     BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "close", "Close", show=False)]
 
-    def __init__(self, manifest: PluginManifest, client: PluginClient) -> None:
+    def __init__(
+        self,
+        manifest: PluginManifest,
+        client: PluginClient,
+        *,
+        opener: Callable[[str], object] | None = None,
+        poll_seconds: float = LOGIN_POLL_SECONDS,
+    ) -> None:
         super().__init__()
         self._manifest = manifest
         self._client = client
+        self._opener = opener
+        self._poll_seconds = poll_seconds
         self._rows: list[dict] = view.form_fields(manifest, {})
+        self._stored: dict[str, object] = {}
+        self._touched: set[str] = set()
+        self._filling = False
+        self._valid = False
+        self._login_stop = threading.Event()
+        self._actions = view.form_actions(manifest)
+
+    # ---- layout --------------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
         with Vertical(id="plugin-config-dialog", classes="dialog"):
             yield Static(f"{_plain(self._manifest.name)} settings", classes="dialog-title")
             with VerticalScroll(id="plugin-config-body"):
-                for row in self._rows:
-                    yield Static(_plain(row["label"]) + (" *" if row["required"] else ""),
-                                 classes="field-label")
-                    widget_id = f"config-{row['key']}"
-                    if row["type"] == "bool":
-                        yield Checkbox(id=widget_id)
-                    elif row["type"] == "choice":
-                        yield Select([(choice, choice) for choice in row["choices"]],
-                                     id=widget_id, allow_blank=False)
-                    else:
-                        yield Input(id=widget_id, password=row["type"] == "secret")
-                    yield Static("", id=f"error-{row['key']}", classes="dialog-copy")
+                for group in view.form_groups(self._manifest):
+                    rows = [row for row in self._rows if row["group"] == group["name"]]
+                    if not rows:
+                        continue
+                    if group["collapsed"]:
+                        with Collapsible(title=_plain(group["label"]), collapsed=True,
+                                         id=f"group-{group['name']}"):
+                            yield from self._group_help(group)
+                            for row in rows:
+                                yield from self._field(row)
+                        continue
+                    if group["label"]:
+                        yield Static(design.section(_plain(group["label"])),
+                                     classes="section-title")
+                    yield from self._group_help(group)
+                    for row in rows:
+                        yield from self._field(row)
+            yield Static("", id="config-status", classes="config-status")
             with Horizontal(classes="dialog-actions"):
                 yield Button("Cancel", id="config-cancel")
-                yield Button("Save", variant="primary", id="config-save")
+                if self._actions["test"]:
+                    yield Button("Test connection", id="config-test")
+                if self._actions["loginLabel"]:
+                    yield Button(self._actions["loginLabel"], id="config-login")
+                    yield Button("Cancel sign-in", id="config-login-cancel", classes="hidden")
+                yield Button("Save", variant="primary", id="config-save", disabled=True)
+
+    def _group_help(self, group: dict) -> ComposeResult:
+        if group["help"]:
+            yield Static(_plain(group["help"]), classes="config-help")
+
+    def _field(self, row: dict) -> ComposeResult:
+        key = row["key"]
+        with Vertical(id=f"row-{key}", classes="config-row"):
+            yield Static(_plain(row["label"]) + (" *" if row["required"] else ""),
+                         classes="field-label")
+            widget_id = f"config-{key}"
+            if row["type"] == "bool":
+                yield Checkbox(id=widget_id)
+            elif row["type"] == "choice":
+                yield Select([(choice, choice) for choice in row["choices"]],
+                             id=widget_id, allow_blank=False)
+            else:
+                with Horizontal(classes="config-input"):
+                    yield Input(id=widget_id, password=row["type"] == "secret",
+                                placeholder=_plain(row["placeholder"]))
+                    if row["type"] == "secret":
+                        yield Button("Show", id=f"reveal-{key}", classes="config-reveal")
+            yield Static("", id=f"error-{key}", classes="config-error")
+            if row["help"]:
+                yield Static(_plain(row["help"]), classes="config-help")
+            if row["example"]:
+                yield Static(_plain(f"Example: {row['example']}"), classes="config-help")
+            if row["helpUrl"]:
+                yield Button("Where do I find this?", id=f"help-{key}", classes="config-link")
 
     def on_mount(self) -> None:
+        self._recheck()
         self._load()
+
+    # ---- values --------------------------------------------------------------------
 
     @work(thread=True, exclusive=True, group="plugin-config", exit_on_error=False)
     def _load(self) -> None:
@@ -389,7 +460,9 @@ class PluginConfigScreen(ModalScreen[None]):
         self.app.call_from_thread(self._fill, values)
 
     def _fill(self, values: dict) -> None:
+        self._stored = dict(values)
         self._rows = view.form_fields(self._manifest, values)
+        self._filling = True
         for row in self._rows:
             widget = self.query_one(f"#config-{row['key']}")
             if isinstance(widget, Checkbox):
@@ -400,17 +473,82 @@ class PluginConfigScreen(ModalScreen[None]):
             elif isinstance(widget, Input):
                 if row["type"] == "secret":
                     widget.placeholder = ("stored; leave empty to keep" if row["stored"]
-                                          else "not set")
+                                          else _plain(row["placeholder"]) or "not set")
                 else:
                     widget.value = "" if row["value"] is None else str(row["value"])
+        self._filling = False
+        self._touched.clear()
+        self._recheck()
 
-    def _form(self) -> dict[str, object]:
+    def _form(self, *, touched_only: bool = False) -> dict[str, object]:
         raw: dict[str, object] = {}
         for row in self._rows:
+            if touched_only and row["key"] not in self._touched:
+                continue
             widget = self.query_one(f"#config-{row['key']}")
             if isinstance(widget, (Checkbox, Select, Input)):
                 raw[row["key"]] = widget.value
         return raw
+
+    @on(Input.Changed)
+    @on(Checkbox.Changed)
+    @on(Select.Changed)
+    def _edited(self, event: Input.Changed | Checkbox.Changed | Select.Changed) -> None:
+        widget_id = event.control.id or ""
+        if self._filling or not widget_id.startswith("config-"):
+            return
+        self._touched.add(widget_id[len("config-"):])
+        self._recheck()
+
+    def _recheck(self) -> None:
+        if not self.is_attached or not self.query("#config-save"):
+            return
+        check = view.check_form(self._manifest, self._stored, self._form(touched_only=True))
+        visible = set(check["visible"])
+        for row in self._rows:
+            self.query_one(f"#row-{row['key']}").display = row["key"] in visible
+            self.query_one(f"#error-{row['key']}", Static).update(
+                _plain(check["errors"].get(row["key"], "")))
+        self._valid = bool(check["valid"])
+        self.query_one("#config-save", Button).disabled = not self._valid
+        if self._actions["test"]:
+            self.query_one("#config-test", Button).disabled = not self._valid
+
+    def _status(self, text: str, *, ok: bool = True) -> None:
+        status = self.query_one("#config-status", Static)
+        status.update(_plain(text))
+        status.set_class(not ok, "config-status-error")
+
+    def _show(self, errors: dict[str, str]) -> None:
+        for row in self._rows:
+            self.query_one(f"#error-{row['key']}", Static).update(
+                _plain(errors.get(row["key"], "")))
+        if "" in errors:
+            self.notify(_plain(errors[""]), severity="error", markup=False)
+
+    # ---- buttons -------------------------------------------------------------------
+
+    @on(Button.Pressed, ".config-reveal")
+    def _reveal(self, event: Button.Pressed) -> None:
+        key = (event.button.id or "")[len("reveal-"):]
+        field = self.query_one(f"#config-{key}", Input)
+        field.password = not field.password
+        event.button.label = "Show" if field.password else "Hide"
+
+    @on(Button.Pressed, ".config-link")
+    def _help(self, event: Button.Pressed) -> None:
+        url = view.help_link(self._manifest, (event.button.id or "")[len("help-"):])
+        if url:
+            self._open(url)
+
+    def _open(self, url: str) -> None:
+        try:
+            if self._opener is not None:
+                self._opener(url)
+            else:
+                companion_tools.default_system().open_uri(url)
+        except Exception as error:  # no browser must not end the TUI
+            self.notify(f"Could not open: {_plain(error)}", severity="error", markup=False)
 
     @on(Button.Pressed, "#config-save")
     def save(self) -> None:
@@ -433,18 +571,88 @@ class PluginConfigScreen(ModalScreen[None]):
         else:
             self.app.call_from_thread(self._show, result.errors)
 
-    def _show(self, errors: dict[str, str]) -> None:
-        for row in self._rows:
-            self.query_one(f"#error-{row['key']}", Static).update(
-                _plain(errors.get(row["key"], "")))
-        if "" in errors:
-            self.notify(_plain(errors[""]), severity="error", markup=False)
+    @on(Button.Pressed, "#config-test")
+    def test_connection(self) -> None:
+        values, errors = view.parse_form(self._manifest, self._form())
+        if errors:
+            self._show(errors)
+            return
+        self._status("Testing the connection…")
+        self._test(values)
+
+    @work(thread=True, exclusive=True, group="plugin-config", exit_on_error=False)
+    def _test(self, values: dict[str, object]) -> None:
+        try:
+            result = self._client.test_config(values)
+        except PluginError as error:
+            self.app.call_from_thread(self._status, str(error), ok=False)
+            return
+        self.app.call_from_thread(self._tested, result)
+
+    def _tested(self, result: Any) -> None:
+        self._status(("✓ " if result.ok else "✗ ") + result.message, ok=result.ok)
+        if result.errors:
+            self._show(result.errors)
+
+    @on(Button.Pressed, "#config-login")
+    def sign_in(self) -> None:
+        self._login_stop.set()
+        self._login_stop = threading.Event()
+        self._status(view.login_text("pending"))
+        self._signing_in(True)
+        self._login(view.login_values(self._manifest, self._form()), self._login_stop)
+
+    @on(Button.Pressed, "#config-login-cancel")
+    def cancel_sign_in(self) -> None:
+        self._login_stop.set()
+        self._status(view.login_text("cancelled"), ok=False)
+        self._signing_in(False)
+
+    def _signing_in(self, running: bool) -> None:
+        self.query_one("#config-login", Button).set_class(running, "hidden")
+        self.query_one("#config-login-cancel", Button).set_class(not running, "hidden")
+
+    @work(thread=True, group="plugin-login", exit_on_error=False)
+    def _login(self, values: dict[str, object], stop: threading.Event) -> None:
+        try:
+            step = self._client.config_login(values)
+            if step.state == "open":
+                self.app.call_from_thread(self._open, step.open_uri)
+                self.app.call_from_thread(
+                    self._status, view.login_text("pending", step.message))
+                login_id = step.login_id
+                deadline = time.monotonic() + LOGIN_TIMEOUT_SECONDS
+                while not step.final:
+                    if stop.wait(self._poll_seconds):
+                        self._client.config_login_cancel(login_id)
+                        return
+                    if time.monotonic() > deadline:
+                        self._client.config_login_cancel(login_id)
+                        step = LoginStep("expired")
+                        break
+                    step = self._client.config_login_status(login_id)
+        except PluginError as error:
+            if not stop.is_set():
+                self.app.call_from_thread(self._login_done, LoginStep("error", str(error)))
+            return
+        if not stop.is_set():
+            self.app.call_from_thread(self._login_done, step)
+
+    def _login_done(self, step: LoginStep) -> None:
+        if not self.is_attached:
+            return
+        ok = step.state == "done"
+        self._status(("✓ " if ok else "✗ ") + view.login_text(step.state, step.message), ok=ok)
+        self._signing_in(False)
+        if ok:
+            self._load()
 
     @on(Button.Pressed, "#config-cancel")
     def cancel_button(self) -> None:
-        self.dismiss(None)
+        self.action_close()
 
     def action_close(self) -> None:
+        self._login_stop.set()
         self.dismiss(None)
 
 
