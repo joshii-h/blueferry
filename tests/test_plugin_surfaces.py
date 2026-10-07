@@ -52,7 +52,7 @@ def test_a_crashing_or_garbled_plugin_becomes_a_dimmed_hint() -> None:
     assert "did not answer" in cards[1].hint and "invalid JSON" in cards[2].hint
     rows = surfaces.card_rows(cards)
     assert rows[0]["items"][0]["actions"] == [
-        {"id": "open", "label": "Open", "icon": "", "primary": True}]
+        {"id": "open", "label": "Open", "icon": "", "primary": True, "sendTo": ""}]
     assert rows[1]["items"] == [] and rows[1]["ok"] is False
 
 
@@ -181,3 +181,17 @@ def test_more_card_plugins_than_shown_are_named_in_one_line() -> None:
         plugin.id: {"GetCardItems": '{"items": []}'} for plugin in many}))
     assert len(cards) == surfaces.MAX_CARD_PLUGINS + 1
     assert not cards[-1].ok and cards[-1].hint.startswith("Not shown: Example, Example.")
+
+
+def test_card_choice_needs_an_enabled_share_plugin(monkeypatch) -> None:
+    from blueferry.plugin_api.testing import manifest
+
+    sharing = manifest("io.example.ls", capabilities="card;share;", api_version="1.4",
+                       extra="Alias=ls\n")
+    monkeypatch.setattr(surfaces, "find_plugin", lambda plugin_id, capability: (
+        sharing if capability == "share" and plugin_id == "io.example.ls" else None))
+    choice = surfaces.card_choice("io.example.ls", "ls-1", "iPhone\n")
+    assert choice is not None and choice.key == "io.example.ls:ls-1"
+    assert choice.label == "iPhone" and choice.plugin_alias == "ls"
+    assert surfaces.card_choice("io.example.other", "ls-1") is None
+    assert surfaces.card_choice("io.example.ls", "bad:id") is None
