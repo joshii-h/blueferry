@@ -3,6 +3,9 @@
 The phone screen (``o``) shows the "From Plugins" card section as an option
 list: each item with its actions, Enter runs the highlighted one. ``s``
 opens "Send to…": pick a target from a share plugin and type file paths.
+An action that sends files itself (``send_to``, ApiVersion 1.4, such as
+"Send files…" on a LocalSend device) opens the same dialog with only its
+target.
 Every plugin call runs in a worker thread with the core's timeouts; a plugin
 that fails shows a dimmed line instead of its items.
 """
@@ -68,6 +71,17 @@ def card_actions(cards: list[surfaces.PluginCard] | None) -> list[tuple[str, str
     ]
 
 
+def card_sends(cards: list[surfaces.PluginCard] | None) -> list[tuple[str, str]]:
+    """(share target, item title) per entry of :func:`card_actions`; the
+    target is ``""`` for actions that do not send files."""
+    return [
+        (surfaces.send_target(card, action), item.title)
+        for card in cards or [] if card.ok
+        for item in card.items
+        for action in item.actions
+    ]
+
+
 class SendToScreen(ModalScreen[None]):
     """Pick a share target, type paths, Enter sends."""
 
@@ -81,16 +95,19 @@ class SendToScreen(ModalScreen[None]):
         load: Callable[[], surfaces.ShareTargets] = surfaces.load_targets,
         send: Callable[..., surfaces.Outcome] = surfaces.send,
         on_sent: Callable[[], None] | None = None,
+        choice: surfaces.ShareChoice | None = None,
     ) -> None:
         super().__init__()
-        self._load = load
+        # A card action that sends files names its one target: no plugin call.
+        self._load = load if choice is None else (lambda: surfaces.ShareTargets([choice]))
+        self._title = "Send to…" if choice is None else f"Send to {_plain(choice.label)}"
         self._send = send
         self._on_sent = on_sent
         self._choices: list[surfaces.ShareChoice] = []
 
     def compose(self) -> ComposeResult:
         with Vertical(id="send-dialog", classes="dialog"):
-            yield Static("Send to…", classes="dialog-title")
+            yield Static(self._title, classes="dialog-title", markup=False)
             yield Static(design.section("Target"), classes="section-title")
             yield OptionList(Option(design.empty("Looking for targets…"), disabled=True),
                              id="send-targets")

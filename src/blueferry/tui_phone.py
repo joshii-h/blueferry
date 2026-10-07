@@ -282,8 +282,25 @@ class PhoneScreen(ModalScreen[None]):
         if not option_id.startswith("action:"):
             return
         index = int(option_id[7:])
-        if 0 <= index < len(actions):
+        if not 0 <= index < len(actions):
+            return
+        target, label = tui_plugins.card_sends(self._cards)[index]
+        if target:
+            self._open_card_send(actions[index][0], target, label)
+        else:
             self._run_plugin_action(*actions[index])
+
+    @work(thread=True, group="phone-plugin-action", exit_on_error=False)
+    def _open_card_send(self, plugin_id: str, target: str, label: str) -> None:
+        """A card action with send_to: ask for paths, send to that target."""
+        choice = surfaces.card_choice(plugin_id, target, label)  # reads manifests
+        self.app.call_from_thread(self._show_card_send, choice)
+
+    def _show_card_send(self, choice: surfaces.ShareChoice | None) -> None:
+        if choice is None:
+            self.notify("The plugin can no longer send files.", severity="warning")
+            return
+        self.app.push_screen(self._send_screen(on_sent=self.load_plugins, choice=choice))
 
     @work(thread=True, group="phone-plugin-action", exit_on_error=False)
     def _run_plugin_action(self, plugin_id: str, item_id: str, action_id: str) -> None:
