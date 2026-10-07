@@ -290,10 +290,13 @@ def test_dbus_activatable_entries_receive_the_token_as_startup_id() -> None:
 
 def test_token_context_works_with_the_real_gio_class() -> None:
     gio = pytest.importorskip("gi.repository.Gio")
+    # Older GLib (Ubuntu 24.04) does not accept None for the app info here,
+    # so pass a real one. It is only created, never launched.
+    info = gio.AppInfo.create_from_commandline("true", None, gio.AppInfoCreateFlags.NONE)
     context = notification_open._token_context_class(gio)("real-token")
 
-    assert context.get_startup_notify_id(None, []) == "real-token"
-    assert notification_open._token_context_class(gio)("").get_startup_notify_id(None, []) is None
+    assert context.get_startup_notify_id(info, []) == "real-token"
+    assert notification_open._token_context_class(gio)("").get_startup_notify_id(info, []) is None
 
 
 def test_missing_desktop_entry_does_nothing() -> None:
