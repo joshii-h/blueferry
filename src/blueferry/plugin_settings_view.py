@@ -14,9 +14,14 @@ from typing import Any
 
 from blueferry import __version__
 from blueferry.i18n import _
-from blueferry.plugin_api import SUPPORTED_API_VERSIONS
+from blueferry.plugin_api import LOGIN_NEXTCLOUD, LOGIN_PROVIDERS, SUPPORTED_API_VERSIONS
 from blueferry.plugin_api.client import PluginClient, PluginError, plain_text
-from blueferry.plugin_api.config import SECRET_MASK
+from blueferry.plugin_api.config import (
+    BUILTIN_GROUPS,
+    SECRET_MASK,
+    ConfigError,
+    visible_fields,
+)
 from blueferry.plugin_api.manifest import PluginManifest
 from blueferry.plugin_index import Catalog, PluginIndex, StoreItem, index_urls
 from blueferry.plugin_manager import PluginEntry, PluginManager, PreparedInstall
@@ -36,6 +41,15 @@ STATE_TEXT = {
     "busy": _("Busy"),
 }
 _TRUE = {"1", "true", "yes", "on"}
+LOGIN_LABELS = {LOGIN_NEXTCLOUD: _("Sign in with Nextcloud")}
+GROUP_LABELS = {"account": _("Account"), "options": _("Options"), "advanced": _("Advanced")}
+LOGIN_STATE_TEXT = {
+    "pending": _("Waiting for the sign-in in your browser…"),
+    "expired": _("The sign-in expired. Start it again."),
+    "cancelled": _("The sign-in was cancelled."),
+    "error": _("The sign-in failed."),
+    "done": _("Signed in."),
+}
 
 
 def capability_label(capability: str) -> str:
@@ -131,6 +145,7 @@ def form_fields(manifest: PluginManifest, values: Mapping[str, object]) -> list[
     rows = []
     for field in manifest.config:
         value = values.get(field.key, field.empty())
+        show_key, show_value = field.show_if or ("", "")
         rows.append({
             "key": field.key,
             "label": field.label,
@@ -143,8 +158,113 @@ def form_fields(manifest: PluginManifest, values: Mapping[str, object]) -> list[
             # A stored secret is never shown, only whether one exists.
             "value": "" if field.secret else value,
             "stored": field.secret and value == SECRET_MASK,
+            # ApiVersion 1.3 presentation keys; empty for older manifests.
+            "placeholder": field.placeholder,
+            "example": field.example,
+            # https only; the manifest parser refuses anything else.
+            "helpUrl": field.help_url,
+            "group": field.group,
+            "showIfKey": show_key,
+            "showIfValue": show_value,
         })
     return rows
+
+
+def form_groups(manifest: PluginManifest) -> list[dict[str, Any]]:
+    """The form's sections in order; the unnamed one has an empty label."""
+    return [{
+        "name": group.name,
+        # Built-in names get the client's translation unless relabelled.
+        "label": (GROUP_LABELS.get(group.name, group.label)
+                  if group.label == BUILTIN_GROUPS.get(group.name) else group.label),
+        "help": group.help,
+        "collapsed": group.collapsed,
+    } for group in manifest.config_groups]
+
+
+def form_actions(manifest: PluginManifest) -> dict[str, Any]:
+    """Which helper buttons the form shows: "Test connection", "Sign in"."""
+    provider = manifest.config_login if manifest.config_login in LOGIN_PROVIDERS else ""
+    return {
+        "test": manifest.config_test,
+        "login": provider,
+        "loginLabel": LOGIN_LABELS.get(provider, ""),
+    }
+
+
+def merged_form(
+    manifest: PluginManifest, stored: Mapping[str, object], raw: Mapping[str, object],
+) -> dict[str, object]:
+    """The values the form shows: stored ones with the user's edits on top."""
+    merged = {field.key: stored.get(field.key, field.empty()) for field in manifest.config}
+    merged.update({key: value for key, value in raw.items() if key in merged})
+    return merged
+
+
+def check_form(
+    manifest: PluginManifest, stored: Mapping[str, object], raw: Mapping[str, object],
+) -> dict[str, Any]:
+    """The client's pre-check of a form; the plugin's answer still decides.
+
+    ``stored`` is what GetConfig returned (a stored secret as the mask),
+    ``raw`` what the user typed. Returns ``{"errors": {key: reason},
+    "visible": [keys], "valid": bool}``. A required field that is still
+    empty makes the form invalid without an error text, so an untouched
+    form shows no red; a field the user typed into gets one.
+    """
+    values, errors = parse_form(manifest, raw)
+    merged = merged_form(manifest, stored, values)
+    visible = visible_fields(manifest.config, merged)
+    missing = False
+    for field in visible:
+        if field.key in errors:
+            continue
+        value = merged.get(field.key)
+        if field.secret:
+            typed = values.get(field.key)
+            if field.required and not typed and stored.get(field.key) != SECRET_MASK:
+                missing = True
+                if field.key in raw:
+                    errors[field.key] = _("is required")
+            if not typed:
+                continue
+            value = typed
+        if value is None or value == "":
+            if field.required:
+                missing = True
+                if field.key in raw:
+                    errors[field.key] = _("is required")
+            continue
+        try:
+            field.coerce(value)
+        except ConfigError as error:
+            errors[field.key] = error.message
+    keys = {field.key for field in visible}
+    errors = {key: reason for key, reason in errors.items() if key in keys}
+    return {
+        "errors": errors,
+        "visible": [field.key for field in visible],
+        "valid": not errors and not missing,
+    }
+
+
+def login_values(manifest: PluginManifest, raw: Mapping[str, object]) -> dict[str, object]:
+    """What a sign-in may see of the form: typed non-secret values only."""
+    values, _errors = parse_form(manifest, raw)
+    secrets = {field.key for field in manifest.config if field.secret}
+    return {key: value for key, value in values.items() if key not in secrets}
+
+
+def help_link(manifest: PluginManifest, key: str) -> str:
+    """The "Where do I find this?" link of one field, or ""."""
+    field = next((field for field in manifest.config if field.key == key), None)
+    url = field.help_url if field is not None else ""
+    return url if url.startswith("https://") else ""
+
+
+def login_text(state: str, message: str = "") -> str:
+    """One status line for the sign-in; the plugin's message wins."""
+    return plain_text(message, 200) or LOGIN_STATE_TEXT.get(state, "")
 
 
 def parse_form(

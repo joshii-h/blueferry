@@ -543,6 +543,26 @@ class BridgeController(QObject):
     def closePluginConfig(self) -> None:
         self._plugin_settings.close_config()
 
+    @Slot(str, "QVariantMap", result="QVariantMap")
+    def checkPluginConfig(self, plugin_id: str, values: dict) -> dict:
+        return self._plugin_settings.check_config(str(plugin_id), dict(values or {}))
+
+    @Slot(str, "QVariantMap")
+    def testPluginConfig(self, plugin_id: str, values: dict) -> None:
+        self._plugin_settings.test_config(str(plugin_id), dict(values or {}))
+
+    @Slot(str, "QVariantMap")
+    def signInPlugin(self, plugin_id: str, values: dict) -> None:
+        self._plugin_settings.sign_in(str(plugin_id), dict(values or {}))
+
+    @Slot()
+    def cancelPluginSignIn(self) -> None:
+        self._plugin_settings.cancel_sign_in()
+
+    @Slot(str, str)
+    def openPluginHelp(self, plugin_id: str, key: str) -> None:
+        self._plugin_settings.open_help(str(plugin_id), str(key))
+
     @Slot(bool)
     def loadPluginStore(self, refresh: bool) -> None:
         self._plugin_settings.load_store(bool(refresh))

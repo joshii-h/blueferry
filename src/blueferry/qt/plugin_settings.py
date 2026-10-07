@@ -6,21 +6,39 @@ held up. QML sees one plain ``state`` map (see :meth:`PluginSettings.state`)
 and calls the slots the controller forwards. An install is always two
 steps: ``prepareInstall`` fills ``state.pending`` with the source, ref,
 capabilities and command, and only ``confirmInstall`` runs pip.
+
+The settings form (``state.config``) carries the ApiVersion 1.3 extras:
+sections, the "Test connection" and "Sign in with …" buttons and one status
+line. ``check_config`` is the synchronous pre-check the form runs on every
+edit; it never touches the state, so typing does not rebuild the form. A
+browser sign-in polls ConfigLoginStatus on the pool with a timer until a
+final state, :data:`LOGIN_TIMEOUT_SECONDS` or until the form closes.
 """
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from PySide6.QtCore import QObject, QThreadPool, Signal
+from PySide6.QtCore import QObject, QThreadPool, QTimer, QUrl, Signal
 
 from blueferry import plugin_settings_view as view
 from blueferry.i18n import _
 from blueferry.plugin_api.client import PluginClient
+from blueferry.plugin_api.config_flow import (
+    LOGIN_POLL_SECONDS,
+    LOGIN_TIMEOUT_SECONDS,
+    LoginStep,
+)
 from blueferry.plugin_api.manifest import PluginManifest
 from blueferry.plugin_index import DEFAULT_INDEX_URL, PluginIndex, check_index_url, index_urls
 from blueferry.plugin_manager import InstallError, PluginManager, PreparedInstall
 from blueferry.qt.tasks import Task
+
+
+def open_url(uri: str) -> None:
+    from PySide6.QtGui import QDesktopServices
+
+    QDesktopServices.openUrl(QUrl(uri))
 
 
 class PluginSettings(QObject):
@@ -33,12 +51,22 @@ class PluginSettings(QObject):
         index: Callable[[], PluginIndex] = PluginIndex,
         client: Callable[[PluginManifest], PluginClient] = PluginClient,
         pool: QThreadPool | None = None,
+        opener: Callable[[str], None] = open_url,
+        poll_ms: int = LOGIN_POLL_SECONDS * 1000,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._manager = manager()
         self._index = index()
         self._client = client
+        self._open = opener
+        self._stored: dict[str, object] = {}
+        # The running browser sign-in: (plugin id, login id, polls left).
+        self._login: tuple[str, str, int] | None = None
+        self._poll_ms = max(1, poll_ms)
+        self._login_timer = QTimer(self)
+        self._login_timer.setSingleShot(True)
+        self._login_timer.timeout.connect(self._poll_login)
         self._pool = pool or QThreadPool(self)
         self._pool.setMaxThreadCount(1)
         self._tasks: set[Task] = set()
@@ -69,10 +97,14 @@ class PluginSettings(QObject):
         done: Callable[[Any], None],
         *,
         keep_message: bool = False,
+        on_error: Callable[[str], None] | None = None,
     ) -> None:
-        """Run one blocking step on the pool; later steps wait their turn."""
+        """Run one blocking step on the pool; later steps wait their turn.
+
+        A failure lands in the page message, or in ``on_error`` when given.
+        """
         if self._state["busy"]:
-            self._queue.append((busy, operation, done, keep_message))
+            self._queue.append((busy, operation, done, keep_message, on_error))
             return
         self._update(busy=busy, **({} if keep_message else {"message": ""}))
         task = Task(operation)
@@ -83,14 +115,18 @@ class PluginSettings(QObject):
             done(value)
 
         def failed(message: str) -> None:
-            self._update(busy="", message=message or _("The plugin operation failed"),
-                         messageOk=False)
+            text = message or _("The plugin operation failed")
+            if on_error is not None:
+                self._update(busy="")
+                on_error(text)
+                return
+            self._update(busy="", message=text, messageOk=False)
 
         def next_step() -> None:
             self._tasks.discard(task)
             if self._queue and not self._state["busy"]:
-                step, work, then, keep = self._queue.pop(0)
-                self._work(step, work, then, keep_message=keep)
+                step, work, then, keep, error = self._queue.pop(0)
+                self._work(step, work, then, keep_message=keep, on_error=error)
 
         task.signals.done.connect(finished)
         task.signals.failed.connect(failed)
@@ -195,20 +231,52 @@ class PluginSettings(QObject):
 
     # ---- settings form --------------------------------------------------------
 
-    def load_config(self, plugin_id: str) -> None:
+    def _form(self, manifest: PluginManifest, plugin_id: str, values: Mapping[str, object],
+              *, loaded: bool) -> dict[str, Any]:
+        return {
+            "id": plugin_id, "name": manifest.name, "loaded": loaded,
+            "fields": view.form_fields(manifest, values),
+            "groups": view.form_groups(manifest),
+            "actions": view.form_actions(manifest),
+            "errors": {}, "status": {},
+        }
+
+    def load_config(self, plugin_id: str, *, keep_status: bool = False) -> None:
         manifest = self._manifests.get(plugin_id)
         if manifest is None or not manifest.config:
             return
+        status = self._state["config"].get("status", {}) if keep_status else {}
+        if not keep_status:
+            self._stop_login()
 
         def done(values: Mapping[str, object]) -> None:
-            self._update(config={
-                "id": plugin_id, "name": manifest.name, "loaded": True,
-                "fields": view.form_fields(manifest, values), "errors": {},
-            })
+            self._stored = dict(values)
+            self._update(config={**self._form(manifest, plugin_id, values, loaded=True),
+                                 "status": status})
 
-        self._update(config={"id": plugin_id, "name": manifest.name, "loaded": False,
-                             "fields": view.form_fields(manifest, {}), "errors": {}})
+        self._stored = {}
+        if not keep_status:
+            self._update(config=self._form(manifest, plugin_id, {}, loaded=False))
         self._work("config", lambda: self._client(manifest).get_config(), done)
+
+    def _current(self, plugin_id: str) -> PluginManifest | None:
+        if self._state["config"].get("id") != plugin_id:
+            return None
+        return self._manifests.get(plugin_id)
+
+    def check_config(self, plugin_id: str, raw: Mapping[str, object]) -> dict[str, Any]:
+        """The form's pre-check on every edit; does not change the state."""
+        manifest = self._current(plugin_id)
+        if manifest is None:
+            return {"errors": {}, "visible": [], "valid": False}
+        return view.check_form(manifest, self._stored, raw)
+
+    def _set_status(self, kind: str, ok: bool, text: str, *, pending: bool = False) -> None:
+        if not self._state["config"]:
+            return
+        self._update(config={**self._state["config"], "status": {
+            "kind": kind, "ok": ok, "text": text, "pending": pending,
+        }})
 
     def save_config(self, plugin_id: str, raw: Mapping[str, object]) -> None:
         manifest = self._manifests.get(plugin_id)
@@ -222,14 +290,125 @@ class PluginSettings(QObject):
         def done(result: Any) -> None:
             if result.ok:
                 self._say(_("Saved the settings of {name}.").format(name=manifest.name))
-                self._update(config={})
+                self.close_config()
                 self._reload()
             else:
                 self._update(config={**self._state["config"], "errors": dict(result.errors)})
 
         self._work("config", lambda: self._client(manifest).set_config(values), done)
 
+    def test_config(self, plugin_id: str, raw: Mapping[str, object]) -> None:
+        """"Test connection": the plugin checks the typed values, nothing is saved."""
+        manifest = self._current(plugin_id)
+        if manifest is None or not manifest.config_test:
+            return
+        values, errors = view.parse_form(manifest, raw)
+        if errors:
+            self._update(config={**self._state["config"], "errors": errors})
+            return
+        self._set_status("test", True, _("Testing the connection…"), pending=True)
+
+        def done(result: Any) -> None:
+            self._update(config={
+                **self._state["config"], "errors": dict(result.errors),
+                "status": {"kind": "test", "ok": result.ok, "text": result.message,
+                           "pending": False},
+            })
+
+        self._work("test", lambda: self._client(manifest).test_config(values), done,
+                   on_error=lambda text: self._set_status("test", False, text))
+
+    def sign_in(self, plugin_id: str, raw: Mapping[str, object]) -> None:
+        """"Sign in with …": start the plugin's browser flow and poll it."""
+        manifest = self._current(plugin_id)
+        if manifest is None:
+            return
+        self._stop_login()
+        values = view.login_values(manifest, raw)
+        self._set_status("login", True, view.login_text("pending"), pending=True)
+
+        def done(step: LoginStep) -> None:
+            if step.state == "open":
+                self._open(step.open_uri)
+                self._login = (plugin_id, step.login_id,
+                               max(1, LOGIN_TIMEOUT_SECONDS * 1000 // self._poll_ms))
+                self._set_status("login", True, view.login_text("pending", step.message),
+                                 pending=True)
+                self._login_timer.start(self._poll_ms)
+            else:
+                self._login_finished(plugin_id, step)
+
+        self._work("login", lambda: self._client(manifest).config_login(values), done,
+                   on_error=lambda text: self._set_status("login", False, text))
+
+    def _poll_login(self) -> None:
+        login = self._login
+        if login is None:
+            return
+        plugin_id, login_id, left = login
+        manifest = self._current(plugin_id)
+        if manifest is None:
+            self._stop_login()
+            return
+        if left <= 0:
+            self._stop_login()
+            self._set_status("login", False, view.login_text("expired"))
+            return
+        self._login = (plugin_id, login_id, left - 1)
+        task = Task(lambda: self._client(manifest).config_login_status(login_id))
+        self._tasks.add(task)
+
+        def done(step: LoginStep) -> None:
+            if self._login is None or self._login[1] != login_id:
+                return
+            if step.final:
+                self._login = None
+                self._login_finished(plugin_id, step)
+            else:
+                self._login_timer.start(self._poll_ms)
+
+        def failed(message: str) -> None:
+            if self._login is not None and self._login[1] == login_id:
+                self._login = None
+                self._set_status("login", False, message or view.login_text("error"))
+
+        task.signals.done.connect(done)
+        task.signals.failed.connect(failed)
+        task.signals.finished.connect(lambda: self._tasks.discard(task))
+        self._pool.start(task)
+
+    def _login_finished(self, plugin_id: str, step: LoginStep) -> None:
+        ok = step.state == "done"
+        self._set_status("login", ok, view.login_text(step.state, step.message))
+        if ok and self._current(plugin_id) is not None:
+            self.load_config(plugin_id, keep_status=True)
+            self._reload()
+
+    def cancel_sign_in(self) -> None:
+        login = self._stop_login()
+        if login is not None:
+            self._set_status("login", False, view.login_text("cancelled"))
+
+    def _stop_login(self) -> tuple[str, str, int] | None:
+        login, self._login = self._login, None
+        self._login_timer.stop()
+        if login is not None:
+            manifest = self._manifests.get(login[0])
+            if manifest is not None:
+                client = self._client(manifest)
+                self._pool.start(Task(lambda: client.config_login_cancel(login[1])))
+        return login
+
+    def open_help(self, plugin_id: str, key: str) -> None:
+        """"Where do I find this?": the field's https HelpUrl, nothing else."""
+        manifest = self._manifests.get(plugin_id)
+        url = view.help_link(manifest, key) if manifest is not None else ""
+        if url:
+            self._open(url)
+
     def close_config(self) -> None:
+        self._stop_login()
+        self._stored = {}
         self._update(config={})
 
     # ---- store --------------------------------------------------------------------
