@@ -9,6 +9,7 @@ import pytest
 
 from blueferry.plugin_api.manifest import discover, parse_manifest
 from blueferry.plugin_manager import InstallError, PluginManager, _rewrite
+from blueferry.plugin_stopper import NOT_RUNNING, STOPPED, StopOutcome
 
 URL = "https://git.example.org/me/blueferry-plugin-demo"
 OLD, NEW, HEAD = "a" * 40, "b" * 40, "c" * 40
@@ -85,12 +86,25 @@ class FakeRunner:
         raise AssertionError(f"unexpected command {argv}")
 
 
+class FakeStopper:
+    """Records which bus name and venvs a stop was asked for; no bus, no signal."""
+
+    def __init__(self, state: str = NOT_RUNNING) -> None:
+        self.state = state
+        self.calls: list[tuple[str, list[Path]]] = []
+
+    def __call__(self, bus_name, venvs):
+        self.calls.append((bus_name, list(venvs)))
+        return StopOutcome(self.state, 4242 if self.state != NOT_RUNNING else 0)
+
+
 @pytest.fixture
 def setup(tmp_path):
     runner = FakeRunner()
     manager = PluginManager(
         data_home=tmp_path / "data", settings_path=tmp_path / "config" / "plugins.json",
         runner=runner, python="/usr/bin/python3", clock=lambda: 1000.0,
+        stopper=FakeStopper(),
     )
     return manager, runner
 
@@ -217,7 +231,7 @@ def test_remove_deletes_only_what_install_wrote(setup, tmp_path) -> None:
     plugin_settings.mkdir(parents=True)
     manager.set_enabled("io.example.demo", False)
     service = manager.service_path(parse_manifest(MANIFEST.format(version="1")))
-    removed = manager.remove("io.example.demo")
+    removed = manager.remove("io.example.demo").paths
     assert manager.manifest_path("io.example.demo") in removed and service in removed
     assert not service.exists() and not list((manager.root / "venvs").iterdir())
     assert manager.records() == {} and plugin_settings.is_dir()
@@ -263,3 +277,51 @@ def test_records_survive_garbage(setup) -> None:
     manager.root.mkdir(parents=True)
     (manager.root / "installs.json").write_text(json.dumps({"plugins": {"x": {"bad": 1}}}))
     assert manager.records() == {}
+
+
+BUS = "io.weirdware.BlueFerry.Plugin.io.example.demo"
+
+
+def test_update_remove_and_disable_stop_the_old_process(setup) -> None:
+    manager, runner = setup
+    stopper = manager.stopper
+    stopper.state = STOPPED
+    prepared = manager.prepare(URL)
+    manager.commit(prepared)
+    assert stopper.calls == [] and prepared.stop is None  # first install: nothing to stop
+    old = manager.root / "venvs" / "io.example.demo-aaaaaaaaaaaa"
+
+    runner.tags["v0.2.0"] = NEW
+    prepared = manager.prepare_update("io.example.demo")
+    manager.commit(prepared)
+    assert stopper.calls == [(BUS, [old])] and prepared.stop.state == STOPPED
+    new = manager.root / "venvs" / "io.example.demo-bbbbbbbbbbbb"
+
+    assert manager.set_enabled("io.example.demo", False).state == STOPPED
+    assert stopper.calls[-1] == (BUS, [new])
+    assert manager.set_enabled("io.example.demo", True) is None
+    assert manager.set_enabled("io.unmanaged.x", False) is None
+    assert len(stopper.calls) == 2
+
+    removal = manager.remove("io.example.demo")
+    assert removal.stop.state == STOPPED and stopper.calls[-1] == (BUS, [new])
+
+
+def test_reinstalling_the_same_commit_stops_the_process_of_the_rebuilt_venv(setup) -> None:
+    manager, _runner = setup
+    manager.commit(manager.prepare(URL))
+    prepared = manager.prepare(URL)
+    manager.commit(prepared)
+    venv = manager.root / "venvs" / "io.example.demo-aaaaaaaaaaaa"
+    assert manager.stopper.calls == [(BUS, [venv])] and prepared.stop.state == NOT_RUNNING
+
+
+def test_a_failed_update_stops_nothing(setup) -> None:
+    manager, runner = setup
+    manager.commit(manager.prepare(URL))
+    runner.tags["v0.2.0"] = NEW
+    runner.fail_pip = True
+    prepared = manager.prepare_update("io.example.demo")
+    with pytest.raises(InstallError):
+        manager.commit(prepared)
+    assert manager.stopper.calls == []

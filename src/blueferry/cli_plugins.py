@@ -33,6 +33,7 @@ from blueferry.plugin_index import (
     search,
 )
 from blueferry.plugin_manager import InstallError, PluginManager, PreparedInstall
+from blueferry.plugin_stopper import StopOutcome, stop_note
 from blueferry.text_safety import terminal_text
 
 COMMANDS = frozenset({
@@ -112,6 +113,11 @@ def _show(prepared: PreparedInstall) -> None:
             _echo(f"    {line}")
 
 
+def _note(outcome: StopOutcome | None, *, restarts: bool = True) -> None:
+    if note := stop_note(outcome, restarts=restarts):
+        _echo(note)
+
+
 def _finish(manager: PluginManager, prepared: PreparedInstall, yes: bool, verb: str) -> None:
     _show(prepared)
     if not yes and not _hooks["confirm"](f"{verb} this plugin?"):
@@ -125,6 +131,7 @@ def _finish(manager: PluginManager, prepared: PreparedInstall, yes: bool, verb: 
         return
     done = "Updated" if verb == "update" else "Installed"
     _echo(f"{done} {prepared.manifest.name} at {record.ref_label}.")
+    _note(prepared.stop)
     if prepared.manifest.config:
         _echo(f"Configure it in BlueFerry's settings or with: "
               f"blueferry plugins config {prepared.manifest.id}")
@@ -186,12 +193,13 @@ def _remove(manager: PluginManager, plugin_id: str, yes: bool) -> None:
     ):
         _fail("Cancelled.")
     try:
-        removed = manager.remove(plugin_id)
+        removal = manager.remove(plugin_id)
     except InstallError as error:
         _fail(error)
         return
-    for path in removed:
+    for path in removal.paths:
         _echo(f"Removed {path}")
+    _note(removal.stop, restarts=False)
 
 
 def _config(manager: PluginManager, plugin_id: str, assignments: Sequence[str],
@@ -411,8 +419,9 @@ def manage(args: Sequence[str]) -> None:
         elif command == "remove":
             _remove(manager, options.id, options.yes)
         elif command in ("enable", "disable"):
-            manager.set_enabled(options.id, command == "enable")
+            outcome = manager.set_enabled(options.id, command == "enable")
             _echo(f"{options.id} {command}d.")
+            _note(outcome, restarts=False)
         elif command == "config":
             _config(manager, options.id, options.set, options.secret,
                     test=options.test, login=options.login)
