@@ -133,6 +133,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
 _LIBNOTIFY = "Notify returns the id the popup tracker needs; move bookkeeping to reply"
 _SQLITE = "default 5 s lock wait on the loop for some callers; open once or off-loop"
 KNOWN_DEBT: dict[tuple[str, str, str], str] = {
+    ("blueferry.obex.transfer", "_add_transfer_receiver", "sync-dbus"):
+        "upstream #179: get_name_owner() when a transfer receiver is added",
     ("blueferry.ancs.client", "AncsClient._bind_manager_once", "sync-dbus"):
         "GetManagedObjects at start and on BlueZ owner change",
     ("blueferry.ancs.client", "AncsClient._stop_bluez_notifications", "sync-dbus"):

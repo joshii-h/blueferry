@@ -589,7 +589,7 @@ def test_named_group_roster_is_validated_and_persisted(monkeypatch) -> None:
 
     class Routes:
         @staticmethod
-        def save(route, *, replacing=()):
+        def save(route, *, replacing=(), in_use=None):
             retained.append((route, set(replacing)))
 
         @staticmethod
