@@ -140,6 +140,26 @@ def _install(manager: PluginManager, url: str, ref: str | None, yes: bool) -> No
     _finish(manager, prepared, yes, "install")
 
 
+def _resolve(manager: PluginManager, name: str) -> str:
+    """Accept the alias shown by ``list`` wherever a plugin id is expected."""
+    if name in manager.records():
+        return name
+    plugin = _hooks["discover"]().find(name)
+    return plugin.id if plugin is not None else name
+
+
+def _update_all(manager: PluginManager, yes: bool) -> None:
+    failed = False
+    for plugin_id in sorted(manager.records()):
+        try:
+            _update(manager, plugin_id, yes)
+        except typer.Exit as error:
+            if error.exit_code:
+                failed = True
+    if failed:
+        raise typer.Exit(code=1)
+
+
 def _update(manager: PluginManager, plugin_id: str, yes: bool) -> None:
     try:
         record, ref, commit = manager.check_update(plugin_id)
@@ -342,10 +362,12 @@ def _parser() -> argparse.ArgumentParser:
     install.add_argument("url")
     install.add_argument("--ref", help="tag or full commit (default: newest version tag)")
     install.add_argument("--yes", "-y", action="store_true", help="do not ask")
-    for name in ("update", "remove"):
-        command = commands.add_parser(name)
-        command.add_argument("id")
-        command.add_argument("--yes", "-y", action="store_true", help="do not ask")
+    update = commands.add_parser("update", help="update one plugin, or all without an id")
+    update.add_argument("id", nargs="?")
+    update.add_argument("--yes", "-y", action="store_true", help="do not ask")
+    remove = commands.add_parser("remove")
+    remove.add_argument("id")
+    remove.add_argument("--yes", "-y", action="store_true", help="do not ask")
     for name in ("enable", "disable"):
         commands.add_parser(name).add_argument("id")
     config = commands.add_parser("config", help="show or change a plugin's settings")
@@ -375,11 +397,15 @@ def manage(args: Sequence[str]) -> None:
         raise typer.Exit(code=int(error.code or 0)) from None
     manager = _hooks["manager"]()
     command = options.command
+    if getattr(options, "id", None):
+        options.id = _resolve(manager, options.id)
     try:
         if command == "list":
             _list(manager)
         elif command == "install":
             _install(manager, options.url, options.ref, options.yes)
+        elif command == "update" and options.id is None:
+            _update_all(manager, options.yes)
         elif command == "update":
             _update(manager, options.id, options.yes)
         elif command == "remove":

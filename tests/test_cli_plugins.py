@@ -96,6 +96,22 @@ def test_update_disable_and_remove(managed) -> None:
     assert result.exit_code == 1 and "https" in result.output
 
 
+def test_alias_and_update_without_id(managed) -> None:
+    manager, runner, answers = managed
+    CliRunner().invoke(app, ["plugins", "install", URL, "-y"])
+    result = CliRunner().invoke(app, ["plugins", "update", "demo"])
+    assert result.exit_code == 0 and "up to date" in result.output
+    runner.tags["v0.2.0"] = "b" * 40
+    result = CliRunner().invoke(app, ["plugins", "update", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert "Updated Demo photos" in result.output
+    CliRunner().invoke(app, ["plugins", "disable", "demo"])
+    assert manager.disabled() == {"io.example.demo"}
+    answers.append(True)
+    result = CliRunner().invoke(app, ["plugins", "remove", "demo"])
+    assert result.exit_code == 0 and manager.records() == {}
+
+
 def test_available_search_and_index_commands(managed, monkeypatch, tmp_path) -> None:
     import json
 

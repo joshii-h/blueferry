@@ -517,7 +517,7 @@ dependencies = [
 
 ```
 blueferry plugins install https://github.com/me/blueferry-plugin-x [--ref TAG|COMMIT] [--yes]
-blueferry plugins update ID [--yes]
+blueferry plugins update [ID] [--yes]
 blueferry plugins remove ID [--yes]
 blueferry plugins enable|disable ID
 blueferry plugins config ID [--set KEY=VALUE]... [--secret KEY]...
@@ -543,6 +543,8 @@ The Qt settings (Plugins) and the terminal client offer the same.
   from an earlier `setup` command) is replaced; the summary says so.
 - `update` compares the pinned ref with the newest tag (or the branch HEAD
   for a pinned commit), shows both commits and the commit log, and asks.
+  Without an `ID` it goes through every plugin BlueFerry installed.
+- Wherever an `ID` is expected, the short alias shown by `list` works too.
 - `remove` deletes the checkout, the venv, the manifest and the service
   file. The plugin's own settings and keyring entries stay.
 - Disabled plugins stay installed; clients skip them. The list lives in
