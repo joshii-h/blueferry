@@ -151,6 +151,16 @@ ColumnLayout {
                         }
                     }
                     Controls.Button {
+                        objectName: "pluginLogButton"
+                        text: qsTr("Show Log")
+                        icon.name: "text-x-log"
+                        enabled: !section.working
+                        Controls.ToolTip.text: qsTr("Open what the plugin wrote to its log file")
+                        Controls.ToolTip.visible: hovered
+                        Controls.ToolTip.delay: Kirigami.Units.toolTipDelay
+                        onClicked: section.bridge.openPluginLog(pluginCard.modelData.id)
+                    }
+                    Controls.Button {
                         visible: pluginCard.modelData.managed === true
                         text: qsTr("Check for Update")
                         icon.name: "update-none"

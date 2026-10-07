@@ -559,6 +559,10 @@ class BridgeController(QObject):
     def cancelPluginSignIn(self) -> None:
         self._plugin_settings.cancel_sign_in()
 
+    @Slot(str)
+    def openPluginLog(self, plugin_id: str) -> None:
+        self._plugin_settings.open_log(str(plugin_id))
+
     @Slot(str, str)
     def openPluginHelp(self, plugin_id: str, key: str) -> None:
         self._plugin_settings.open_help(str(plugin_id), str(key))
