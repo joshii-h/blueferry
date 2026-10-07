@@ -41,6 +41,7 @@ from blueferry.plugin_index import (
     index_urls,
 )
 from blueferry.plugin_manager import InstallError, PluginManager, PreparedInstall
+from blueferry.plugin_stopper import StopOutcome, stop_note, stop_ok
 from blueferry.text_safety import terminal_text
 
 FEATURE_LABELS = {
@@ -803,8 +804,11 @@ class PluginsScreen(ModalScreen[None]):
             self.app.call_from_thread(self.notify, _plain(error), severity="error", markup=False)
             return
         done = "Updated" if verb == "Update" else "Installed"
+        note = stop_note(prepared.stop)
         self.app.call_from_thread(
-            self.notify, _plain(f"{done} {prepared.manifest.name} {record.ref_label}."))
+            self.notify, _plain(f"{done} {prepared.manifest.name} {record.ref_label}."
+                                + (f" {note}" if note else "")),
+            severity="information" if stop_ok(prepared.stop) else "warning")
         self.app.call_from_thread(self.reload)
 
     # ---- installed plugins ----------------------------------------------------------
@@ -860,10 +864,15 @@ class PluginsScreen(ModalScreen[None]):
     @work(thread=True, group="plugins-action", exit_on_error=False)
     def _run(self, operation: Callable[[], object], refresh: bool = False) -> None:
         try:
-            operation()
+            result = operation()
         except (InstallError, OSError) as error:
             self.app.call_from_thread(self.notify, _plain(error), severity="error", markup=False)
             return
+        # Removal carries the outcome in .stop; disabling returns it directly.
+        outcome = getattr(result, "stop", result)
+        if isinstance(outcome, StopOutcome) and (note := stop_note(outcome, restarts=False)):
+            self.app.call_from_thread(self.notify, _plain(note), markup=False,
+                                      severity="information" if stop_ok(outcome) else "warning")
         self.app.call_from_thread(self.reload, refresh)
 
     def action_reload(self) -> None:

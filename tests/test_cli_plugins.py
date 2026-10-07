@@ -42,13 +42,13 @@ def test_unknown_alias(hooks) -> None:
 @pytest.fixture
 def managed(tmp_path, monkeypatch):
     from blueferry.plugin_manager import PluginManager
-    from tests.test_plugin_manager import FakeRunner
+    from tests.test_plugin_manager import FakeRunner, FakeStopper
 
     runner = FakeRunner()
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     manager = PluginManager(
         data_home=tmp_path / "data", settings_path=tmp_path / "plugins.json",
-        runner=runner, python="/usr/bin/python3",
+        runner=runner, python="/usr/bin/python3", stopper=FakeStopper(),
     )
     answers: list[bool] = []
     monkeypatch.setitem(cli_plugins._hooks, "manager", lambda: manager)
@@ -86,11 +86,15 @@ def test_update_disable_and_remove(managed) -> None:
     assert result.exit_code == 0, result.output
     assert "v0.1.0 (aaaaaaaaaaaa) -> v0.2.0 (bbbbbbbbbbbb)" in result.output
     assert "bbbbbbb Add videos" in result.output and "Updated Demo photos" in result.output
-    CliRunner().invoke(app, ["plugins", "disable", "io.example.demo"])
+    assert "restarts on next use" not in result.output  # nothing was running
+    manager.stopper.state = "stopped"
+    result = CliRunner().invoke(app, ["plugins", "disable", "io.example.demo"])
+    assert "io.example.demo disabled.\nStopped the running plugin.\n" == result.output
     assert "[disabled]" in CliRunner().invoke(app, ["plugins", "list"]).output
     answers.append(True)
     result = CliRunner().invoke(app, ["plugins", "remove", "io.example.demo"])
     assert result.exit_code == 0 and "Removed" in result.output
+    assert result.output.endswith("Stopped the running plugin.\n")
     assert manager.records() == {}
     result = CliRunner().invoke(app, ["plugins", "install", "http://insecure.example/x", "-y"])
     assert result.exit_code == 1 and "https" in result.output
@@ -102,9 +106,11 @@ def test_alias_and_update_without_id(managed) -> None:
     result = CliRunner().invoke(app, ["plugins", "update", "demo"])
     assert result.exit_code == 0 and "up to date" in result.output
     runner.tags["v0.2.0"] = "b" * 40
+    manager.stopper.state = "stopped"
     result = CliRunner().invoke(app, ["plugins", "update", "--yes"])
     assert result.exit_code == 0, result.output
-    assert "Updated Demo photos" in result.output
+    assert "Updated Demo photos at v0.2.0.\nStopped the running plugin; it restarts on next use." \
+        in result.output
     CliRunner().invoke(app, ["plugins", "disable", "demo"])
     assert manager.disabled() == {"io.example.demo"}
     answers.append(True)

@@ -17,7 +17,7 @@ from blueferry.plugin_api.config import SECRET_MASK
 from blueferry.plugin_index import PluginIndex
 from blueferry.plugin_manager import PluginManager
 from blueferry.qt.plugin_settings import PluginSettings
-from tests.test_plugin_manager import URL, FakeRunner
+from tests.test_plugin_manager import URL, FakeRunner, FakeStopper
 
 
 @pytest.fixture(scope="module")
@@ -74,7 +74,8 @@ def plugins(app, tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     runner = FakeRunner()
     manager = PluginManager(data_home=tmp_path / "data", settings_path=tmp_path / "p.json",
-                            runner=runner, python="/usr/bin/python3")
+                            runner=runner, python="/usr/bin/python3",
+                            stopper=FakeStopper())
     index = PluginIndex(fetch=lambda _url: INDEX, cache=tmp_path / "cache")
     _Client.saved = []
     settings = PluginSettings(manager=lambda: manager, index=lambda: index, client=_Client)
@@ -135,10 +136,31 @@ def test_settings_form_round_trip_and_enable_switch(plugins) -> None:
     _wait(lambda: settings.state()["config"] == {})
     assert _Client.saved[-1] == {"url": "https://b.example"}
     _wait(lambda: _idle(settings))
+    manager.stopper.state = "stopped"
     settings.set_enabled("io.example.demo", False)
     _wait(lambda: _idle(settings) and settings.state()["plugins"][0]["enabled"] is False)
     assert manager.disabled() == {"io.example.demo"}
+    assert settings.state()["message"] == "Stopped the running plugin."
     settings.set_indexes(["http://nope"])
+    assert settings.state()["messageOk"] is False
+
+
+def test_update_and_remove_say_what_happened_to_the_running_plugin(plugins) -> None:
+    settings, manager, runner = plugins
+    manager.commit(manager.prepare(URL))
+    runner.tags["v0.2.0"] = "b" * 40
+    manager.stopper.state = "stopped"
+    settings.prepare_update("io.example.demo")
+    _wait(lambda: settings.state()["pending"] != {})
+    settings.confirm_install()
+    _wait(lambda: _idle(settings) and "Updated" in settings.state()["message"])
+    assert settings.state()["message"] == (
+        "Updated Demo photos to v0.2.0. Stopped the running plugin; it restarts on next use.")
+    assert settings.state()["messageOk"] is True
+    manager.stopper.state = "still-running"
+    settings.remove("io.example.demo")
+    _wait(lambda: _idle(settings) and "Removed" in settings.state()["message"])
+    assert "(process 4242) did not exit" in settings.state()["message"]
     assert settings.state()["messageOk"] is False
 
 

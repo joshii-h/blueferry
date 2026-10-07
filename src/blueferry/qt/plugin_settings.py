@@ -32,6 +32,7 @@ from blueferry.plugin_api.config_flow import (
 from blueferry.plugin_api.manifest import PluginManifest
 from blueferry.plugin_index import DEFAULT_INDEX_URL, PluginIndex, check_index_url, index_urls
 from blueferry.plugin_manager import InstallError, PluginManager, PreparedInstall
+from blueferry.plugin_stopper import stop_note, stop_ok
 from blueferry.qt.tasks import Task
 
 
@@ -157,8 +158,12 @@ class PluginSettings(QObject):
         self._work("list", work, done, keep_message=True)
 
     def set_enabled(self, plugin_id: str, enabled: bool) -> None:
-        self._work("enable", lambda: self._manager.set_enabled(plugin_id, enabled),
-                   lambda _value: self._reload())
+        def done(outcome: Any) -> None:
+            if note := stop_note(outcome, restarts=False):
+                self._say(note, stop_ok(outcome))
+            self._reload()
+
+        self._work("enable", lambda: self._manager.set_enabled(plugin_id, enabled), done)
 
     def _reload(self) -> None:
         self.load()
@@ -203,12 +208,13 @@ class PluginSettings(QObject):
         self._update(pending={})
 
         def done(record: Any) -> None:
-            self._say(
-                (_("Updated {name} to {ref}.") if kind == "update"
-                 else _("Installed {name} {ref}.")).format(
-                    name=prepared.manifest.name, ref=record.ref_label,
-                ),
+            text = (_("Updated {name} to {ref}.") if kind == "update"
+                    else _("Installed {name} {ref}.")).format(
+                name=prepared.manifest.name, ref=record.ref_label,
             )
+            note = stop_note(prepared.stop)
+            self._say(f"{text} {note}" if note else text,
+                      stop_ok(prepared.stop))
             self._reload()
             self.load_store(False)
 
@@ -223,8 +229,10 @@ class PluginSettings(QObject):
             self._update(pending={})
 
     def remove(self, plugin_id: str) -> None:
-        def done(_value: object) -> None:
-            self._say(_("Removed the plugin. Its own settings and keyring entries stay."))
+        def done(removal: Any) -> None:
+            text = _("Removed the plugin. Its own settings and keyring entries stay.")
+            note = stop_note(removal.stop, restarts=False)
+            self._say(f"{text} {note}" if note else text, stop_ok(removal.stop))
             self._reload()
 
         self._work("remove", lambda: self._manager.remove(plugin_id), done)

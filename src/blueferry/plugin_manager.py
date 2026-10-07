@@ -17,6 +17,12 @@ the plugin's code; :meth:`commit` builds the venv, installs the package and
 writes the manifest and the service file. Everything here blocks (git,
 pip): call it from a worker thread or the CLI. Git and venv access go
 through an injectable :class:`Runner`; tests use fakes.
+
+A plugin process keeps running after its venv is replaced or deleted, so an
+update, a removal and disabling end the process that still owns the
+plugin's bus name through an injectable stopper
+(:class:`blueferry.plugin_stopper.BusPluginStopper` by default); D-Bus
+activation starts the new code on next use.
 """
 from __future__ import annotations
 
@@ -38,10 +44,12 @@ from blueferry import __version__
 from blueferry.plugin_api.manifest import (
     ManifestError,
     PluginManifest,
+    bus_name_for,
     discover,
     parse_manifest,
 )
 from blueferry.plugin_prefs import config_path, disabled_from
+from blueferry.plugin_stopper import BusPluginStopper, PluginStopper, StopOutcome
 
 GIT_TIMEOUT_SEC = 120.0
 PIP_TIMEOUT_SEC = 900.0
@@ -124,6 +132,8 @@ class PreparedInstall:
     # A manifest with this id that BlueFerry did not install (shadowed or replaced).
     unmanaged: PluginManifest | None = None
     changes: list[str] = field(default_factory=list)
+    # Set by PluginManager.commit: what happened to a still running old process.
+    stop: StopOutcome | None = None
 
     def summary(self) -> list[tuple[str, str]]:
         """Label/value rows every client shows before asking."""
@@ -165,6 +175,14 @@ class PluginEntry:
         return self.manifest.source or self.manifest.homepage
 
 
+@dataclass(frozen=True, slots=True)
+class Removal:
+    """What :meth:`PluginManager.remove` deleted and stopped."""
+
+    paths: list[Path]
+    stop: StopOutcome | None = None
+
+
 def _version_key(tag: str) -> tuple[int, ...]:
     match = _VERSION_TAG.fullmatch(tag)
     return tuple(int(part) for part in match.group(1).split(".")) if match else ()
@@ -180,6 +198,7 @@ class PluginManager:
         python: str = sys.executable,
         clock: Callable[[], float] = time.time,
         blueferry_version: str = __version__,
+        stopper: PluginStopper | None = None,
     ) -> None:
         self.data_home = data_home or data_dir()
         self.root = self.data_home / "blueferry" / "plugins"
@@ -188,6 +207,7 @@ class PluginManager:
         self.python = python
         self.clock = clock
         self.blueferry_version = blueferry_version
+        self.stopper: PluginStopper = stopper or BusPluginStopper()
 
     # ---- paths and records -----------------------------------------------------
 
@@ -226,10 +246,21 @@ class PluginManager:
     def disabled(self) -> frozenset[str]:
         return disabled_from(self.settings())
 
-    def set_enabled(self, plugin_id: str, enabled: bool) -> None:
+    def set_enabled(self, plugin_id: str, enabled: bool) -> StopOutcome | None:
+        """Enable or disable; disabling stops a running managed plugin."""
         disabled = set(self.disabled())
         (disabled.discard if enabled else disabled.add)(plugin_id)
         self.update_settings(disabled=sorted(disabled))
+        record = self.records().get(plugin_id)
+        if enabled or record is None:
+            return None
+        return self._stop_old(plugin_id, [Path(record.venv)])
+
+    def _stop_old(self, plugin_id: str, venvs: Sequence[Path]) -> StopOutcome | None:
+        """End the bus-name owner if it runs from one of ``venvs``."""
+        if not venvs:
+            return None
+        return self.stopper(bus_name_for(plugin_id), venvs)
 
     def entries(self) -> tuple[list[PluginEntry], list[tuple[str, str]]]:
         """Discovered plugins (managed or not) and ignored manifests."""
@@ -337,6 +368,10 @@ class PluginManager:
         """Build the venv, install the package, publish manifest and service."""
         plugin = prepared.manifest
         target = self.source_dir(plugin.id)
+        venvs_dir = self.root / "venvs"
+        old_venvs = sorted(venvs_dir.glob(f"{plugin.id}-*"))
+        if prepared.previous is not None and Path(prepared.previous.venv) not in old_venvs:
+            old_venvs.append(Path(prepared.previous.venv))
         backup = None
         if target.exists():
             backup = target.with_name(f".old-{plugin.id}-{os.getpid()}")
@@ -375,7 +410,7 @@ class PluginManager:
             raise
         if backup is not None:
             shutil.rmtree(backup, ignore_errors=True)
-        for old in (self.root / "venvs").glob(f"{plugin.id}-*"):
+        for old in venvs_dir.glob(f"{plugin.id}-*"):
             if old != venv:
                 shutil.rmtree(old, ignore_errors=True)
         record = InstallRecord(plugin.id, prepared.url, prepared.ref, prepared.commit,
@@ -383,6 +418,8 @@ class PluginManager:
         records = self.records()
         records[plugin.id] = record
         self._save_records(records)
+        # A reinstall of the same commit rebuilt ``venv`` too, so it counts as old.
+        prepared.stop = self._stop_old(plugin.id, old_venvs)
         return record
 
     # ---- update and removal ------------------------------------------------------------
@@ -423,8 +460,8 @@ class PluginManager:
             prepared.changes = []  # the old commit may be gone after a force-push
         return prepared
 
-    def remove(self, plugin_id: str) -> list[Path]:
-        """Remove a managed plugin; its own settings and keyring entries stay."""
+    def remove(self, plugin_id: str) -> Removal:
+        """Remove a managed plugin and stop it; its settings and keyring entries stay."""
         records = self.records()
         record = records.get(plugin_id)
         if record is None:
@@ -438,7 +475,10 @@ class PluginManager:
         paths = [manifest_file, self.source_dir(plugin_id)]
         if manifest is not None:
             paths.append(self.service_path(manifest))
-        paths.extend((self.root / "venvs").glob(f"{plugin_id}-*"))
+        venvs = sorted((self.root / "venvs").glob(f"{plugin_id}-*"))
+        if Path(record.venv) not in venvs:
+            venvs.append(Path(record.venv))
+        paths.extend(venvs)
         for path in paths:
             if path.is_dir() and not path.is_symlink():
                 shutil.rmtree(path, ignore_errors=True)
@@ -450,7 +490,7 @@ class PluginManager:
         self._save_records(records)
         if plugin_id in self.disabled():
             self.set_enabled(plugin_id, True)
-        return removed
+        return Removal(removed, self._stop_old(plugin_id, venvs))
 
 
 # ---- helpers --------------------------------------------------------------------------

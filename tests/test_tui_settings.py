@@ -17,7 +17,7 @@ from blueferry.tui_settings import (
     PluginsScreen,
     SettingsScreen,
 )
-from tests.test_plugin_manager import URL, FakeRunner
+from tests.test_plugin_manager import URL, FakeRunner, FakeStopper
 from tests.test_tui_phone import _Backend, _plain, _run, _until
 
 
@@ -112,7 +112,8 @@ def test_plugins_install_from_the_store_after_confirmation_and_configure(
         for commit, files in runner.files.items()
     }
     manager = PluginManager(data_home=tmp_path / "data", settings_path=tmp_path / "p.json",
-                            runner=runner, python="/usr/bin/python3")
+                            runner=runner, python="/usr/bin/python3",
+                            stopper=FakeStopper())
     index = PluginIndex(fetch=lambda _url: INDEX, cache=tmp_path / "cache")
     _Client.saved = []
 
@@ -149,8 +150,11 @@ def test_plugins_install_from_the_store_after_confirmation_and_configure(
             await _until(pilot, lambda: _Client.saved)
             assert _Client.saved[0]["api_key"] == "n3w"
             await _until(pilot, lambda: isinstance(app.screen, PluginsScreen))
+            manager.stopper.state = "stopped"
             await pilot.press("e")
             await _until(pilot, lambda: manager.disabled() == {"io.example.demo"})
+            await _until(pilot, lambda: "Stopped the running plugin." in [
+                note.message for note in app._notifications])
 
     _run(scenario())
 
