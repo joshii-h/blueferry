@@ -209,7 +209,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `cli_otp.py` | `blueferry otp status`, `enable`, `disable` and `check` for one-time code auto-copy (`otp-status` and `otp-check` stay as aliases). |
 | `tui.py` | Textual terminal client. |
 | `tui_launcher.py` | Launches the TUI with the package-private Textual bundle when present. |
-| `tui_calls.py` | Optional Textual calls panel (`c`): `call_card` wording, one action row (answer, hold/resume via `SwapCalls`, hang up/decline, Decline for a waiting call), keypad tones for the active call, dial suggestions (`dial_suggestions`), confirmation before every call; work through `TextualTaskRunner`. |
+| `tui_calls.py` | Optional Textual calls panel (`c`): `call_card` wording, one action row (answer, hold/resume via `SwapCalls`, hang up/decline, Decline for a waiting call), keypad tones for the active call (0-9, `*`, `#` keys outside text fields and the tone field, in order through `phone_link_view.KeypadTones`), dial suggestions (`dial_suggestions`), confirmation before every call; work through `TextualTaskRunner`. |
 | `tui_notifications.py` | Textual "iPhone Notifications" screen over the shared `NotificationHistory` (`notifications_view` wording); read only while open, forgotten on close, `NotificationsChanged` coalesced. |
 | `tui_options.py` | Textual "Settings" screen (`o`, `OptionsScreen`): the Qt/GTK settings categories as tabs, saved preferences from `GetStatus`, `local.env` feature switches via `features_view` with "Restart Service", buttons for the per-key actions. |
 | `tui_doctor.py` | Textual diagnostics report: `blueferry doctor` on a worker, plain-text report with Copy. |
@@ -663,6 +663,9 @@ A change to these rules has to be made in both places.
 - `Dial` accepts plain numbers only (`+` and digits); `*`/`#` service codes
   are rejected so a caller cannot reconfigure the phone (for example call
   forwarding). Keypad symbols remain available as DTMF on an active call.
+  `SendTones` requests go to oFono one at a time in arrival order (at most
+  32 waiting), so fast keypad clicks keep their order; the log names only
+  the number of tones, never the tones (they can be a PIN).
   Well-known emergency numbers are refused (they belong on the phone), and
   every client confirms a number before dialing. `Answer`/`HoldAndAnswer`
   have their own quota; hanging up is never blocked by it.
