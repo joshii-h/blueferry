@@ -28,6 +28,8 @@ class DeviceSelect(Select[str]):
         self.direction = ""
         self.choices: list[tuple[str, str]] = [("", "")]
 
+    # Overrides Select's private watcher, exactly like tui_options.PolicySelect
+    # (checked against Textual 8.2); revisit both when Textual changes Select.
     def _watch_value(self, value: str | NoSelection) -> None:
         if self.is_mounted:
             super()._watch_value(value)

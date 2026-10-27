@@ -14,7 +14,9 @@ the connected one, hang up the active one first): fewer widgets to tab
 through, the same actions. Keypad tones go to the active call. While a
 call runs, the panel shows its speaker and microphone with a switch for
 this call only (``call_audio_view.call_view``); the device lists are read
-again whenever the call's audio changes. Names, numbers, device names and
+again whenever the call's audio report changes (a call starts, a choice is
+applied, or a plugged or unplugged device is the chosen or the used one).
+Names, numbers, device names and
 errors are rendered as Rich ``Text`` after ``terminal_text``.
 """
 from __future__ import annotations
@@ -309,7 +311,7 @@ class CallsScreen(ModalScreen[None]):
         previous = self.snapshot.audio
         self.snapshot, self.loaded = snapshot, True
         if snapshot.calls and snapshot.audio is not None and snapshot.audio != previous:
-            self._load_devices()  # a call started or its devices changed
+            self._load_devices()  # a call started or its chosen/used device changed
         self._update_view()
 
     def _load_devices(self) -> None:
