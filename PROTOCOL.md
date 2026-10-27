@@ -959,10 +959,21 @@ default) remembers such a metadata target under a key built from the
 stream's own properties and restores it on that phone's next call stream;
 BlueFerry therefore checks the key on every call and deletes a restored
 target when the choice is the system's, which also clears what WirePlumber
-saved. Other streams use other keys and are not affected.
+saved. Other streams use other keys and are not affected. The saved
+target lands in `~/.local/state/wireplumber/stream-properties` under a key
+such as `Output/Audio:node.name:bluez_input.<MAC>.0`; it can be removed by
+hand while WirePlumber is stopped. When calls are switched off, BlueFerry
+deletes the streams' targets once more if the streams still exist.
+
+BlueFerry owns the call streams' target while a call runs: with "same as
+system" it deletes any `target.object`, also one set by hand in a mixer
+(pavucontrol, Helvum). Before each write it reads the stream's node again
+(`pw-dump <id>`) and writes only if `object.serial` and `node.name` still
+match, because PipeWire reuses node IDs.
 
 The streams are matched by `api.bluez5.address` (or the MAC in the node
-name) of the selected phone, not by profile name alone. The device actually
+name) of the selected phone, not by profile name alone. The device lists
+leave out only that phone's nodes; other Bluetooth headsets can be chosen. The device actually
 used is the stream's link peer in `pw-dump`. Moving the streams with
 BlueFerry's router has not been tested on hardware yet.
 
