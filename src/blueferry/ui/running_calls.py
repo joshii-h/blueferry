@@ -13,7 +13,9 @@ shown. The duration ticks only while the tab is visible. The wording is
 unavailable. The rows are rebuilt on each read, so the keypad-tone text
 is kept here and put back into the new row. The device rows follow
 ``call_audio_view.call_view``; the device lists are read again whenever the
-call's audio changes, which also happens when a device is plugged in.
+call's audio report changes: when a call starts, a choice is applied, or a
+plugged or unplugged device is the chosen or the used one. Other hot-plugs
+show up the next time the lists are read.
 """
 
 from __future__ import annotations
@@ -133,7 +135,7 @@ class RunningCalls(Gtk.ListBox):
         self._state = snapshot.state
         audio = snapshot.audio.to_dict() if snapshot.audio is not None else None
         if audio is not None and snapshot.calls and audio != self.audio:
-            self._load_devices()  # a call started or its devices changed
+            self._load_devices()  # a call started or its chosen/used device changed
         self.audio = audio if snapshot.calls else None
         self._set_calls([call.to_dict() for call in snapshot.calls])
 

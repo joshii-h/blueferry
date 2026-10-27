@@ -31,21 +31,28 @@ class DeviceRow:
         return list(self._values)
 
     def show(self, view: Mapping[str, Any], *, subtitle: str = "") -> None:
-        """Show a row of ``call_audio_view.settings_view``/``call_view``."""
+        """Show a row of ``call_audio_view.settings_view``/``call_view``.
+
+        Only what differs is set, so a status refresh does not disturb an
+        open dropdown.
+        """
         options = [item for item in view.get("options") or [] if isinstance(item, Mapping)]
         labels = [str(item.get("label") or "") for item in options]
         self._applying = True
         try:
             self._direction = str(view.get("direction") or "")
-            self.row.set_title(str(view.get("label") or ""))
-            self.row.set_subtitle(subtitle)
+            title = str(view.get("label") or "")
+            if self.row.get_title() != title:
+                self.row.set_title(title)
+            if (self.row.get_subtitle() or "") != subtitle:
+                self.row.set_subtitle(subtitle)
             current = [self._model.get_string(i) for i in range(self._model.get_n_items())]
             if labels != current:
                 self._model.splice(0, self._model.get_n_items(), labels)
             self._values = [str(item.get("value") or "") for item in options]
             index = view.get("index")
             selected = index if isinstance(index, int) and 0 <= index < len(labels) else 0
-            if labels:
+            if labels and self.row.get_selected() != selected:
                 self.row.set_selected(selected)
         finally:
             self._applying = False

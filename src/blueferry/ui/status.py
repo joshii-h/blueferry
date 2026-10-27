@@ -1797,15 +1797,18 @@ class SettingsDialog(Adw.PreferencesDialog):
     def _apply_call_audio(self, values: dict, reachable: bool) -> None:
         supported = call_audio_view.supported(values)
         was_visible = self._call_audio_group.get_visible()
-        self._call_audio_group.set_visible(supported)
+        if was_visible != supported:
+            self._call_audio_group.set_visible(supported)
         if supported and not was_visible and not self._call_audio_devices:
             self._load_call_audio_devices()
         view = call_audio_view.settings_view(values, self._call_audio_devices)
         for item in view["rows"]:
             row = self.call_audio_rows[item["direction"]]
             if not self._call_audio_saving:
-                row.show(item)
-            row.row.set_sensitive(reachable and not self._call_audio_saving)
+                row.show(item)  # changes only what differs
+            sensitive = reachable and not self._call_audio_saving
+            if row.row.get_sensitive() != sensitive:
+                row.row.set_sensitive(sensitive)
 
     def _load_call_audio_devices(self) -> None:
         """Read the speakers and microphones; devices come and go."""
