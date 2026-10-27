@@ -102,8 +102,8 @@ again, so call audio goes back to the phone.
 
 BlueFerry can play calls on another speaker and record them from another
 microphone than the system's, for example a headset for calls while music
-stays on the desk speakers. Nothing else changes: other applications and
-the system defaults keep their devices.
+stays on the desk speakers. Other applications and the system defaults
+keep their devices.
 
 - **Speaker for calls** and **Microphone for calls** in the client settings
   apply to every call. **Same as system** (the default)
@@ -113,6 +113,11 @@ the system defaults keep their devices.
 - A chosen device that is not connected is skipped: the call uses the
   system's device and the call view says so. Plugging the device in during
   the call moves the call to it within a few seconds.
+- Other Bluetooth headsets can be chosen too; only the iPhone itself is
+  left out.
+- While a call runs, BlueFerry decides where its audio goes: moving the
+  call in a mixer such as pavucontrol or Helvum lasts only until the next
+  check. Use the call view's switch instead.
 
 ```bash
 blueferry calls audio                    # choices, devices and the running call
@@ -126,6 +131,14 @@ replugging. This needs PipeWire with WirePlumber and the `pw-dump` and
 `pw-metadata` tools (part of PipeWire). The call audio appears a few seconds
 after a call is answered or dialed; until then the call view shows
 "Waiting for the call audio".
+
+WirePlumber remembers the last device of the call streams in
+`~/.local/state/wireplumber/stream-properties` (a line starting with
+`Output/Audio:node.name:bluez_input.<MAC>` or `Input/Audio:…bluez_output.<MAC>`)
+and uses it again on the next call. BlueFerry corrects that on every call
+and clears it when calls are switched off during a call. If calls stay
+off and a remembered device still applies, delete those lines while
+WirePlumber is not running.
 
 ## Phone links
 

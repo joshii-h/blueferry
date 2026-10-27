@@ -135,3 +135,17 @@ def test_daemon_routes_call_audio_only_while_a_call_runs(make_daemon) -> None:
         calls=instance.calls, call_audio=instance.call_audio,
     )).status()
     assert "calls_audio_output" not in status  # calls are off by default
+
+
+def test_switching_calls_off_releases_the_call_stream_targets(make_daemon, monkeypatch) -> None:
+    instance = make_daemon()
+    released: list[bool] = []
+    instance.call_audio.release = lambda: released.append(True)
+    instance._emit_status = lambda: None
+    monkeypatch.setattr(instance.calls_settings, "set", lambda enabled: enabled)
+    monkeypatch.setattr(instance.calls, "set_enabled", lambda _enabled: None)
+
+    instance._set_calls_enabled(True)
+    instance._set_calls_enabled(False)
+
+    assert released == [True]

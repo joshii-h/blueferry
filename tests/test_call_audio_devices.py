@@ -113,13 +113,26 @@ class FakePipeWire:
         self.dump = dump if dump is not None else _dump()
         self.commands: list[list[str]] = []
         self.missing = False
+        self.verified: list[int] = []
+        self.verify_dump: str | None = None
+        self.metadata_error = False
+        self.dump_error = False
 
     def __call__(self, argv, *, timeout):
         assert timeout <= 5
         if self.missing:
             raise CommandError(tuple(argv), f"{argv[0]} is not installed")
         if argv == ["pw-dump"]:
+            if self.dump_error:
+                raise CommandError(tuple(argv), "pw-dump timed out after 5 seconds")
             return SimpleNamespace(stdout=self.dump)
+        if argv[0] == "pw-dump":  # one object, read again before a write
+            self.verified.append(int(argv[1]))
+            dump = self.verify_dump if self.verify_dump is not None else self.dump
+            objects = [item for item in json.loads(dump) if item.get("id") == int(argv[1])]
+            return SimpleNamespace(stdout=json.dumps(objects))
+        if self.metadata_error:
+            raise CommandError(tuple(argv), "pw-metadata failed")
         self.commands.append(list(argv))
         return SimpleNamespace(stdout="")
 
@@ -230,11 +243,11 @@ def test_system_choice_reports_the_linked_devices_without_commands() -> None:
 
 
 def test_a_chosen_device_moves_only_the_call_stream() -> None:
-    commands, _report = plan(parse_dump(_dump()), MAC, {
+    writes, _report = plan(parse_dump(_dump()), MAC, {
         OUTPUT: Choice(HEADSET, ORIGIN_SETTINGS), INPUT: Choice(WEBCAM_MIC, ORIGIN_CALL),
     })
 
-    assert commands == [
+    assert [write.argv for write in writes] == [
         ["pw-metadata", "-n", "default", "103", "target.object", "62", "Spa:Id"],
         ["pw-metadata", "-n", "default", "104", "target.object", "64", "Spa:Id"],
     ]
@@ -252,9 +265,9 @@ def test_a_target_already_in_place_is_not_written_again() -> None:
 def test_same_as_system_deletes_a_target_wireplumber_restored() -> None:
     graph = parse_dump(_dump(targets={103: 62, 104: "64"}))
 
-    commands, _report = plan(graph, MAC, {})
+    writes, _report = plan(graph, MAC, {})
 
-    assert commands == [
+    assert [write.argv for write in writes] == [
         ["pw-metadata", "-n", "default", "-d", "103", "target.object"],
         ["pw-metadata", "-n", "default", "-d", "104", "target.object"],
     ]
@@ -263,9 +276,9 @@ def test_same_as_system_deletes_a_target_wireplumber_restored() -> None:
 def test_a_missing_device_falls_back_to_the_system_and_says_so() -> None:
     graph = parse_dump(_dump(targets={103: "999"}))
 
-    commands, report = plan(graph, MAC, {OUTPUT: Choice("alsa_output.gone", ORIGIN_SETTINGS)})
+    writes, report = plan(graph, MAC, {OUTPUT: Choice("alsa_output.gone", ORIGIN_SETTINGS)})
 
-    assert commands == [["pw-metadata", "-n", "default", "-d", "103", "target.object"]]
+    assert [write.argv for write in writes] == [["pw-metadata", "-n", "default", "-d", "103", "target.object"]]
     assert report[OUTPUT]["missing"] is True
     assert report[OUTPUT]["device"] == SPEAKERS
 
@@ -495,3 +508,63 @@ def test_a_call_answered_late_is_checked_every_second_again() -> None:
     pipewire.dump = _dump()
     loop.fire()
     assert pipewire.commands[-1][3:6] == ["103", "target.object", "62"]
+
+
+def test_a_recycled_node_id_is_never_written() -> None:
+    pipewire = FakePipeWire()
+    # Between the dump and the write, ID 103 went to another node.
+    pipewire.verify_dump = json.dumps([_node(103, 5555, "alsa_output.other", "Audio/Sink")])
+    router, pipewire, _loop, _changes = _router(Settings(output=HEADSET), pipewire)
+
+    router.calls_changed(True)
+
+    assert pipewire.verified == [103]
+    assert pipewire.commands == []
+
+
+def test_a_failed_write_keeps_the_report_and_looks_again_soon() -> None:
+    pipewire = FakePipeWire()
+    pipewire.metadata_error = True
+    router, pipewire, loop, _changes = _router(Settings(output=HEADSET), pipewire)
+
+    router.calls_changed(True)
+
+    assert router.call_audio()["state"] == STATE_READY
+    assert router.call_audio()[OUTPUT]["description"] == "Built-in Audio Analog Stereo"
+    assert loop.delays() == [FAST_INTERVAL_SEC]
+    pipewire.metadata_error = False
+    loop.fire()
+    assert pipewire.commands[-1][3:6] == ["103", "target.object", "62"]
+
+
+def test_one_failed_read_keeps_the_view_two_make_it_unavailable() -> None:
+    router, pipewire, loop, changes = _router()
+    router.calls_changed(True)
+    assert router.call_audio()["state"] == STATE_READY
+    changes.clear()
+
+    pipewire.dump_error = True
+    loop.fire()
+    assert router.call_audio()["state"] == STATE_READY
+    assert router.call_audio()[OUTPUT]["device"] == SPEAKERS
+    assert loop.delays() == [FAST_INTERVAL_SEC] and changes == []
+
+    loop.fire()
+    assert router.call_audio()["state"] == STATE_UNAVAILABLE
+
+    pipewire.dump_error = False
+    loop.fire()
+    assert router.call_audio()["state"] == STATE_READY
+
+
+def test_switching_calls_off_releases_the_remembered_targets() -> None:
+    pipewire = FakePipeWire(_dump(targets={103: "62"}))
+    router, pipewire, _loop, _changes = _router(pipewire=pipewire)
+
+    router.release()
+
+    assert pipewire.commands == [["pw-metadata", "-n", "default", "-d", "103", "target.object"]]
+    pipewire.commands.clear()
+    pipewire.dump = _dump(call=False)
+    router.release()
+    assert pipewire.commands == []

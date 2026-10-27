@@ -653,9 +653,14 @@ A change to these rules has to be made in both places.
   (`bluez_input.<MAC>` playing to a sink, `bluez_output.<MAC>` recording from
   a source), matched by `api.bluez5.address`/node name. While the controller
   reports a call, the router reads `pw-dump` on its own worker (every second
-  until the streams exist, then every 5 s for hot-plugged devices) and writes
-  or deletes only those streams' `target.object` in the `default` metadata
-  with `pw-metadata`; system defaults and other streams are never written.
+  for up to 20 s, re-armed on every call change, then every 5 s for
+  hot-plugged devices) and writes or deletes only those streams'
+  `target.object` in the `default` metadata with `pw-metadata`, after
+  checking that the node ID still has the stream's `object.serial`; system
+  defaults and other streams are never written. One failed read keeps the
+  last report and retries after a second; a second one (or a missing
+  `pw-dump`) reports `unavailable`. Switching calls off deletes the streams'
+  targets once more.
   The saved choice (`calls_audio_output`/`_input`, a `node.name`) lives in
   `settings.json`; a per-call choice is kept in memory and dropped when no
   call is left. Results carry a generation, so a finished call's check is
