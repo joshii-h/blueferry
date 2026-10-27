@@ -10,7 +10,7 @@ import threading
 
 from gi.repository import Adw, Gio, GLib, Gtk
 
-from blueferry import __version__
+from blueferry import __version__, call_audio_view
 from blueferry.bluetooth_devices import PairedDevice, iphone_candidates
 from blueferry.i18n import _, ngettext
 from blueferry.models import BackendStatus
@@ -31,6 +31,7 @@ from blueferry.setup_verification import (
     NOTIFICATION_ACCESS,
     remaining_iphone_setup_tasks,
 )
+from blueferry.ui.call_audio import DeviceRow
 from blueferry.ui.doctor import DoctorSection
 from blueferry.ui.feature_switches import FeatureSwitches
 from blueferry.ui.notification_rules import NotificationRules
@@ -587,6 +588,21 @@ class SettingsDialog(Adw.PreferencesDialog):
         )
         self._calls_group.add(self._calls_enabled_row)
 
+        # Speaker and microphone for calls; only while calls are on and the
+        # daemon reports the saved choices (calls_audio_output).
+        self._call_audio_group = Adw.PreferencesGroup(
+            description=call_audio_view.settings_hint(),
+        )
+        self._call_audio_group.set_visible(False)
+        self._call_audio_devices: dict = {}
+        self._call_audio_saving = False
+        self.call_audio_rows = {
+            direction: DeviceRow(self._call_audio_chosen)
+            for direction in call_audio_view.DIRECTIONS
+        }
+        for row in self.call_audio_rows.values():
+            self._call_audio_group.add(row.row)
+
         # Shown only for daemons that report the contact-photo opt-in.
         self._photos_group = Adw.PreferencesGroup(
             title=_("Contact Photos"),
@@ -690,7 +706,8 @@ class SettingsDialog(Adw.PreferencesDialog):
                 history_group,
             )),
             ("calls", (
-                self._calls_group, self._call_history_group, self._battery_group,
+                self._calls_group, self._call_audio_group, self._call_history_group,
+                self._battery_group,
                 self._phone_audio_group, self._media_group,
             )),
             ("security", (self._otp_group, self._proximity_lock_group, data_group)),
@@ -714,6 +731,7 @@ class SettingsDialog(Adw.PreferencesDialog):
         if category:
             self.set_visible_page_name(category)
         self.features.load()
+        self._load_call_audio_devices()
         self.present(parent)
 
     def _selected_device(self) -> PairedDevice | None:
@@ -1373,6 +1391,7 @@ class SettingsDialog(Adw.PreferencesDialog):
             reachable and not self._calls_enabled_choice.saving
         )
         self._applying_calls_enabled = False
+        self._apply_call_audio(values, reachable)
         self._apply_contact_photos(status, reachable=reachable)
         self._apply_otp_autocopy(status, reachable=reachable)
         self._applying_storage_policy = True
@@ -1774,6 +1793,51 @@ class SettingsDialog(Adw.PreferencesDialog):
             self._apply_status(self._last_status)
 
         self._client.set_proximity_lock_async(enabled, grace, saved, failed)
+
+    def _apply_call_audio(self, values: dict, reachable: bool) -> None:
+        supported = call_audio_view.supported(values)
+        was_visible = self._call_audio_group.get_visible()
+        self._call_audio_group.set_visible(supported)
+        if supported and not was_visible and not self._call_audio_devices:
+            self._load_call_audio_devices()
+        view = call_audio_view.settings_view(values, self._call_audio_devices)
+        for item in view["rows"]:
+            row = self.call_audio_rows[item["direction"]]
+            if not self._call_audio_saving:
+                row.show(item)
+            row.row.set_sensitive(reachable and not self._call_audio_saving)
+
+    def _load_call_audio_devices(self) -> None:
+        """Read the speakers and microphones; devices come and go."""
+        if not call_audio_view.supported(self._last_status.to_dict()):
+            return
+
+        def loaded(devices: object) -> None:
+            if isinstance(devices, dict) and devices != self._call_audio_devices:
+                self._call_audio_devices = devices
+                self._apply_call_audio(
+                    self._last_status.to_dict(), self._last_status.daemon,
+                )
+
+        self._client.call_audio_devices_async(loaded, lambda _message: None)
+
+    def _call_audio_chosen(self, direction: str, name: str) -> None:
+        self._call_audio_saving = True
+        for row in self.call_audio_rows.values():
+            row.row.set_sensitive(False)
+
+        def saved(_status: dict) -> None:
+            self._call_audio_saving = False
+            self._refresh()
+
+        def failed(error: str) -> None:
+            self._call_audio_saving = False
+            self._toast(
+                _("Could not save the call audio device: {error}").format(error=error)
+            )
+            self._apply_status(self._last_status)
+
+        self._client.set_call_audio_device_async(direction, name, saved, failed)
 
     def _calls_enabled_changed(self, _switch, _property) -> None:
         if self._applying_calls_enabled:
