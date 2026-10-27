@@ -932,6 +932,40 @@ BlueFerry prefers that value. BlueZ's `Battery1`, built from the same
 service, is only the fallback: bluetoothd 5.87 was seen to keep an old level
 there after an LE reconnect (`error registering battery: path exists`).
 
+## Call audio devices
+
+With `bluez5.hfphsp-backend = "ofono"`, PipeWire does not show a running call
+as a device but as two streams. Observed during a real call (iPhone,
+PipeWire 1.6.9, WirePlumber 0.5.18, 2026-10-27), card
+`bluez_card.78_A7_C7_A7_CD_02` in profile `audio-gateway`:
+
+- `bluez_input.78_A7_C7_A7_CD_02.0`, media class `Stream/Output/Audio`,
+  `api.bluez5.profile` `headset-audio-gateway`: the caller's voice.
+  WirePlumber linked it to the default sink (the onboard speakers).
+- `bluez_output.78_A7_C7_A7_CD_02.1`, media class `Stream/Input/Audio`:
+  this computer's voice, linked from the default source (a USB headset
+  microphone).
+- The node IDs changed from one call to the next (95 → 103); the
+  `node.name` (the MAC with `_`) stayed. Both streams exist only while the
+  SCO link is up, a few seconds after answering or dialing.
+
+Because they are streams, a call is moved like any application stream: write
+`target.object` (the target's `object.serial`) for the stream's node ID into
+the `default` metadata (`pw-metadata -n default <id> target.object <serial>
+Spa:Id`), which WirePlumber's `linking/find-defined-target.lua` honours, and
+delete the key for "same as system". The system defaults stay untouched.
+WirePlumber's `node/state-stream.lua` (`node.stream.restore-target`, on by
+default) remembers such a metadata target under a key built from the
+stream's own properties and restores it on that phone's next call stream;
+BlueFerry therefore checks the key on every call and deletes a restored
+target when the choice is the system's, which also clears what WirePlumber
+saved. Other streams use other keys and are not affected.
+
+The streams are matched by `api.bluez5.address` (or the MAC in the node
+name) of the selected phone, not by profile name alone. The device actually
+used is the stream's link peer in `pw-dump`. Moving the streams with
+BlueFerry's router has not been tested on hardware yet.
+
 ## Pairing diagnostics
 
 Each pairing attempt records the resolved delivery mode, authentication
