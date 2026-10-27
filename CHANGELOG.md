@@ -6,6 +6,10 @@
 
 - Report a stable opaque phone profile ID in `GetStatus` for clients that need
   to scope local per-phone metadata.
+- Choose the speaker and microphone for phone calls, saved for every call or
+  switched for the running call only, without changing the system defaults
+  (`Calls1.ListCallAudioDevices`, `SetCallAudioDevice`,
+  `SetCallAudioDeviceForCall`, `blueferry calls audio`).
 
 ## [0.8.1](https://github.com/erikwb/blueferry/releases/tag/v0.8.1) - 2026-09-14
 

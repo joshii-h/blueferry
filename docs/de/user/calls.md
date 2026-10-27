@@ -44,7 +44,10 @@ flowchart LR
 - Stellt die Anruflautstärke von oFono auf 100 %, weil die
   Standardeinstellung von 50 % mit einem iPhone kaum hörbar ist.
 
-Das Audio selbst leitet PipeWire. BlueFerry steuert nur den Anruf.
+Das Audio selbst leitet PipeWire. Standardmässig nutzt der Anruf den
+Lautsprecher und das Mikrofon des Systems; unter
+[Lautsprecher und Mikrofon für Anrufe](#lautsprecher-und-mikrofon-fur-anrufe)
+lassen sich eigene nur für Anrufe wählen.
 
 ## Einschalten
 
@@ -102,6 +105,36 @@ Verbindung wieder frei, und das Gesprächsaudio geht zurück aufs Telefon.
 
 `blueferry calls` sollte dann `ready` zeigen, solange das iPhone verbunden
 ist.
+
+## Lautsprecher und Mikrofon für Anrufe
+
+BlueFerry kann Anrufe über einen anderen Lautsprecher abspielen und von einem
+anderen Mikrofon aufnehmen als das System, zum Beispiel über ein Headset,
+während die Musik auf den Boxen bleibt. Sonst ändert sich nichts: andere
+Anwendungen und die Standardgeräte des Systems behalten ihre Geräte.
+
+- **Lautsprecher für Anrufe** und **Mikrofon für Anrufe** in den Einstellungen
+  der Clients gelten für jeden Anruf. **Wie System** (Standard) folgt den
+  Geräten des Systems.
+- Während eines Anrufs zeigt die Anrufansicht die tatsächlich genutzten
+  Geräte und lässt sie nur für diesen Anruf umschalten; der nächste Anruf
+  nutzt wieder die Einstellungen.
+- Ist ein gewähltes Gerät nicht angeschlossen, nutzt der Anruf das Gerät des
+  Systems, und die Anrufansicht sagt das. Wird es während des Anrufs
+  eingesteckt, wechselt der Anruf nach wenigen Sekunden dorthin.
+
+```bash
+blueferry calls audio                    # Auswahl, Geräte und laufender Anruf
+blueferry calls audio output alsa_output.usb-Logitech_A50-00.stereo-chat
+blueferry calls audio input system       # wieder das Mikrofon des Systems
+blueferry calls audio output alsa_output.pci-0000_00_1f.3.analog-stereo --this-call
+```
+
+Geräte werden mit ihrem PipeWire-Knotennamen gespeichert, der Neustarts und
+erneutes Einstecken übersteht. Das braucht PipeWire mit WirePlumber und die
+Werkzeuge `pw-dump` und `pw-metadata` (Teil von PipeWire). Das Gesprächsaudio
+erscheint einige Sekunden nach dem Annehmen oder Wählen; bis dahin zeigt die
+Anrufansicht „Warte auf das Gesprächsaudio“.
 
 ## Telefon-Links
 
