@@ -111,8 +111,8 @@ ist.
 
 BlueFerry kann Anrufe über einen anderen Lautsprecher abspielen und von einem
 anderen Mikrofon aufnehmen als das System, zum Beispiel über ein Headset,
-während die Musik auf den Boxen bleibt. Sonst ändert sich nichts: andere
-Anwendungen und die Standardgeräte des Systems behalten ihre Geräte.
+während die Musik auf den Boxen bleibt. Andere Anwendungen und die
+Standardgeräte des Systems behalten ihre Geräte.
 
 - **Lautsprecher für Anrufe** und **Mikrofon für Anrufe** in den Einstellungen
   der Clients gelten für jeden Anruf. **Wie System** (Standard) folgt den
@@ -123,6 +123,11 @@ Anwendungen und die Standardgeräte des Systems behalten ihre Geräte.
 - Ist ein gewähltes Gerät nicht angeschlossen, nutzt der Anruf das Gerät des
   Systems, und die Anrufansicht sagt das. Wird es während des Anrufs
   eingesteckt, wechselt der Anruf nach wenigen Sekunden dorthin.
+- Andere Bluetooth-Headsets lassen sich ebenfalls wählen; nur das iPhone
+  selbst fehlt in der Liste.
+- Während eines Anrufs bestimmt BlueFerry, wohin sein Ton geht: Verschiebst
+  du den Anruf in einem Mixer wie pavucontrol oder Helvum, gilt das nur bis
+  zur nächsten Prüfung. Nutze dafür den Umschalter der Anrufansicht.
 
 ```bash
 blueferry calls audio                    # Auswahl, Geräte und laufender Anruf
@@ -136,6 +141,14 @@ erneutes Einstecken übersteht. Das braucht PipeWire mit WirePlumber und die
 Werkzeuge `pw-dump` und `pw-metadata` (Teil von PipeWire). Das Gesprächsaudio
 erscheint einige Sekunden nach dem Annehmen oder Wählen; bis dahin zeigt die
 Anrufansicht „Warte auf das Gesprächsaudio“.
+
+WirePlumber merkt sich das letzte Gerät der Anruf-Streams in
+`~/.local/state/wireplumber/stream-properties` (eine Zeile, die mit
+`Output/Audio:node.name:bluez_input.<MAC>` bzw. `Input/Audio:…bluez_output.<MAC>`
+beginnt) und nutzt es beim nächsten Anruf wieder. BlueFerry korrigiert das
+bei jedem Anruf und löscht es, wenn die Anrufe während eines Anrufs
+ausgeschaltet werden. Bleiben die Anrufe aus und wirkt ein gemerktes Gerät
+noch, lösche diese Zeilen, solange WirePlumber nicht läuft.
 
 ## Telefon-Links
 
