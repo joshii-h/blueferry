@@ -629,10 +629,11 @@ class Daemon:
 
     def _set_calls_enabled(self, enabled: bool) -> dict:
         selected = self.calls_settings.set(enabled)
-        self.calls.set_enabled(selected)
         if not selected:
-            # Clear the call streams' remembered target while they may still exist.
+            # Queue the release before the hands-free link goes: the call
+            # streams (and their remembered target) still exist now.
             self.call_audio.release()
+        self.calls.set_enabled(selected)
         log.info("phone calls %s", "enabled" if selected else "disabled")
         self._emit_status()
         return self.calls.snapshot()

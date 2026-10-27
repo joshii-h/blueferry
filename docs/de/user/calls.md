@@ -145,9 +145,10 @@ WirePlumber merkt sich das letzte Gerät der Anruf-Streams in
 `~/.local/state/wireplumber/stream-properties` (eine Zeile, die mit
 `Output/Audio:node.name:bluez_input.<MAC>` bzw. `Input/Audio:…bluez_output.<MAC>`
 beginnt) und nutzt es beim nächsten Anruf wieder. BlueFerry korrigiert das
-bei jedem Anruf und löscht es, wenn die Anrufe während eines Anrufs
-ausgeschaltet werden. Bleiben die Anrufe aus und wirkt ein gemerktes Gerät
-noch, lösche diese Zeilen, solange WirePlumber nicht läuft.
+bei jedem Anruf, und beim Ausschalten der Anrufe löscht es das gemerkte
+Gerät noch einmal, falls die Anruf-Streams noch existieren. Bleiben die
+Anrufe aus und wirkt ein gemerktes Gerät noch, lösche diese Zeilen, solange
+WirePlumber nicht läuft.
 
 ## Telefon-Links
 
