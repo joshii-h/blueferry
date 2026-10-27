@@ -20,6 +20,7 @@ from PySide6.QtDBus import QDBusConnection
 
 from blueferry import (
     __version__,
+    call_audio_view,
     doctor_report,
     features_view,
     phone_audio_view,
@@ -134,6 +135,7 @@ class BridgeController(QObject):
     featuresChanged = Signal()
     doctorChanged = Signal()
     phoneCallsChanged = Signal()
+    callAudioDevicesChanged = Signal()
     callTonesDraftChanged = Signal()
     # (number, problem) of a clicked tel:/callto: link to confirm; see
     # tel_links.dial_request. Never dials by itself.
@@ -194,6 +196,11 @@ class BridgeController(QObject):
         # phoneCalls changes, so the draft lives here, not in the delegate.
         self._call_tones_draft = ""
         self._calls_state = "disabled"
+        # ListCalls "audio" (the call's speaker and microphone) and the
+        # device lists from ListCallAudioDevices, read on demand.
+        self._phone_call_audio: dict = {}
+        self._call_audio_devices: dict = {}
+        self._call_audio_loading = False
         # (calls_enabled, calls_state) of the last status that refreshed the
         # call list. Calls themselves are announced by CallsChanged.
         self._calls_status_key: tuple[object, object] | None = None
@@ -298,6 +305,15 @@ class BridgeController(QObject):
     @Property(str, notify=phoneCallsChanged)
     def callsState(self) -> str:
         return self._calls_state
+
+    @Property("QVariantMap", notify=phoneCallsChanged)
+    def phoneCallAudio(self):
+        """ListCalls ``audio``: the running call's speaker and microphone."""
+        return self._phone_call_audio
+
+    @Property("QVariantMap", notify=callAudioDevicesChanged)
+    def callAudioDevices(self):
+        return self._call_audio_devices
 
     @Property(str, notify=callTonesDraftChanged)
     def callTonesDraft(self) -> str:
@@ -554,6 +570,16 @@ class BridgeController(QObject):
     def callCard(self, call: dict, now_ms: float) -> dict:
         """A running call's card; QML passes its 1 s ticker in milliseconds."""
         return phone_link_view.call_card(dict(call or {}), float(now_ms) / 1000)
+
+    @Slot("QVariantMap", "QVariantMap", result="QVariantMap")
+    def callAudioSettingsView(self, status: dict, devices: dict) -> dict:
+        """Settings rows for the call speaker/microphone (call_audio_view)."""
+        return call_audio_view.settings_view(dict(status or {}), dict(devices or {}))
+
+    @Slot("QVariantMap", "QVariantMap", result="QVariantMap")
+    def callAudioView(self, audio: dict, devices: dict) -> dict:
+        """The running call's devices and the per-call switch (call_audio_view)."""
+        return call_audio_view.call_view(dict(audio) if audio else None, dict(devices or {}))
 
     @Slot("QVariantMap", str, result="QVariantMap")
     def notificationsView(self, info: dict, opt_in_hint: str) -> dict:
@@ -1365,10 +1391,17 @@ class BridgeController(QObject):
         if not isinstance(snapshot, CallsSnapshot):
             return
         calls = [call.to_dict() for call in snapshot.calls]
-        if calls == self._phone_calls and snapshot.state == self._calls_state:
+        audio = snapshot.audio.to_dict() if snapshot.audio is not None else {}
+        if (
+            calls == self._phone_calls and snapshot.state == self._calls_state
+            and audio == self._phone_call_audio
+        ):
             return  # an unchanged list must not rebuild the call cards
+        if calls and not self._phone_calls and audio:
+            self.loadCallAudioDevices()  # a call started: offer its switch
         self._phone_calls = calls
         self._calls_state = snapshot.state
+        self._phone_call_audio = audio
         self.phoneCallsChanged.emit()
 
     def _calls_unavailable(self, _message: str = "") -> None:
@@ -1377,9 +1410,10 @@ class BridgeController(QObject):
         state = str(self._status.get("calls_state") or "disabled")
         if state == "ready":
             state = "unavailable"  # ListCalls just failed despite the status
-        if self._phone_calls or state != self._calls_state:
+        if self._phone_calls or state != self._calls_state or self._phone_call_audio:
             self._phone_calls = []
             self._calls_state = state
+            self._phone_call_audio = {}
             self.phoneCallsChanged.emit()
 
     @Slot()
@@ -1435,6 +1469,46 @@ class BridgeController(QObject):
             return
         self.setCallTonesDraft("")
         self._call_action(lambda: self._backend.send_call_tones(str(call_id), selected))
+
+    @Slot()
+    def loadCallAudioDevices(self) -> None:
+        """Read the speakers and microphones (settings opened, a call started)."""
+        if not call_audio_view.supported(self._status) or self._call_audio_loading:
+            return
+        self._call_audio_loading = True
+
+        def completed(value: object) -> None:
+            self._call_audio_loading = False
+            devices = dict(value) if isinstance(value, dict) else {}
+            if devices != self._call_audio_devices:
+                self._call_audio_devices = devices
+                self.callAudioDevicesChanged.emit()
+
+        def failed(_message: str) -> None:
+            # The lists stay as they were; "Same as system" is always there.
+            self._call_audio_loading = False
+
+        self._run(self._backend.call_audio_devices, completed, failed, busy=False)
+
+    @Slot(str, str)
+    def setCallAudioDevice(self, direction: str, name: str) -> None:
+        """Save the speaker or microphone for every call ("" = system)."""
+        def completed(value: object) -> None:
+            if isinstance(value, dict):
+                self._status.update(value)
+                self.statusChanged.emit()
+
+        self._run(
+            lambda: self._backend.set_call_audio_device(str(direction), str(name or "")),
+            completed,
+        )
+
+    @Slot(str, str)
+    def setCallAudioDeviceForCall(self, direction: str, name: str) -> None:
+        """Switch the running call to another speaker or microphone."""
+        self._call_action(
+            lambda: self._backend.set_call_audio_device_for_call(str(direction), str(name or ""))
+        )
 
     @Slot()
     def syncContacts(self) -> None:
