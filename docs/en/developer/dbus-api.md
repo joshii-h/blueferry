@@ -193,7 +193,7 @@ the system". Their presence tells clients the choice is offered. See the
 | `Answer` | `s call_id` | A waiting call holds the active one. 10 per minute |
 | `Hangup` | `s call_id` | Hangs up, or declines a ringing call |
 | `HangupAll` | | |
-| `SendTones` | `s call_id, s tones` | DTMF on the active call: `0-9`, `*`, `#` |
+| `SendTones` | `s call_id, s tones` | DTMF on the active call: `0-9`, `*`, `#`. Requests are played one after another in arrival order (at most 32 waiting); the log records only how many tones went out |
 | `SwapCalls` | | Swap active and held |
 | `HoldAndAnswer` | | Hold the active call and answer the waiting one. 10 per minute |
 | `ListCallAudioDevices` | → `s json` | `outputs` and `inputs` (each `name`, `description`, `default`) read from PipeWire, plus the saved `output`/`input`. The phone's own nodes are left out. "read" rate limit |

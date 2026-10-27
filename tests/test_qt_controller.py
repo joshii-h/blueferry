@@ -1516,6 +1516,40 @@ def test_call_audio_devices_are_read_saved_and_switched_per_call(monkeypatch):
     assert controller.callAudioView({}, {})["supported"] is False
 
 
+def test_keypad_clicks_go_to_the_active_call_in_order(monkeypatch):
+    from blueferry.models import CallsSnapshot
+
+    class TonesBackend:
+        def __init__(self):
+            self.requests = []
+
+    backend = TonesBackend()
+    controller = BridgeController(backend=backend, setup=object(), subscribe=False, autostart=False)
+    pending = []
+    monkeypatch.setattr(
+        controller, "_run",
+        lambda operation, on_done=None, on_failed=None, **_kw: pending.append(
+            (operation, on_done, on_failed)),
+    )
+    sent = []
+    controller.callTonesSentChanged.connect(lambda: sent.append(controller.callTonesSent))
+    assert controller.pressCallTone("1") is False  # no call: the pad dials
+    controller._apply_calls(CallsSnapshot.from_dict({"state": "ready", "calls": [
+        {"call_id": "voicecall02", "state": "held"},
+        {"call_id": "voicecall01", "state": "active"},
+    ]}))
+    assert controller.activeCallId == "voicecall01"
+    for key in "12#":
+        assert controller.pressCallTone(key) is True
+    assert len(pending) == 1  # one request at a time
+    pending.pop(0)[1](None)
+    assert len(pending) == 1 and controller.callTonesSent == "Sent: 1"
+    pending.pop(0)[1](None)
+    assert controller.callTonesSent == "Sent: 1 2 #"
+    controller._calls_unavailable()
+    assert controller.callTonesSent == "" and controller.activeCallId == ""
+
+
 def test_contact_photo_opt_in_is_forwarded_and_drops_cached_avatars(monkeypatch):
     backend = _Backend()
     toggles = []
