@@ -35,7 +35,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from blueferry.errors import InvalidArgumentsError, NotReadyError
+from blueferry.errors import CommandError, InvalidArgumentsError, NotReadyError
 
 log = logging.getLogger(__name__)
 
@@ -82,6 +82,9 @@ FAST_CHECKS = 20
 STEADY_INTERVAL_SEC = 5
 # After a move, look again soon so the call view shows the new device.
 FOLLOW_UP_CHECKS = 3
+# A failed pw-dump counts as "unavailable" only when the next one fails too
+# (or at once when the tool is missing).
+UNAVAILABLE_AFTER_FAILURES = 2
 
 Run = Callable[..., Any]
 Submit = Callable[..., None]
@@ -281,6 +284,14 @@ def clear_target_argv(stream: Node) -> list[str]:
 
 
 @dataclass(frozen=True, slots=True)
+class MetadataWrite:
+    """One ``pw-metadata`` call for one call stream."""
+
+    stream: Node
+    argv: list[str]
+
+
+@dataclass(frozen=True, slots=True)
 class Choice:
     """What to use for one direction during this call."""
 
@@ -290,9 +301,14 @@ class Choice:
 
 def plan(
     graph: Graph, mac: str, choices: Mapping[str, Choice],
-) -> tuple[list[list[str]], dict[str, dict[str, Any]]]:
-    """Commands that apply ``choices`` and the per-direction call audio report."""
-    commands: list[list[str]] = []
+) -> tuple[list[MetadataWrite], dict[str, dict[str, Any]]]:
+    """Writes that apply ``choices`` and the per-direction call audio report.
+
+    BlueFerry owns the call streams' target while a call runs: with "same
+    as system" any ``target.object`` is deleted, also one set by hand in a
+    mixer such as pavucontrol or Helvum.
+    """
+    commands: list[MetadataWrite] = []
     report: dict[str, dict[str, Any]] = {}
     for direction in DIRECTIONS:
         choice = choices.get(direction, Choice("", ORIGIN_SYSTEM))
@@ -307,9 +323,9 @@ def plan(
             current = graph.targets.get(stream.id)
             if target is not None:
                 if current != str(target.serial):
-                    commands.append(set_target_argv(stream, target))
+                    commands.append(MetadataWrite(stream, set_target_argv(stream, target)))
             elif current is not None:
-                commands.append(clear_target_argv(stream))
+                commands.append(MetadataWrite(stream, clear_target_argv(stream)))
             used = linked_device(graph, stream, direction)
             if used is not None:
                 entry["device"], entry["description"] = used.name, used.description
@@ -334,6 +350,54 @@ def read_graph(run: Run) -> Graph:
     """Run ``pw-dump`` (blocking; worker only)."""
     result = run(["pw-dump"], timeout=PW_DUMP_TIMEOUT_SEC)
     return parse_dump(result.stdout)
+
+
+def still_there(run: Run, stream: Node) -> bool:
+    """Whether ``stream``'s node ID still names the same stream.
+
+    PipeWire reuses global IDs. A stream that ended between the full dump
+    and the write could hand its ID to another node, so each write first
+    reads that one object again and compares ``object.serial`` (never
+    reused) and ``node.name``.
+    """
+    result = run(["pw-dump", str(stream.id)], timeout=PW_DUMP_TIMEOUT_SEC)
+    node = parse_dump(result.stdout).nodes.get(stream.id)
+    return node is not None and node.serial == stream.serial and node.name == stream.name
+
+
+def apply_writes(run: Run, writes: list[MetadataWrite]) -> tuple[int, int]:
+    """Run the writes whose stream is still there: (applied, failed). Worker only."""
+    applied = failed = 0
+    for write in writes:
+        try:
+            if not still_there(run, write.stream):
+                log.debug("call stream %d went away before its target was written",
+                          write.stream.id)
+                continue
+            run(write.argv, timeout=PW_METADATA_TIMEOUT_SEC)
+        except CommandError as error:
+            failed += 1
+            log.debug("could not write a call stream target: %s", error)
+        else:
+            applied += 1
+    return applied, failed
+
+
+def release_targets(run: Run, mac: str) -> int:
+    """Delete any ``target.object`` of the phone's call streams (worker only).
+
+    Run when calls are switched off, so the target WirePlumber remembers
+    for the phone's streams does not outlive the feature.
+    """
+    graph = read_graph(run)
+    writes = [
+        MetadataWrite(stream, clear_target_argv(stream))
+        for direction in DIRECTIONS
+        if (stream := call_stream(graph, mac, direction)) is not None
+        and stream.id in graph.targets
+    ]
+    applied, _failed = apply_writes(run, writes)
+    return applied
 
 
 class CallAudioRouter:
@@ -372,6 +436,7 @@ class CallAudioRouter:
         self._busy = False
         self._again = False
         self._fast_left = 0
+        self._failures = 0
 
     # ---- status ---------------------------------------------------------
 
@@ -469,6 +534,7 @@ class CallAudioRouter:
         # The caller announces the call change itself (CallsChanged), so the
         # state moves here without another notification.
         self._report = {}
+        self._failures = 0
         if not in_call:
             # A choice made during a call ends with the call.
             self._overrides.clear()
@@ -516,14 +582,11 @@ class CallAudioRouter:
         generation = self._generation
         choices, mac, run = self.choices(), self._mac, self._run
 
-        def job() -> tuple[dict[str, dict[str, Any]], int]:
+        def job() -> tuple[dict[str, dict[str, Any]], int, int]:
             graph = read_graph(run)
-            commands, report = plan(graph, mac, choices)
-            applied = 0
-            for argv in commands:
-                run(argv, timeout=PW_METADATA_TIMEOUT_SEC)
-                applied += 1
-            return report, applied
+            writes, report = plan(graph, mac, choices)
+            applied, failed = apply_writes(run, writes)
+            return report, applied, failed
 
         try:
             self._submit(
@@ -540,9 +603,13 @@ class CallAudioRouter:
         if generation != self._generation:
             return
         self._busy = False
-        report, applied = value if isinstance(value, tuple) else ({}, 0)
+        self._failures = 0
+        report, applied, failed = value if isinstance(value, tuple) else ({}, 0, 0)
         found = any(entry.get("stream") for entry in report.values())
-        if applied:
+        if failed:
+            # A write failed (the stream may be going away): look again soon.
+            self._fast_left = max(self._fast_left, FOLLOW_UP_CHECKS)
+        elif applied:
             log.info("moved the call audio to the chosen device (%d change(s))", applied)
             self._fast_left = FOLLOW_UP_CHECKS
         elif report and all(entry.get("stream") for entry in report.values()):
@@ -562,12 +629,36 @@ class CallAudioRouter:
         if generation != self._generation:
             return
         self._busy = False
+        self._failures += 1
+        missing = "is not installed" in str(error)
+        if not missing and self._failures < UNAVAILABLE_AFTER_FAILURES:
+            # One slow or failed pw-dump is not news: keep the last report
+            # and look again in a second.
+            log.debug("could not read PipeWire for the call audio: %s", error)
+            self._fast_left = max(self._fast_left, 1)
+            self._continue()
+            return
         # Logged once per call; pw-dump may simply not be installed.
         if self._state != STATE_UNAVAILABLE:
             log.warning("could not route the call audio: %s", error)
         self._report = {}
         self._set_state(STATE_UNAVAILABLE)
         self._continue()
+
+    def release(self) -> None:
+        """Calls were switched off: delete the call streams' targets, if any."""
+        run, mac = self._run, self._mac
+
+        def failed(error: Exception) -> None:
+            log.debug("could not release the call stream targets: %s", error)
+
+        try:
+            self._submit(
+                lambda: release_targets(run, mac), on_success=lambda _count: None,
+                on_error=failed,
+            )
+        except RuntimeError:
+            log.debug("call audio worker busy; targets not released", exc_info=True)
 
     def _continue(self) -> None:
         if self._again:
