@@ -257,7 +257,9 @@ recent app notifications, read only while open.
 `blueferry-tray` ships with the Qt client: a small separate process for the
 system tray (a StatusNotifierItem under KDE Plasma). Its phone icon carries
 the number of unread messages; the tooltip shows the connection, battery,
-signal, and network. Left-click opens the Qt client (or raises it). The tray
+signal, and network. Left-click opens the BlueFerry client you use, or
+raises it: a running one first, otherwise the one you used last, otherwise
+the one that suits your desktop. **Quit Tray Icon** closes only the tray item. The tray
 only talks to a running backend and never starts or restarts the daemon.
 While it runs, `blueferry-qt` leaves out its own tray icon.
 
@@ -700,8 +702,15 @@ What happens then:
   blueferry calls answer          # the ringing call
   blueferry calls dtmf 1234#      # tones on the active call
   blueferry calls hangup          # or: hangup --all
+  blueferry calls audio           # speaker/microphone for calls
   ```
 
+- Calls can use their own speaker and microphone (**Speaker for calls** and
+  **Microphone for calls** in the settings, `blueferry calls audio output|input
+  <node name>|system`), and each running call can be switched to another
+  device for that call only. Other sound and the system defaults stay as
+  they are; a chosen device that is not connected falls back to the system's
+  device. See [Call speaker and microphone](docs/en/user/calls.md#call-speaker-and-microphone).
 - `dial` accepts plain numbers only (an optional leading `+` and digits;
   spaces, dashes, dots, parentheses, and slashes are ignored). `*` and `#`
   are refused: dialed, they form service codes such as `**21*…#` that
