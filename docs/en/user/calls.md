@@ -136,10 +136,10 @@ after a call is answered or dialed; until then the call view shows
 WirePlumber remembers the last device of the call streams in
 `~/.local/state/wireplumber/stream-properties` (a line starting with
 `Output/Audio:node.name:bluez_input.<MAC>` or `Input/Audio:…bluez_output.<MAC>`)
-and uses it again on the next call. BlueFerry corrects that on every call
-and clears it when calls are switched off during a call. If calls stay
-off and a remembered device still applies, delete those lines while
-WirePlumber is not running.
+and uses it again on the next call. BlueFerry corrects that on every call,
+and when calls are switched off it deletes it once more if the call
+streams still exist. If calls stay off and a remembered device still
+applies, delete those lines while WirePlumber is not running.
 
 ## Phone links
 
