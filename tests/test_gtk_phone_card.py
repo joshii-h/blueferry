@@ -168,6 +168,22 @@ def _window(status=None, *, width=940, timer=None):
     return window, client
 
 
+def _recording(factory):
+    """A timer factory that remembers which callback each timer runs."""
+    made = []
+
+    def timer(callback):
+        made.append((callback, factory(callback)))
+        return made[-1][1]
+
+    return timer, made
+
+
+def _timer_for(made, callback):
+    [timer] = [timer for owner, timer in made if owner == callback]
+    return timer
+
+
 def _settle():
     import time
 
@@ -575,9 +591,10 @@ def _exercise_notifications():
     from tests.client_fakes import ManualRunner
 
     runner = ManualRunner()
-    window, client = _window({"daemon": True, "map": True}, timer=runner.timer)
+    factory, made = _recording(runner.timer)
+    window, client = _window({"daemon": True, "map": True}, timer=factory)
     page = window.notifications
-    timer = page.history._timer
+    timer = _timer_for(made, page.history.refresh)
     assert "notifications" not in client.names(), "hidden tab: nothing is read"
     window.show_tab("notifications")
     _settle()
@@ -630,12 +647,15 @@ def _exercise_notifications():
 
 def _exercise_close():
     # With the real GLib timer: closing the window removes the armed source.
-    window, client = _window(NOTIFICATIONS_ON)
+    from blueferry.ui.util import glib_timer
+
+    factory, made = _recording(glib_timer)
+    window, client = _window(NOTIFICATIONS_ON, timer=factory)
     window.show_tab("notifications")
     _settle()
     client.take("notifications")[1]({"enabled": True, "content": True, "notifications": []})
     client.emit("notifications-changed")
-    timer = window.notifications.history._timer
+    timer = _timer_for(made, window.notifications.history.refresh)
     assert timer.active
     window.close()
     _settle()
@@ -721,9 +741,10 @@ def _exercise_pins():
 
     runner = ManualRunner()
     status = {**NOTIFICATIONS_ON, "notification_muted_app_count": 1}
-    window, client = _window(status, timer=runner.timer)
+    factory, made = _recording(runner.timer)
+    window, client = _window(status, timer=factory)
     page = window.notifications
-    timer = page.history._timer
+    timer = _timer_for(made, page.history.refresh)
     toasts = []
     page._toast = toasts.append
     assert "apps" not in client.names(), "hidden tab: the muted apps are not read"
