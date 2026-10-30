@@ -514,6 +514,8 @@ ModalScreen {
 
 #calls-dialog {
     width: 90;
+    /* A ringing call next to a running one shows every row at once. */
+    overflow-y: auto;
 }
 
 #calls-dialog .dialog-actions Button {
@@ -824,12 +826,14 @@ ModalScreen {
 
 #calls-reply-row, #calls-mute-row {
     height: auto;
-    margin-top: 1;
 }
 
 #calls-mute-hint {
     width: 1fr;
-    padding: 1 1 0 1;
+    height: 3;
+    padding: 0 1;
+    content-align-vertical: middle;
+    color: #cbd5e1;
 }
 
 #calls-reply-dialog {

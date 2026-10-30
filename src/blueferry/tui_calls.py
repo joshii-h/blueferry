@@ -358,7 +358,7 @@ class CallsScreen(ModalScreen[None]):
                 yield Static("", id="calls-audio-text", classes="dialog-copy")
                 with Horizontal(id="calls-mute-row"):
                     yield Button(call_audio_view.mute_label(False), id="calls-mute")
-                    yield Static("", id="calls-mute-hint", classes="dialog-copy")
+                    yield Static("", id="calls-mute-hint")
             yield Static(_("Number or name"), classes="field-label")
             yield Input(
                 value=self._initial_number, placeholder="+1 555 123 4567",
