@@ -592,9 +592,12 @@ def _exercise_quick_replies():
     # Add: validated as typed, saved, and the field cleared once accepted.
     editor.add_row.set_text("   ")
     assert not editor.add_button.get_sensitive()
+    # The presenter's limit caps what can be typed.
     editor.add_row.set_text("x" * 161)
+    assert editor.add_row.get_text() == "x" * 160
+    editor.add_row.set_text("bad\tline")
     assert editor.add_row.has_css_class("error")
-    assert editor.add_row.get_tooltip_text() == "A reply can have at most 160 characters."
+    assert editor.add_row.get_tooltip_text() == "A reply must be a single line."
     assert not editor.add_button.get_sensitive()
     editor.add_row.set_text("<b>Busy</b>")
     assert not editor.add_row.has_css_class("error") and editor.add_button.get_sensitive()
@@ -605,6 +608,9 @@ def _exercise_quick_replies():
     assert editor.replies == ["<b>Busy</b>"] and editor.add_row.get_text() == ""
     assert [row.get_text() for row in editor.rows] == ["<b>Busy</b>"]
     assert editor.rows[0].get_use_markup() is False and not editor.empty_row.get_visible()
+    editor.rows[0].set_text("y" * 200)
+    assert editor.rows[0].get_text() == "y" * 160
+    editor.rows[0].set_text("<b>Busy</b>")
 
     # A duplicate is refused before it is sent.
     editor.add_row.set_text("<b>Busy</b>")

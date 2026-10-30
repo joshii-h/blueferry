@@ -9,7 +9,7 @@ which the Qt and terminal clients share; the daemon validates again.
 """
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from gi.repository import Adw, Gtk
@@ -21,13 +21,14 @@ from blueferry.i18n import _
 class DeclineMessageMenu:
     """A menu button: pick a saved reply or type one, then ``send(text)``.
 
-    ``draft`` puts back an own text typed before the row was rebuilt;
-    ``on_draft`` follows every change of it.
+    ``view`` is ``quick_reply_view.dialog_view``. ``draft`` puts back an own
+    text typed before the row was rebuilt; ``on_draft`` follows the user's
+    changes of it (not the initial text).
     """
 
     def __init__(
         self,
-        choices: Sequence[Mapping[str, str]],
+        view: Mapping[str, Any],
         send: Callable[[str], None],
         *,
         draft: str = "",
@@ -41,16 +42,16 @@ class DeclineMessageMenu:
             margin_top=6, margin_bottom=6, margin_start=6, margin_end=6,
         )
         content.append(Gtk.Label(
-            label=quick_reply_view.dialog_title(), use_markup=False, xalign=0,
+            label=str(view.get("title") or ""), use_markup=False, xalign=0,
             css_classes=["heading"],
         ))
         self.list = Gtk.ListBox(
             css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE,
         )
         self.reply_rows: list[Adw.ActionRow] = []
-        for choice in choices:
+        for choice in view.get("choices") or []:
             value = str(choice.get("value") or "")
-            if value == quick_reply_view.CUSTOM or not value:
+            if value == view.get("custom") or not value:
                 continue
             row = Adw.ActionRow(
                 title=str(choice.get("label") or value), use_markup=False, activatable=True,
@@ -58,9 +59,9 @@ class DeclineMessageMenu:
             row.connect("activated", lambda _row, text=value: self._choose(text))
             self.list.append(row)
             self.reply_rows.append(row)
-        self.custom = Adw.EntryRow(title=quick_reply_view.custom_placeholder(), use_markup=False)
+        self.custom = Adw.EntryRow(title=str(view.get("placeholder") or ""), use_markup=False)
+        _limit(self.custom, view.get("max_chars"))
         self.custom.set_text(draft)
-        self.custom.connect("changed", self._custom_changed)
         self.custom.connect("entry-activated", lambda _row: self.send_custom())
         self.send_button = Gtk.Button(
             icon_name="mail-send-symbolic", tooltip_text=label, valign=Gtk.Align.CENTER,
@@ -81,7 +82,9 @@ class DeclineMessageMenu:
             valign=Gtk.Align.CENTER, css_classes=["circular", "flat"], popover=self.popover,
         )
         self.button.update_property([Gtk.AccessibleProperty.LABEL], [label])
-        self._custom_changed(self.custom)
+        self._render_custom()
+        # Connected last: putting back the draft is not a change by the user.
+        self.custom.connect("changed", self._custom_changed)
 
     def send_custom(self) -> None:
         text = self.custom.get_text()
@@ -96,11 +99,14 @@ class DeclineMessageMenu:
         self._send(text)
 
     def _custom_changed(self, row: Adw.EntryRow) -> None:
-        text = row.get_text()
+        self._render_custom()
+        self._on_draft(row.get_text())
+
+    def _render_custom(self) -> None:
+        text = self.custom.get_text()
         self.send_button.set_sensitive(bool(text.strip()))
         if text.strip():
             self.error.set_visible(False)
-        self._on_draft(text)
 
 
 class QuickRepliesEditor:
@@ -132,6 +138,8 @@ class QuickRepliesEditor:
         self.empty_row.add_css_class("dim-label")
         self.group.add(self.empty_row)
         self.add_row = Adw.EntryRow(title=view["add_label"], use_markup=False)
+        self._max_chars = view["max_chars"]
+        _limit(self.add_row, self._max_chars)
         self.add_button = Gtk.Button(
             icon_name="list-add-symbolic", tooltip_text=view["add_label"],
             valign=Gtk.Align.CENTER, css_classes=["flat"],
@@ -217,6 +225,7 @@ class QuickRepliesEditor:
         self.group.remove(self.add_row)
         for index, text in enumerate(self.replies):
             row = Adw.EntryRow(use_markup=False, show_apply_button=True)
+            _limit(row, self._max_chars)
             row.set_text(text)
             row.update_property([Gtk.AccessibleProperty.LABEL], [text])
             row.connect("apply", lambda _row, index=index: self.edit(index))
@@ -254,6 +263,21 @@ class QuickRepliesEditor:
             row.set_sensitive(editable)
         self.add_row.set_sensitive(editable)
         self._render_add()
+
+
+def _limit(row: Adw.EntryRow, max_chars: object) -> None:
+    """Cap what can be typed; Adw.EntryRow:max-length needs libadwaita 1.6."""
+    if not isinstance(max_chars, int) or max_chars <= 0:
+        return
+
+    def changed(entry: Adw.EntryRow) -> None:
+        text = entry.get_text()
+        if len(text) > max_chars:
+            position = min(entry.get_position(), max_chars)
+            entry.set_text(text[:max_chars])  # runs the handlers again, capped
+            entry.set_position(position)
+
+    row.connect("changed", changed)
 
 
 def _mark(row: Adw.EntryRow, error: str) -> None:

@@ -698,6 +698,9 @@ def _exercise_decline_message():
     assert [row.get_title() for row in menu.reply_rows] == ["<b>Busy</b>", "Later"]
     assert all(row.get_use_markup() is False for row in menu.reply_rows)
     assert menu.custom.get_title() == "Message to the caller"
+    menu.custom.set_text("z" * 1001)
+    assert menu.custom.get_text() == "z" * 1000
+    menu.custom.set_text("")
     # A saved reply declines and sends it.
     menu.reply_rows[0].emit("activated")
     assert not buttons[0].get_sensitive() and not buttons[1].get_sensitive()
@@ -724,7 +727,27 @@ def _exercise_decline_message():
     assert toasts[-1] == "The call was declined, but the message could not be sent"
     client.take("list-calls")[1](CallsSnapshot.from_dict({"state": "ready", "calls": [
         {**ringing, "state": "active"}]}))
-    assert running.decline_menus == {} and running._reply_draft == ""
+    assert running.decline_menus == {} and running._reply_drafts == {}
+    # Two ringing calls: each menu keeps its own draft.
+    second = {**ringing, "call_id": "voicecall02", "state": "waiting",
+              "number": "+41790000002"}
+    client.emit("calls-changed")
+    client.take("list-calls")[1](CallsSnapshot.from_dict({"state": "ready", "calls": [
+        ringing, second]}))
+    running.decline_menus["voicecall02"].custom.set_text("Second")
+    running.decline_menus["voicecall01"].custom.set_text("First")
+    client.emit("calls-changed")
+    client.take("list-calls")[1](CallsSnapshot.from_dict({"state": "ready", "calls": [
+        ringing, second]}))
+    assert running.decline_menus["voicecall01"].custom.get_text() == "First"
+    assert running.decline_menus["voicecall02"].custom.get_text() == "Second"
+    assert running._reply_drafts == {"voicecall01": "First", "voicecall02": "Second"}
+    client.emit("calls-changed")
+    client.take("list-calls")[1](CallsSnapshot.from_dict({"state": "ready", "calls": [second]}))
+    assert running._reply_drafts == {"voicecall02": "Second"}
+    client.emit("calls-changed")
+    client.take("list-calls")[1](CallsSnapshot.from_dict({"state": "ready", "calls": []}))
+    assert running._reply_drafts == {}
     # No saved replies: only the own text.
     client.answer_status({**CALLS_READY, "calls_quick_replies": []})
     client.emit("calls-changed")

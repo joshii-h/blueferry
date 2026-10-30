@@ -102,11 +102,10 @@ class RunningCalls(Gtk.ListBox):
         self.mute_row = Adw.ActionRow(use_markup=False, activatable_widget=self.mute_button)
         self.mute_row.add_suffix(self.mute_button)
         self._applying_mute = False
-        # Decline with message: the menu of each ringing call and the own
-        # text typed so far (kept across re-renders, like the tones).
+        # Decline with message: the menu of each ringing call and, per call,
+        # the own text typed so far (kept across re-renders, like the tones).
         self.decline_menus: dict[str, DeclineMessageMenu] = {}
-        self._reply_call = ""
-        self._reply_draft = ""
+        self._reply_drafts: dict[str, str] = {}
         client.connect("calls-changed", lambda _c: self._read.refresh())
 
     # ---- the page's side -----------------------------------------------
@@ -213,8 +212,7 @@ class RunningCalls(Gtk.ListBox):
         """Decline a ringing call and send ``text`` to the caller."""
         def request(done, failed) -> None:
             def sent(value: object) -> None:
-                if call_id == self._reply_call:
-                    self._reply_draft = ""
+                self._reply_drafts.pop(call_id, None)
                 self._toast(quick_reply_view.sent_text())
                 done(value)
 
@@ -300,8 +298,11 @@ class RunningCalls(Gtk.ListBox):
                     self.append(row.row)
                 self.append(self.mute_row)
                 self.append(self.audio_hint)
-        if self._reply_call not in self.decline_menus:
-            self._reply_call = self._reply_draft = ""  # that call stopped ringing
+        # Drafts of calls that stopped ringing go.
+        self._reply_drafts = {
+            call_id: text for call_id, text in self._reply_drafts.items()
+            if call_id in self.decline_menus
+        }
         self._render_audio()
         self.set_visible(bool(self.calls))
         self._refresh_avatars()
@@ -337,15 +338,13 @@ class RunningCalls(Gtk.ListBox):
         return row
 
     def _decline_menu(self, call_id: str) -> Gtk.MenuButton:
-        draft = self._reply_draft if call_id == self._reply_call else ""
-
         def typed(text: str) -> None:
-            self._reply_call, self._reply_draft = call_id, text
+            self._reply_drafts[call_id] = text
 
         menu = DeclineMessageMenu(
-            quick_reply_view.choices(self._status),
+            quick_reply_view.dialog_view(self._status),
             lambda text: self.decline_with_message(call_id, text),
-            draft=draft, on_draft=typed,
+            draft=self._reply_drafts.get(call_id, ""), on_draft=typed,
         )
         self.decline_menus[call_id] = menu
         return menu.button
