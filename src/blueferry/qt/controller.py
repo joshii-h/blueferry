@@ -12,6 +12,7 @@ from PySide6.QtCore import (
     QObject,
     QThreadPool,
     QTimer,
+    QUrl,
     Signal,
     Slot,
 )
@@ -646,7 +647,6 @@ class BridgeController(QObject):
 
     @Slot()
     def filePairingIssue(self) -> None:
-        from PySide6.QtCore import QUrl
         from PySide6.QtGui import QDesktopServices
 
         QDesktopServices.openUrl(QUrl(issue_url(self._pairing_issue_report or None)))
@@ -762,8 +762,6 @@ class BridgeController(QObject):
         # QML gets a proper file URL (spaces, non-ASCII home directories).
         cover = snapshot.pop("cover", None)
         if isinstance(cover, str) and cover.startswith("/") and "\0" not in cover:
-            from PySide6.QtCore import QUrl
-
             snapshot["cover_url"] = QUrl.fromLocalFile(cover).toString(
                 QUrl.ComponentFormattingOption.FullyEncoded)
         if snapshot != self._now_playing:

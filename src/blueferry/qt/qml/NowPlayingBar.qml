@@ -59,9 +59,10 @@ Controls.ToolBar {
             Layout.preferredWidth: Kirigami.Units.gridUnit * 3
             Layout.preferredHeight: Kirigami.Units.gridUnit * 3
             Layout.alignment: Qt.AlignVCenter
-            // The phone sends 200x200 thumbnails; never decode more.
-            sourceSize.width: 256
-            sourceSize.height: 256
+            // Decode only what is shown (3 grid units, also on 2x screens),
+            // whatever size the file has.
+            sourceSize.width: 128
+            sourceSize.height: 128
             fillMode: Image.PreserveAspectCrop
             asynchronous: true
             // Every new image has a new file name; nothing to keep.
