@@ -16,7 +16,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 
-from gi.repository import Gdk, GLib, Gtk, Pango
+from gi.repository import Gdk, GdkPixbuf, GLib, Gtk, Pango
 
 from blueferry import phone_link_view
 from blueferry import phone_overview as overview
@@ -298,7 +298,10 @@ class PhoneCard(Gtk.Box):
 
         def work() -> None:
             try:
-                texture: Gdk.Texture | None = Gdk.Texture.new_from_filename(path)
+                # Decode at the shown size (2x for HiDPI), whatever the file has.
+                size = COVER_PIXELS * 2
+                pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(path, size, size, True)
+                texture: Gdk.Texture | None = Gdk.Texture.new_for_pixbuf(pixbuf)
             except Exception:
                 # Removed with its session, or not an image after all.
                 texture = None

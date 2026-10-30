@@ -273,7 +273,8 @@ def _exercise_card():
 
     from gi.repository import GdkPixbuf
 
-    cover = Path(tempfile.mkdtemp()) / "cover-abc-1000001.jpg"
+    cover_dir = tempfile.TemporaryDirectory()
+    cover = Path(cover_dir.name) / "cover-abc-1000001.jpg"
     pixbuf = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, False, 8, 200, 200)
     pixbuf.fill(0xC0392BFF)
     pixbuf.savev(str(cover), "jpeg", [], [])
@@ -304,6 +305,7 @@ def _exercise_card():
     for _ in range(50):
         _settle()
     assert card.media_icon.get_visible() and not card.media_cover.get_visible()
+    cover_dir.cleanup()
     # A refused command says why and reads the player again.
     toasts = []
     window.toast = toasts.append
