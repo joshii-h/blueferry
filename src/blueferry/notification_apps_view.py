@@ -87,6 +87,11 @@ def is_muted(app_id: object, payload: object) -> bool:
     return isinstance(app_id, str) and app_id in muted_ids(payload)
 
 
+def muted_label() -> str:
+    """The short mark for a muted app's rows and notifications."""
+    return _("Muted")
+
+
 def section_label() -> str:
     return _("Muted apps")
 
@@ -124,7 +129,7 @@ def app_rows(payload: object) -> list[dict[str, Any]]:
         if app["app_name"]:
             details.append(app["app_id"])
         if app["muted"]:
-            details.append(_("Muted"))
+            details.append(muted_label())
         if not app["seen"]:
             details.append(_("No notification since BlueFerry started"))
         rows.append({
