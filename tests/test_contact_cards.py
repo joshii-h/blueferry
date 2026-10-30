@@ -1,4 +1,4 @@
-"""Contact cards: vCard details, sealed storage, ids, paging and operations."""
+"""Contact cards: vCard details, sealed storage, ids, paging, operations, CLI."""
 from __future__ import annotations
 
 import json
@@ -6,9 +6,11 @@ import sqlite3
 from contextlib import closing
 
 import pytest
+from typer.testing import CliRunner
 
-from blueferry import config
+from blueferry import cli_contacts, config
 from blueferry.backend_operations import BackendDependencies, BackendOperations
+from blueferry.cli import app
 from blueferry.contact_details import (
     EMPTY,
     ContactDetails,
@@ -319,3 +321,62 @@ def test_card_methods_need_a_contact_cache() -> None:
     with pytest.raises(NotReadyError):
         operations.contact_card("0" * 18)
     assert "contact_card_count" not in operations.status()
+
+
+# ---- CLI -----------------------------------------------------------------------
+
+class _Client:
+    def __init__(self, cards, document=None, photo=b""):
+        self.cards, self.document, self.photo = cards, document, photo
+        self.queries: list[tuple[int, int, str]] = []
+
+    def contact_cards(self, offset=0, limit=100, query=""):
+        self.queries.append((offset, limit, query))
+        rows = [card for card in self.cards if query.casefold() in card["name"].casefold()]
+        return {"contacts": rows[offset:offset + limit], "total": len(rows),
+                "offset": offset, "query": query}
+
+    def contact(self, contact_id):
+        return self.document, self.photo
+
+
+def _row(card_id, name, **extra):
+    return {"id": card_id, "name": name, "organization": "", "primary": "+15551112222",
+            "phone_count": 1, "email_count": 0, "address_count": 0, "has_photo": False,
+            **extra}
+
+
+def test_cli_lists_cards_with_escaped_names(monkeypatch) -> None:
+    client = _Client([_row("a" * 18, "Alice\x1b[31m"), _row("b" * 18, "Bob")])
+    monkeypatch.setattr(cli_contacts, "BackendClient", lambda: client)
+    result = CliRunner().invoke(app, ["contacts", "list", "--limit", "1", "--all"])
+    assert result.exit_code == 0, result.output
+    assert "aaaaaaaaaaaaaaaaaa  Alice" in result.output and "\x1b[31m" not in result.output
+    assert "Bob" in result.output and "2 contacts" in result.output
+    assert client.queries == [(0, 1, ""), (1, 1, "")]
+    empty = CliRunner().invoke(app, ["contacts", "list", "-q", "zed"])
+    assert "No contact matches" in empty.output
+
+
+def test_cli_shows_a_card_by_name_and_writes_the_photo(monkeypatch, tmp_path) -> None:
+    document = {
+        "id": "a" * 18, "name": "Alice", "organization": "Corp", "title": "Boss",
+        "phones": [{"kind": "mobile", "label": "", "value": "+1 555", "number": "+1555"}],
+        "emails": [{"kind": "custom", "label": "Club", "value": "a@example.com"}],
+        "addresses": [{"kind": "home", "label": "", "street": "1 Road", "locality": "Zug",
+                       "postal_code": "6300"}],
+        "has_photo": True, "photo_retry": False,
+    }
+    client = _Client([_row("a" * 18, "Alice"), _row("b" * 18, "Bobbie")], document, JPEG)
+    monkeypatch.setattr(cli_contacts, "BackendClient", lambda: client)
+    target = tmp_path / "alice.jpg"
+    result = CliRunner().invoke(app, ["contacts", "show", "ali", "--photo", str(target)])
+    assert result.exit_code == 0, result.output
+    assert "Boss · Corp" in result.output
+    assert "Mobile: +1 555" in result.output and "Club: a@example.com" in result.output
+    assert "1 Road" in result.output and "6300 Zug" in result.output
+    assert target.read_bytes() == JPEG
+    ambiguous = CliRunner().invoke(app, ["contacts", "show", "e"])
+    assert ambiguous.exit_code == 2 and "use an id" in ambiguous.output
+    missing = CliRunner().invoke(app, ["contacts", "show", "zed"])
+    assert missing.exit_code == 1
