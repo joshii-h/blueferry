@@ -16,6 +16,7 @@ def test_presenter_rows_hint_and_helpers() -> None:
     }
     assert rows[1]["name"] == "com.example.Bare" and rows[1]["toggle_label"] == "Mute"
     assert "since BlueFerry started" in rows[1]["subtitle"]
+    assert view.muted_label() == "Muted"
     assert view.muted_ids(raw) == frozenset({"com.example.Chat"})
     assert view.is_muted("com.example.Chat", raw) and not view.is_muted("com.example.Bare", raw)
     assert "BLOCKLIST" in view.apps_hint(raw)
