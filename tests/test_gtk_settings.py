@@ -55,6 +55,9 @@ class FakeClient:
     def unlock_storage_async(self, *_args):
         pass
 
+    def get_tether_async(self, *_args):
+        pass  # the Internet Sharing group stays as without Tether1
+
     def features_async(self, on_ok, on_err=None):
         self.calls.append(("features", on_ok, on_err))
 
