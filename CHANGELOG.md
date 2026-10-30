@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Cover art of the iPhone's current track over AVRCP (Basic Imaging Profile),
+  shown in the Qt and GTK clients, reported as `cover` in `GetNowPlaying` and
+  `phone_media_cover` in `GetStatus`, and published as MPRIS `mpris:artUrl`.
+  Images stay local in an owner-only cache; part of the media-control opt-in.
+
 ## [0.9.0](https://github.com/erikwb/blueferry/releases/tag/v0.9.0) - 2026-10-27
 
 ### Added
