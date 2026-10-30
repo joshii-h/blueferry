@@ -169,7 +169,8 @@ _PHASE_HELD = "held"
 _DECLINE_MESSAGE_ACTION = "decline-message"
 _INLINE_REPLY_ACTION = "inline-reply"
 _REPLY_LABEL_CHARS = 32
-# A typed reply larger than this is ignored (the daemon checks the body too).
+# A typed reply larger than this is refused with a notice
+# (quick_reply_view.MAX_CUSTOM_CHARS, the limit of every client).
 _MAX_INLINE_REPLY_CHARS = 1000
 # Buttons a popup offers in each phase. A click is honored only while the
 # popup still shows that phase, so a late "decline" on a replaced ringing
@@ -1181,21 +1182,36 @@ class LibnotifySink:
             return
         call_id = getattr(self, "_call_notifications", {}).get(nid_i)
         reply = str(text).strip() if isinstance(text, str) else ""
-        if call_id is None or not reply or len(reply) > _MAX_INLINE_REPLY_CHARS:
+        if call_id is None or not reply:
+            return
+        if len(reply) > _MAX_INLINE_REPLY_CHARS:
+            # Never cut a message silently; the call keeps ringing.
+            self.handle_call_reply_failed(declined=False, too_long=True)
             return
         self._decline_with_message(call_id, reply)
 
-    def handle_call_reply_failed(self) -> None:
-        """A call declined from its popup kept the reply unsent."""
+    def handle_call_reply_failed(self, declined: bool = True, too_long: bool = False) -> None:
+        """A reply from a ringing popup was not sent (content-free notice).
+
+        ``declined`` tells whether the call was declined anyway; without it
+        the call keeps ringing.
+        """
         if self._policy() == NO_NOTIFICATIONS:
             return
+        if too_long:
+            body = (f"The message is longer than {_MAX_INLINE_REPLY_CHARS} characters; "
+                    "the call was not declined.")
+        elif declined:
+            body = "The call was declined, but the message to the caller was not sent."
+        else:
+            body = "The message could not be sent, so the call was not declined."
         try:
             self._notif.Notify(
                 _APP_NAME,
                 dbus.UInt32(0),
                 "dialog-warning",
                 "\U0001f4de Message not sent",
-                "The call was declined, but the message to the caller was not sent.",
+                body,
                 dbus.Array([], signature="s"),
                 dbus.Dictionary({"urgency": dbus.Byte(1)}, signature="sv"),
                 dbus.Int32(config.NOTIFICATION_TIMEOUT_MS),

@@ -763,13 +763,14 @@ class Daemon:
             # Never log the text or the number; the type says enough.
             suffix = getattr(error, "dbus_suffix", type(error).__name__)
             log.info("declining with a message from a notification failed (%s)", suffix)
-            if isinstance(error, DeclinedNotSentError):
-                self.events.call_reply_failed()
+            # Either way the user pressed a button and expects an answer.
+            self.events.call_reply_failed(declined=isinstance(error, DeclinedNotSentError))
 
         try:
             operations.decline_with_message(call_id, text, lambda _result: None, failed)
         except BlueFerryError as error:
             log.info("could not decline with a message (%s)", error.dbus_suffix)
+            self.events.call_reply_failed(declined=False)
 
     def _phone_status(self) -> dict[str, object]:
         """GetStatus keys for the phone's battery, signal and network.

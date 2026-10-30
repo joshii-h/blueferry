@@ -344,11 +344,27 @@ def test_popup_decline_with_message_uses_the_backend_and_reports_unsent(make_dae
             failure(DeclinedNotSentError(RuntimeError("timeout")))
 
     instance._dbus_service = type("Service", (), {"operations": Operations()})()
-    instance.events.call_reply_failed = lambda: announced.append(1)
+    instance.events.call_reply_failed = lambda declined=True: announced.append(declined)
 
     instance._notification_call_action("voicecall01", "decline-message", "Later")
 
-    assert calls == [("voicecall01", "Later")] and announced == [1]
+    assert calls == [("voicecall01", "Later")] and announced == [True]
+
+
+def test_popup_reply_refused_before_declining_is_announced(make_daemon) -> None:
+    instance = make_daemon()
+    announced: list[bool] = []
+
+    class Operations:
+        def decline_with_message(self, _call_id, _text, _success, _failure):
+            raise NotReadyError("MAP session not open")
+
+    instance._dbus_service = type("Service", (), {"operations": Operations()})()
+    instance.events.call_reply_failed = lambda declined=True: announced.append(declined)
+
+    instance._notification_call_action("voicecall01", "decline-message", "Later")
+
+    assert announced == [False]
 
 
 def test_popup_replies_are_empty_while_calls_are_off(make_daemon) -> None:

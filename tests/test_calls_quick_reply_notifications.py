@@ -77,3 +77,22 @@ def test_a_failed_reply_from_a_popup_is_announced_without_content() -> None:
     quiet._notification_policy = lambda: "none"
     quiet.handle_call_reply_failed()
     assert quiet._notif.calls == []
+
+
+def test_an_overlong_inline_reply_is_refused_with_a_notice() -> None:
+    sink, actions = _reply_sink(inline=True)
+    sink.handle_call(CallEvent("call_incoming", _record()))
+
+    sink._on_replied(41, "x" * 1001)
+
+    assert actions == []
+    notice = sink._notif.calls[-1]
+    assert "1000" in notice[4] and "not declined" in notice[4]
+
+
+def test_the_failure_notice_says_whether_the_call_was_declined() -> None:
+    sink, _actions = _reply_sink()
+
+    sink.handle_call_reply_failed(declined=False)
+
+    assert "not declined" in sink._notif.calls[0][4]

@@ -366,9 +366,16 @@ class EventDispatcher:
             except Exception:
                 log.exception("sink %s failed in %s", sink.name, method)
 
-    def call_reply_failed(self) -> None:
-        """A call declined from a popup kept its reply unsent; tell the user."""
-        self._fan_out("handle_call_reply_failed")
+    def call_reply_failed(self, declined: bool = True) -> None:
+        """A reply from a ringing popup was not sent; tell the user."""
+        for sink in self.sinks:
+            handler = getattr(sink, "handle_call_reply_failed", None)
+            if handler is None:
+                continue
+            try:
+                handler(declined=declined)
+            except Exception:
+                log.exception("sink %s failed in handle_call_reply_failed", sink.name)
 
     def notification_policy_changed(self) -> None:
         """Let sinks apply a new notification policy to popups already open."""
