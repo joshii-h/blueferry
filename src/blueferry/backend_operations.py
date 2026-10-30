@@ -71,6 +71,7 @@ from blueferry.obex.map_send import send_group_message, send_message
 from blueferry.protocol import MESSAGES_API_VERSION
 from blueferry.recipients import InvalidRecipient, group_confirmation_token, validate_recipient
 from blueferry.storage_security import (
+    NO_STORAGE,
     STORAGE_POLICIES,
     CorruptStorageError,
     StorageSecurity,
@@ -1483,9 +1484,7 @@ class BackendOperations:
         log_ = self.dependencies.notification_log
         if log_ is None:
             return {"enabled": False, "content": False, "notifications": []}
-        storage = self.dependencies.storage
-        if storage is not None and not storage.status.can_read:
-            raise NotReadyError(storage.status.detail or "local history is locked")
+        self._require_notification_storage()
         bounded = max(1, min(int(limit), MAX_NOTIFICATION_QUERY_LIMIT))
         return {
             "enabled": True,
@@ -1502,9 +1501,7 @@ class BackendOperations:
                 "the notification list is off; turn it on with "
                 "'blueferry features on notification_history'"
             )
-        storage = self.dependencies.storage
-        if storage is not None and not storage.status.can_read:
-            raise NotReadyError(storage.status.detail or "local history is locked")
+        self._require_notification_storage()
         try:
             return log_.set_pinned(str(key), bool(pinned))
         except KeyError:
@@ -1515,6 +1512,15 @@ class BackendOperations:
             raise InvalidArgumentsError(str(error)) from error
         except StorageUnavailableError as error:
             raise NotReadyError(str(error) or "local history is locked") from error
+
+    def _require_notification_storage(self) -> None:
+        """Fail closed while stored pins are locked; ``none`` keeps them in memory."""
+        storage = self.dependencies.storage
+        if storage is None:
+            return
+        status = storage.status
+        if status.policy != NO_STORAGE and not status.can_read:
+            raise NotReadyError(status.detail or "local history is locked")
 
     def get_features(self) -> dict[str, dict[str, Any]]:
         """The allowlisted local.env switches and where each value comes from."""

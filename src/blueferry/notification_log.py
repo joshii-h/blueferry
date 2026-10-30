@@ -230,6 +230,13 @@ class NotificationLog:
         if had:
             self._notify()
 
+    def storage_changed(self) -> None:
+        """Load pins an unlock made readable and let open clients list again."""
+        self._ensure_pins_loaded()
+        if self._pins_dirty:
+            self._persist()
+        self._notify()
+
     def clear(self) -> None:
         """Forget every record, pinned ones included, also on disk."""
         if self._store is not None:
