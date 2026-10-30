@@ -6,7 +6,7 @@ from collections import deque
 from collections.abc import Callable, Iterable
 from functools import partial
 from pathlib import Path
-from typing import ClassVar, Protocol
+from typing import Any, ClassVar, Protocol
 
 from gi.repository import GLib
 from rich.text import Text
@@ -30,7 +30,13 @@ from textual.widgets import (
     TextArea,
 )
 
-from blueferry import config, doctor_report, phone_link_view, phone_overview
+from blueferry import (
+    config,
+    doctor_report,
+    media_volume_view,
+    phone_link_view,
+    phone_overview,
+)
 from blueferry.backend_lifecycle import BackendLifecycleError, ensure_backend_current
 from blueferry.bus import get_session_bus
 from blueferry.client import BackendClient, BackendError, TetherUnsupportedError
@@ -74,6 +80,7 @@ from blueferry.tui_phone import (
     RecentCallsScreen,
     load_phone_name,
     now_playing_text,
+    volume_controls,
 )
 
 _REFRESH_SECONDS = 15.0
@@ -690,7 +697,10 @@ class HelpScreen(ModalScreen[None]):
         if self.call_history:
             calls_line += "[bold #7dd3fc]Recent calls · refresh from iPhone[/]  h · s\n"
         if self.media_control:
-            calls_line += "[bold #7dd3fc]iPhone play/pause · previous · next[/]  p \\[ ]\n"
+            calls_line += (
+                "[bold #7dd3fc]iPhone play/pause · previous · next · volume down/up[/]"
+                "  p \\[ ] - +\n"
+            )
         help_text = Text.from_markup(
             "[bold #7dd3fc]Move[/]  ↑ ↓ or j k\n"
             "[bold #7dd3fc]Open / reply[/]  Enter\n"
@@ -905,6 +915,8 @@ class BlueFerryApp(App[None]):
         Binding("p", "media('toggle')", "Play/Pause", show=False),
         Binding("left_square_bracket", "media('previous')", "Previous track", show=False),
         Binding("right_square_bracket", "media('next')", "Next track", show=False),
+        Binding("minus", "volume('down')", "iPhone volume down", show=False),
+        Binding("plus,equals_sign", "volume('up')", "iPhone volume up", show=False),
         Binding("escape", "return_to_list", "Back", show=False),
     ]
 
@@ -933,6 +945,7 @@ class BlueFerryApp(App[None]):
         self._deleting = False
         self._announced_calls: set[str] = set()
         self.now_playing = phone_overview.now_playing(None)
+        self.volume = volume_controls(None)
         self._now_playing_key: tuple[bool, bool] | None = None
         self._media_generation = 0
         self._media_loading = False
@@ -1549,6 +1562,8 @@ class BlueFerryApp(App[None]):
             self.state.status.to_dict(), self.now_playing, self._phone_name,
             load_name=None if self._phone_name else self._phone_name_loader,
             on_name=self._remember_phone_name,
+            volume=self.volume,
+            send_media=self._overview_media,
         )
         self.push_screen(screen, self._overview_closed)
 
@@ -1676,7 +1691,7 @@ class BlueFerryApp(App[None]):
         status = self.state.status
         if not status.daemon or not phone_overview.media_control_enabled(status.to_dict()):
             self._media_again = False
-            self._show_now_playing(phone_overview.now_playing(None))
+            self._show_now_playing(phone_overview.now_playing(None), volume_controls(None))
             return
         if self._media_loading:
             self._media_again = True
@@ -1691,42 +1706,82 @@ class BlueFerryApp(App[None]):
             snapshot = self.state.client.now_playing()
         except BackendError:
             pass
-        self.call_from_thread(self._media_loaded, phone_overview.now_playing(snapshot), generation)
+        self.call_from_thread(
+            self._media_loaded, phone_overview.now_playing(snapshot), generation,
+            volume_controls(snapshot),
+        )
 
-    def _media_loaded(self, view: phone_overview.NowPlaying, generation: int) -> None:
+    def _media_loaded(
+        self, view: phone_overview.NowPlaying, generation: int,
+        volume: dict[str, Any] | None = None,
+    ) -> None:
         self._media_loading = False
         if generation == self._media_generation:
-            self._show_now_playing(view)
+            self._show_now_playing(view, volume or volume_controls(None))
         if self._media_again:
             self._media_again = False
             self._load_now_playing()
 
-    def _show_now_playing(self, view: phone_overview.NowPlaying) -> None:
+    def _show_now_playing(
+        self, view: phone_overview.NowPlaying, volume: dict[str, Any],
+    ) -> None:
         self.now_playing = view
+        self.volume = volume
         if not self.is_running:
             return
         try:
             line = self.query_one("#now-playing", Static)
         except NoMatches:
             return
-        line.update(now_playing_text(view))
+        line.update(now_playing_text(view, volume))
         line.display = view.visible
         for screen in self.screen_stack:
             if isinstance(screen, PhoneOverviewScreen):
-                screen.now_playing_changed(view)
+                screen.now_playing_changed(view, volume)
+
+    def _media_unavailable(self) -> bool:
+        """Say why media keys do nothing; True when media control is not shown."""
+        if self.now_playing.visible:
+            return False
+        if not phone_overview.media_control_enabled(self.state.status.to_dict()):
+            self.notify(
+                "iPhone media control is off; enable it with 'blueferry media enable'",
+                severity="warning",
+            )
+        else:
+            self.notify("iPhone media control is not connected", severity="warning")
+        return True
+
+    def action_volume(self, direction: str) -> None:
+        """One iPhone volume step (``-`` and ``+``); the phone has no absolute level."""
+        if isinstance(self.focused, Input | TextArea) or self._media_unavailable():
+            return
+        volume = self.volume
+        command = media_volume_view.volume_command(direction)
+        if command is None:
+            return
+        side = "up" if command == media_volume_view.VOLUME_UP else "down"
+        if volume.get(f"{side}_enabled") is not True:
+            message = str(volume.get(f"{side}_tooltip") or "")
+            self.notify(
+                _one_line(message or "The iPhone player does not offer this right now"),
+                severity="warning", markup=False,
+            )
+            return
+        self._send_media_command(command)
+
+    def _overview_media(self, command: str) -> None:
+        """A media button in the iPhone overview."""
+        if command in {media_volume_view.VOLUME_UP, media_volume_view.VOLUME_DOWN}:
+            self.action_volume(command)
+        else:
+            self.action_media(command)
 
     def action_media(self, command: str) -> None:
         if isinstance(self.focused, Input | TextArea):
             return
         view = self.now_playing
-        if not view.visible:
-            if not phone_overview.media_control_enabled(self.state.status.to_dict()):
-                self.notify(
-                    "iPhone media control is off; enable it with 'blueferry media enable'",
-                    severity="warning",
-                )
-            else:
-                self.notify("iPhone media control is not connected", severity="warning")
+        if self._media_unavailable():
             return
         if command not in view.commands:
             self.notify("The iPhone player does not offer this right now", severity="warning")
