@@ -2041,3 +2041,27 @@ def test_tether_read_completion_cannot_release_pending_command(read_outcome):
     assert controller.tether["enabled"] is True
     assert controller.tether["autoconnect"] is True
     assert controller.tether["pending"] is False
+
+
+def test_media_volume_follows_now_playing_and_steps_through_media_commands():
+    backend = _MediaBackend()
+    controller = BridgeController(backend=backend, setup=object(), subscribe=False, autostart=False)
+    assert controller.mediaVolume["visible"] is False
+
+    changes = []
+    controller.nowPlayingChanged.connect(lambda: changes.append(True))
+    controller._set_now_playing({
+        "available": True, "supported_commands_known": True,
+        "supported_commands": ["volume-up"], "player": {"volume": 0.4},
+    })
+    volume = controller.mediaVolume
+    assert changes == [True]
+    assert volume["visible"] is True
+    assert volume["level_text"] == "Volume 40%"
+    assert (volume["up_enabled"], volume["down_enabled"]) == (True, False)
+    assert "does not offer" in volume["down_tooltip"]
+
+    controller.sendMediaCommand(volume["up_command"])
+    controller._pool.waitForDone(1000)
+    assert backend.media_commands == ["volume-up"]
+    assert controller.busy is False

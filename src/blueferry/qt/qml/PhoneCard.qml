@@ -110,6 +110,7 @@ Controls.ScrollView {
             visible: active
             sourceComponent: NowPlayingBar {
                 nowPlaying: card.nowPlaying
+                volume: card.bridge.mediaVolume || ({})
                 onCommandRequested: command => card.bridge.sendMediaCommand(command)
             }
         }

@@ -17,7 +17,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtDBus import QDBusConnection
 
-from blueferry import __version__, phone_audio_view, phone_overview
+from blueferry import __version__, media_volume_view, phone_audio_view, phone_overview
 from blueferry.backend_lifecycle import ensure_backend_current, restart_backend
 from blueferry.bluetooth_devices import iphone_candidates
 from blueferry.client import BackendClient, TetherUnsupportedError
@@ -526,6 +526,11 @@ class BridgeController(QObject):
     @Property("QVariantMap", notify=nowPlayingChanged)
     def nowPlaying(self):
         return self._now_playing
+
+    @Property("QVariantMap", notify=nowPlayingChanged)
+    def mediaVolume(self):
+        """iPhone volume buttons and level (blueferry.media_volume_view)."""
+        return media_volume_view.volume_controls(self._now_playing)
 
     @Property("QVariantMap", notify=tetherChanged)
     def tether(self):
