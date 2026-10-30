@@ -2102,3 +2102,113 @@ def test_phone_links_only_ask_for_confirmation():
     assert backend.dialed == []
     assert controller.contactNameForNumber("+15550100000") == "Test Contact"
     assert controller.contactNameForNumber("+15550100009") == ""
+
+
+
+def test_mute_and_decline_with_message_reach_the_backend(monkeypatch):
+    from blueferry.models import CallsSnapshot
+
+    class CallBackend:
+        def __init__(self):
+            self.requests = []
+            self.fail_send = False
+
+        def set_call_muted(self, muted):
+            self.requests.append(("mute", muted))
+
+        def decline_call_with_message(self, call_id, text):
+            self.requests.append(("decline", call_id, text))
+            if self.fail_send:
+                raise BackendError("The call was declined, but the message was not sent.")
+
+        def calls(self):
+            self.requests.append(("calls",))
+            return CallsSnapshot()
+
+    backend = CallBackend()
+    controller = BridgeController(backend=backend, setup=object(), subscribe=False, autostart=False)
+    _inline_runs(controller, monkeypatch)
+    controller._status = {"calls_enabled": True, "calls_quick_replies": ["Later"]}
+    notices = []
+    controller.callNoticeChanged.connect(lambda: notices.append(dict(controller.callNotice)))
+
+    controller.setCallMuted(True)
+    assert backend.requests[:2] == [("mute", True), ("calls",)]
+    view = controller.callAudioView({"state": "ready", "muted": True}, {})
+    assert view["mute"] == {"supported": True, "muted": True, "label": "Unmute",
+                            "hint": "Your microphone is muted for this call."}
+
+    ringing = {"call_id": "voicecall01", "state": "incoming", "number": "+41790000001"}
+    decline = controller.declineMessageView(controller.status, ringing)
+    assert decline["available"] is True and decline["label"] == "Decline with message"
+    assert [choice["label"] for choice in decline["choices"]] == ["Later", "Own text…"]
+    assert decline["choices"][-1]["value"] == decline["custom"]
+    assert controller.declineMessageView(controller.status, {**ringing, "number": ""})[
+        "available"] is False
+    assert controller.declineMessageView({}, ringing)["available"] is False
+    assert controller.declineMessageError("  ") == "Type a message first."
+
+    backend.requests.clear()
+    controller.declineCallWithMessage("voicecall01", "   ")  # nothing to send
+    controller.declineCallWithMessage("", "Later")
+    assert backend.requests == []
+    controller.declineCallWithMessage("voicecall01", " Later ")
+    assert backend.requests == [("decline", "voicecall01", "Later"), ("calls",)]
+    assert controller.callNotice == {"text": "Call declined and message sent.", "error": False}
+
+    backend.fail_send = True
+    controller.declineCallWithMessage("voicecall01", "Later")
+    assert controller.callNotice == {
+        "text": "The call was declined, but the message was not sent.", "error": True,
+    }
+    assert backend.requests[-1] == ("calls",)
+    controller.clearCallNotice()
+    assert controller.callNotice == {}
+    assert notices[-1] == {} and len(notices) == 4
+
+
+def test_quick_replies_are_checked_and_saved_from_the_settings(monkeypatch):
+    class ReplyBackend:
+        def __init__(self):
+            self.saved = []
+
+        def set_call_quick_replies(self, replies):
+            self.saved.append(list(replies))
+            return {"calls_quick_replies": list(replies)}
+
+    backend = ReplyBackend()
+    controller = BridgeController(backend=backend, setup=object(), subscribe=False, autostart=False)
+    _inline_runs(controller, monkeypatch)
+    assert controller.quickReplySettingsView({})["supported"] is False
+    controller._status = {"daemon": True, "calls_quick_replies": ["A", "B"]}
+    changed = []
+    controller.statusChanged.connect(lambda: changed.append(True))
+
+    view = controller.quickReplySettingsView(controller.status)
+    assert view["supported"] is True and view["replies"] == ["A", "B"]
+    assert controller.quickReplyError("B", -1) == "This reply already exists."
+    assert controller.quickReplyError("B", 1) == ""  # unchanged while editing it
+    assert controller.addQuickReply("A") == "This reply already exists."
+    assert backend.saved == []
+
+    assert controller.addQuickReply(" C ") == ""
+    assert backend.saved[-1] == ["A", "B", "C"]
+    assert controller.status["calls_quick_replies"] == ["A", "B", "C"] and changed
+    assert controller.replaceQuickReply(0, "") == "A reply cannot be empty."
+    assert controller.replaceQuickReply(0, "Z") == ""
+    assert backend.saved[-1] == ["Z", "B", "C"]
+    assert controller.replaceQuickReply(7, "Y") == "" and len(backend.saved) == 2
+    controller.removeQuickReply(1)
+    controller.removeQuickReply(9)
+    assert backend.saved[-1] == ["Z", "C"] and len(backend.saved) == 3
+
+    controller._status["calls_quick_replies"] = ["1", "2", "3", "4", "5"]
+    assert controller.addQuickReply("6") == "At most 5 replies can be saved."
+    assert controller.quickReplySettingsView(controller.status)["can_add"] is False
+    controller.removeQuickReply(0)
+    controller.removeQuickReply(0)
+    controller.removeQuickReply(0)
+    controller.removeQuickReply(0)
+    controller.removeQuickReply(0)
+    assert backend.saved[-1] == []
+    assert controller.quickReplySettingsView(controller.status)["replies"] == []

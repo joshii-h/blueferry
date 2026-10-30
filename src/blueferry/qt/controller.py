@@ -26,6 +26,7 @@ from blueferry import (
     phone_audio_view,
     phone_link_view,
     phone_overview,
+    quick_reply_view,
 )
 from blueferry.backend_lifecycle import ensure_backend_current, restart_backend
 from blueferry.bluetooth_devices import iphone_candidates
@@ -138,6 +139,7 @@ class BridgeController(QObject):
     callAudioDevicesChanged = Signal()
     callTonesDraftChanged = Signal()
     callTonesSentChanged = Signal()
+    callNoticeChanged = Signal()
     # (number, problem) of a clicked tel:/callto: link to confirm; see
     # tel_links.dial_request. Never dials by itself.
     dialLinkRequested = Signal(str, str)
@@ -208,6 +210,8 @@ class BridgeController(QObject):
         self._phone_call_audio: dict = {}
         self._call_audio_devices: dict = {}
         self._call_audio_loading = False
+        # The outcome of the last "decline with message": {"text", "error"}.
+        self._call_notice: dict = {}
         # (calls_enabled, calls_state) of the last status that refreshed the
         # call list. Calls themselves are announced by CallsChanged.
         self._calls_status_key: tuple[object, object] | None = None
@@ -321,6 +325,20 @@ class BridgeController(QObject):
     @Property("QVariantMap", notify=callAudioDevicesChanged)
     def callAudioDevices(self):
         return self._call_audio_devices
+
+    @Property("QVariantMap", notify=callNoticeChanged)
+    def callNotice(self):
+        """The last decline-with-message outcome: ``text`` and ``error``."""
+        return self._call_notice
+
+    @Slot()
+    def clearCallNotice(self) -> None:
+        self._set_call_notice({})
+
+    def _set_call_notice(self, notice: dict) -> None:
+        if notice != self._call_notice:
+            self._call_notice = notice
+            self.callNoticeChanged.emit()
 
     @Property(str, notify=phoneCallsChanged)
     def activeCallId(self) -> str:
@@ -597,6 +615,37 @@ class BridgeController(QObject):
     def callAudioView(self, audio: dict, devices: dict) -> dict:
         """The running call's devices and the per-call switch (call_audio_view)."""
         return call_audio_view.call_view(dict(audio) if audio else None, dict(devices or {}))
+
+    @Slot("QVariantMap", "QVariantMap", result="QVariantMap")
+    def declineMessageView(self, status: dict, call: dict) -> dict:
+        """The "Decline with message" button and its menu (quick_reply_view)."""
+        current = dict(status or {})
+        return {
+            "available": quick_reply_view.can_decline_with_message(current, dict(call or {})),
+            "label": quick_reply_view.button_label(),
+            "title": quick_reply_view.dialog_title(),
+            "placeholder": quick_reply_view.custom_placeholder(),
+            "custom": quick_reply_view.CUSTOM,
+            "choices": quick_reply_view.choices(current),
+        }
+
+    @Slot(str, result=str)
+    def declineMessageError(self, text: str) -> str:
+        """Why a typed text cannot be sent; "" when it can."""
+        return quick_reply_view.custom_text_error(str(text or ""))
+
+    @Slot("QVariantMap", result="QVariantMap")
+    def quickReplySettingsView(self, status: dict) -> dict:
+        """The saved-replies section of Settings > Calls & Audio."""
+        return quick_reply_view.settings_view(dict(status or {}))
+
+    @Slot(str, int, result=str)
+    def quickReplyError(self, text: str, editing: int) -> str:
+        """Why ``text`` cannot be saved (``editing`` -1 = a new reply)."""
+        return quick_reply_view.reply_error(
+            str(text or ""), quick_reply_view.replies(self._status),
+            editing=int(editing) if int(editing) >= 0 else None,
+        )
 
     @Slot("QVariantMap", str, result="QVariantMap")
     def notificationsView(self, info: dict, opt_in_hint: str) -> dict:
@@ -1495,6 +1544,63 @@ class BridgeController(QObject):
         self._run(
             lambda: self._backend.send_call_tones(call_id, tones), done, failed, busy=False,
         )
+
+    @Slot(bool)
+    def setCallMuted(self, muted: bool) -> None:
+        """Mute or unmute this computer's microphone for the running call."""
+        self._call_action(lambda: self._backend.set_call_muted(bool(muted)))
+
+    @Slot(str, str)
+    def declineCallWithMessage(self, call_id: str, text: str) -> None:
+        """Decline a ringing call and text the caller (Calls1.DeclineWithMessage)."""
+        call, body = str(call_id or ""), str(text or "").strip()
+        if not call or quick_reply_view.custom_text_error(body):
+            return
+
+        def sent(_value: object) -> None:
+            self._set_call_notice({"text": quick_reply_view.sent_text(), "error": False})
+            self.refreshCalls()
+
+        def failed(message: str) -> None:
+            # The daemon's text says whether the call was declined anyway.
+            self._set_call_notice({"text": quick_reply_view.failure_text(message), "error": True})
+            self.refreshCalls()
+
+        self._set_call_notice({})
+        self._run(lambda: self._backend.decline_call_with_message(call, body), sent, failed)
+
+    @Slot(str, result=str)
+    def addQuickReply(self, text: str) -> str:
+        """Save one more reply; returns why it cannot be saved, "" when sent."""
+        current = quick_reply_view.replies(self._status)
+        problem = quick_reply_view.reply_error(str(text or ""), current)
+        if not problem:
+            self._save_quick_replies(quick_reply_view.with_added(current, str(text)))
+        return problem
+
+    @Slot(int, str, result=str)
+    def replaceQuickReply(self, index: int, text: str) -> str:
+        current = quick_reply_view.replies(self._status)
+        if not 0 <= index < len(current):
+            return ""
+        problem = quick_reply_view.reply_error(str(text or ""), current, editing=index)
+        if not problem:
+            self._save_quick_replies(quick_reply_view.with_replaced(current, index, str(text)))
+        return problem
+
+    @Slot(int)
+    def removeQuickReply(self, index: int) -> None:
+        current = quick_reply_view.replies(self._status)
+        if 0 <= index < len(current):
+            self._save_quick_replies(quick_reply_view.with_removed(current, index))
+
+    def _save_quick_replies(self, replies: list[str]) -> None:
+        def completed(value: object) -> None:
+            if isinstance(value, dict):
+                self._status.update(value)
+                self.statusChanged.emit()
+
+        self._run(lambda: self._backend.set_call_quick_replies(list(replies)), completed)
 
     @Slot()
     def loadCallAudioDevices(self) -> None:
