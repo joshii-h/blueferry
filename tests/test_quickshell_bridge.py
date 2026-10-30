@@ -123,6 +123,10 @@ class FakeClient:
         self.calls.append(("set_call_audio_device", direction, name))
         return {f"calls_audio_{direction}": name}
 
+    def set_call_quick_replies(self, replies):
+        self.calls.append(("set_call_quick_replies", replies))
+        return {"calls_quick_replies": list(replies)}
+
 
 def test_bridge_dispatches_private_values_without_command_arguments() -> None:
     client = FakeClient()
@@ -1042,4 +1046,92 @@ def test_bridge_rejects_malformed_call_audio_requests(args) -> None:
 
     with pytest.raises(ValueError):
         bridge.dispatch("set_call_audio_device", args)
+    assert client.calls == []
+
+
+def _replies_client(replies):
+    client = FakeClient()
+    client.status = lambda: SimpleNamespace(to_dict=lambda: {
+        "daemon": True, "calls_quick_replies": list(replies),
+    })
+    return client
+
+
+def test_bridge_returns_the_saved_replies_with_their_wording() -> None:
+    client = FakeClient()
+    bridge = QuickshellBridge(client)  # type: ignore[arg-type]
+
+    # Calls off or an older daemon: nothing to edit.
+    assert bridge.dispatch("quick_replies", {})["supported"] is False
+    with pytest.raises(RequestError, match="not available"):
+        bridge.dispatch("save_quick_reply", {"text": "Later", "index": -1})
+    assert client.calls == []
+
+    bridge = QuickshellBridge(_replies_client(["On my way"]))  # type: ignore[arg-type]
+    view = bridge.dispatch("quick_replies", {})
+    assert view["supported"] is True
+    assert view["replies"] == ["On my way"]
+    assert view["label"] == "Replies when declining a call"
+    assert view["add_label"] == "Add reply"
+    assert view["can_add"] is True
+
+
+def test_bridge_adds_replaces_and_removes_a_reply() -> None:
+    client = _replies_client(["On my way", "Call you back"])
+    bridge = QuickshellBridge(client)  # type: ignore[arg-type]
+
+    added = bridge.dispatch("save_quick_reply", {"text": "  In a meeting ", "index": -1})
+    assert added["saved"] is True and added["error"] == ""
+    assert added["replies"] == ["On my way", "Call you back", "In a meeting"]
+    replaced = bridge.dispatch("save_quick_reply", {"text": "Driving", "index": 0})
+    assert replaced["replies"] == ["Driving", "Call you back"]
+    # Saving a reply unchanged is not a duplicate of itself.
+    assert bridge.dispatch("save_quick_reply", {"text": "Call you back", "index": 1})["saved"]
+    removed = bridge.dispatch("remove_quick_reply", {"index": 1})
+    assert removed["saved"] is True and removed["replies"] == ["On my way"]
+    assert client.calls == [
+        ("set_call_quick_replies", ["On my way", "Call you back", "In a meeting"]),
+        ("set_call_quick_replies", ["Driving", "Call you back"]),
+        ("set_call_quick_replies", ["On my way", "Call you back"]),
+        ("set_call_quick_replies", ["On my way"]),
+    ]
+
+
+@pytest.mark.parametrize(("replies", "text", "index", "error"), [
+    (["A"], "   ", -1, "A reply cannot be empty."),
+    (["A"], "x" * 161, -1, "A reply can have at most 160 characters."),
+    (["A"], "two\nlines", -1, "A reply must be a single line."),
+    (["A", "B"], "A", 1, "This reply already exists."),
+    (["A", "B", "C", "D", "E"], "F", -1, "At most 5 replies can be saved."),
+])
+def test_bridge_explains_a_rejected_reply_without_saving(replies, text, index, error) -> None:
+    client = _replies_client(replies)
+    bridge = QuickshellBridge(client)  # type: ignore[arg-type]
+
+    result = bridge.dispatch("save_quick_reply", {"text": text, "index": index})
+    assert result["saved"] is False
+    assert result["error"] == error
+    assert result["replies"] == replies
+    assert client.calls == []
+
+
+@pytest.mark.parametrize(("method", "args"), [
+    ("save_quick_reply", {"index": -1}),
+    ("save_quick_reply", {"text": 5, "index": -1}),
+    ("save_quick_reply", {"text": "x"}),
+    ("save_quick_reply", {"text": "x", "index": True}),
+    ("save_quick_reply", {"text": "x", "index": "0"}),
+    ("save_quick_reply", {"text": "x", "index": -2}),
+    ("save_quick_reply", {"text": "x", "index": 1}),
+    ("remove_quick_reply", {}),
+    ("remove_quick_reply", {"index": -1}),
+    ("remove_quick_reply", {"index": 1}),
+    ("remove_quick_reply", {"index": 0.0}),
+])
+def test_bridge_rejects_malformed_reply_requests(method, args) -> None:
+    client = _replies_client(["A"])
+    bridge = QuickshellBridge(client)  # type: ignore[arg-type]
+
+    with pytest.raises(RequestError):
+        bridge.dispatch(method, args)
     assert client.calls == []
