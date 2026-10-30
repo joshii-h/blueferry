@@ -31,7 +31,7 @@ from gi.repository import Adw, Gtk
 
 from blueferry import call_audio_view, phone_link_view, quick_reply_view
 from blueferry.client_tasks import TimerFactory
-from blueferry.models import CallsSnapshot
+from blueferry.models import CallAudio, CallsSnapshot
 from blueferry.ui.avatars import AvatarCache
 from blueferry.ui.call_audio import DeviceRow
 from blueferry.ui.quick_replies import DeclineMessageMenu
@@ -102,6 +102,8 @@ class RunningCalls(Gtk.ListBox):
         self.mute_row = Adw.ActionRow(use_markup=False, activatable_widget=self.mute_button)
         self.mute_row.add_suffix(self.mute_button)
         self._applying_mute = False
+        # A pressed mute shows until the next ListCalls read reports the state.
+        self._mute_pending: bool | None = None
         # Decline with message: the menu of each ringing call and, per call,
         # the own text typed so far (kept across re-renders, like the tones).
         self.decline_menus: dict[str, DeclineMessageMenu] = {}
@@ -154,6 +156,7 @@ class RunningCalls(Gtk.ListBox):
         if not isinstance(snapshot, CallsSnapshot):
             return
         self._state = snapshot.state
+        self._mute_pending = None  # the read reports the real state
         audio = snapshot.audio.to_dict() if snapshot.audio is not None else None
         if audio is not None and snapshot.calls and audio != self.audio:
             self._load_devices()  # a call started or its chosen/used device changed
@@ -198,11 +201,20 @@ class RunningCalls(Gtk.ListBox):
             direction, name, done, failed))
 
     def set_muted(self, muted: bool) -> None:
-        """Mute or unmute this computer's microphone for the running call."""
+        """Mute or unmute this computer's microphone for the running call.
+
+        The button shows the request until the next ListCalls read; a refusal
+        (NotReady before the call audio exists, for example) puts back the
+        reported state and shows the error.
+        """
         def request(done, failed) -> None:
             def refused(message: str) -> None:
-                self._render_mute()  # back to the reported state
+                self._mute_pending = None
+                self._render_mute()
                 failed(message)
+
+            self._mute_pending = muted
+            self._render_mute()
 
             self._client.set_call_muted_async(muted, done, refused)
 
@@ -401,17 +413,24 @@ class RunningCalls(Gtk.ListBox):
 
     def _render_mute(self) -> None:
         view = call_audio_view.mute(self.audio)
-        self.mute_row.set_visible(self.audio is not None and view["supported"])
-        self.mute_row.set_title(view["hint"])
+        audio = CallAudio.from_dict(self.audio)
+        # Only once the call microphone stream exists; before, the daemon
+        # refuses with NotReady.
+        self.mute_row.set_visible(
+            audio is not None and audio.input.stream and view["supported"]
+        )
+        muted = view["muted"] if self._mute_pending is None else self._mute_pending
+        self.mute_row.set_title(call_audio_view.mute_hint(muted))
         self.mute_button.set_icon_name(
-            "microphone-sensitivity-muted-symbolic" if view["muted"]
+            "microphone-sensitivity-muted-symbolic" if muted
             else "audio-input-microphone-symbolic"
         )
-        self.mute_button.set_tooltip_text(view["label"])
-        self.mute_button.update_property([Gtk.AccessibleProperty.LABEL], [view["label"]])
+        label = call_audio_view.mute_label(muted)
+        self.mute_button.set_tooltip_text(label)
+        self.mute_button.update_property([Gtk.AccessibleProperty.LABEL], [label])
         self._applying_mute = True
         try:
-            self.mute_button.set_active(view["muted"])
+            self.mute_button.set_active(muted)
         finally:
             self._applying_mute = False
 

@@ -637,6 +637,15 @@ def _exercise_call_mute():
     button = running.mute_button
     assert running.mute_row.get_parent() is running and not running.mute_row.get_visible()
 
+    # Mute is offered only once the call microphone stream exists.
+    waiting = {"state": "waiting", "muted": False}
+    client.emit("calls-changed")
+    client.take("list-calls")[1](CallsSnapshot.from_dict({
+        "state": "ready", "calls": [active], "audio": waiting,
+    }))
+    client.take("audio-devices")
+    assert not running.mute_row.get_visible()
+
     client.emit("calls-changed")
     client.take("list-calls")[1](CallsSnapshot.from_dict({
         "state": "ready", "calls": [active], "audio": {**ready, "muted": False},
@@ -645,10 +654,22 @@ def _exercise_call_mute():
     assert running.mute_row.get_visible()
     assert button.get_tooltip_text() == "Mute" and not button.get_active()
     assert running.mute_row.get_title() == "Mutes this computer's microphone for this call only."
+    # The call audio went away meanwhile: NotReady, a toast, the state back.
+    button.set_active(True)
+    client.take(("mute", True))[2]("No call is in progress")
+    assert toasts == ["No call is in progress"] and not button.get_active()
+    client.take("list-calls")[1](CallsSnapshot.from_dict({
+        "state": "ready", "calls": [active], "audio": {**ready, "muted": False},
+    }))
+    toasts.clear()
+
     button.set_active(True)
     assert not running.mute_row.get_sensitive(), "busy while the mute is applied"
+    assert button.get_tooltip_text() == "Unmute", "the press shows at once"
     client.take(("mute", True))[1](None)
     assert running.mute_row.get_sensitive()
+    running._render_audio()  # e.g. the device lists arrive before ListCalls
+    assert button.get_active(), "optimistic until the next ListCalls read"
     client.take("list-calls")[1](CallsSnapshot.from_dict({
         "state": "ready", "calls": [active], "audio": {**ready, "muted": True},
     }))
