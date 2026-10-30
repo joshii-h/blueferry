@@ -171,8 +171,6 @@ class _Client(_TetherClient, Protocol):
 class _Monitor(Protocol):
     def pump(self) -> tuple[bool, str | None]: ...
 
-    def take_tether_changed(self) -> bool: ...
-
     def close(self) -> None: ...
 
 
@@ -1028,7 +1026,8 @@ class BlueFerryApp(App[None]):
         take_calls = getattr(self._monitor, "take_calls_changed", None)
         if take_calls is not None and take_calls():
             self._calls_changed()
-        if self._monitor.take_tether_changed() and isinstance(self.screen, TetherScreen):
+        take_tether = getattr(self._monitor, "take_tether_changed", None)
+        if take_tether is not None and take_tether() and isinstance(self.screen, TetherScreen):
             self.screen.refresh_state()
         take_media = getattr(self._monitor, "take_now_playing_changed", None)
         if take_media is not None and take_media():
