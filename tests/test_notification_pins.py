@@ -292,6 +292,25 @@ def test_locked_storage_neither_loads_nor_overwrites_pins(tmp_path) -> None:
     assert locked.snapshot(1)[0]["pinned"] is True
 
 
+def test_unlocking_storage_loads_pins_and_tells_open_clients(tmp_path) -> None:
+    path = tmp_path / "settings.json"
+    _, store = store_for(path)
+    log = make_log(pins=store)
+    log.handle_ancs(event(1))
+    log.set_pinned("k1", True)
+
+    storage, store = store_for(path, initialize=False)
+    changes: list[str] = []
+    locked = make_log(pins=store, on_changed=lambda: changes.append("changed"))
+    locked.storage_changed()  # still locked: nothing to load, but list again
+    assert changes == ["changed"]
+    storage.refresh(allow_prompt=False)
+    changes.clear()
+    locked.storage_changed()
+    assert changes  # without waiting for the next ANCS event or list call
+    assert locked.snapshot(1)[0]["pinned"] is True
+
+
 @pytest.mark.parametrize("policy", ["none", "plaintext"])
 def test_pins_follow_the_storage_policy(tmp_path, policy) -> None:
     path = tmp_path / "settings.json"
@@ -312,8 +331,10 @@ def test_pins_follow_the_storage_policy(tmp_path, policy) -> None:
 # -- backend operation ---------------------------------------------------------
 
 
-def ops(log=None, *, readable=True) -> BackendOperations:
-    storage = SimpleNamespace(status=SimpleNamespace(can_read=readable, detail="locked"))
+def ops(log=None, *, readable=True, policy="encrypted") -> BackendOperations:
+    storage = SimpleNamespace(status=SimpleNamespace(
+        policy=policy, can_read=readable, detail="locked",
+    ))
     return BackendOperations(object(), BackendDependencies(  # type: ignore[arg-type]
         notification_log=log, storage=storage,  # type: ignore[arg-type]
     ))
@@ -332,6 +353,16 @@ def test_set_notification_pinned_errors_and_result() -> None:
     assert operations.set_notification_pinned("k1", True) is True
     listed = operations.list_notifications(5)
     assert listed["pins_max"] == 20
+    assert listed["notifications"][0]["pinned"] is True  # type: ignore[index]
+
+
+def test_pins_stay_in_memory_when_local_data_is_not_retained() -> None:
+    log = make_log()
+    log.handle_ancs(event(1))
+    # "none" never reports readable storage, yet the list and its pins work.
+    operations = ops(log, readable=False, policy="none")
+    assert operations.set_notification_pinned("k1", True) is True
+    listed = operations.list_notifications(5)
     assert listed["notifications"][0]["pinned"] is True  # type: ignore[index]
 
 
@@ -362,6 +393,21 @@ def test_daemon_deletes_stored_pins_while_the_list_is_off(make_daemon, monkeypat
     instance = make_daemon()
     assert SettingsStore(config.SETTINGS_JSON).read().get(SETTINGS_KEY) is None
     assert instance._status()["notification_pins_max"] == 20
+
+
+def test_daemon_passes_storage_changes_to_the_notification_list(
+    make_daemon, monkeypatch,
+) -> None:
+    from blueferry import daemon as daemon_mod
+
+    monkeypatch.setattr(daemon_mod.config, "NOTIFICATION_HISTORY", True)
+    instance = make_daemon()
+    calls: list[str] = []
+    monkeypatch.setattr(
+        instance.notification_log, "storage_changed", lambda: calls.append("log"),
+    )
+    instance._on_storage_changed()
+    assert calls == ["log"]
 
 
 def test_daemon_marks_removals_and_detaches_on_session_reset(make_daemon, monkeypatch) -> None:
