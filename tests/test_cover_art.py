@@ -263,6 +263,7 @@ def test_image_handle_validation(value, expected):
 def test_jpeg_dimensions_accepts_real_structure():
     assert jpeg_dimensions(jpeg(200, 200)) == (200, 200)
     assert jpeg_dimensions(jpeg(640, 480)) == (640, 480)
+    assert jpeg_dimensions(jpeg(1024, 1024)) == (1024, 1024)
 
 
 @pytest.mark.parametrize("data", [
@@ -271,6 +272,7 @@ def test_jpeg_dimensions_accepts_real_structure():
     jpeg(end=False),           # truncated transfer
     jpeg(0, 200),
     jpeg(5000, 200),           # decoder bomb guard
+    jpeg(1025, 200),
     b"\xff\xd8\xff\xda\x00\x08" + b"\x00" * 10 + b"\xff\xd9",  # scan before frame
     b"\xff\xd8\xff\xe0\x00\x01\xff\xd9",                      # bad length
 ])
@@ -398,8 +400,10 @@ def test_avrcp_disconnect_closes_session(env):
     assert not art.session_open
     env.bus.control_changed(Connected=True)
     assert art.session_open
-    env.bus.removed(PLAYER, {"org.bluez.MediaPlayer1": {}})
+    # The device object going away closes at once, without a grace period.
+    env.bus.removed(DEV, {"org.bluez.MediaControl1": {}})
     assert env.obexd.live == []
+    assert env.timers.pending == {}
 
 
 def test_port_change_reopens(env):
@@ -660,3 +664,101 @@ def test_now_playing_list_failure_is_harmless(env):
     assert art.session_open and art.path is None
     env.bus.player_changed(PLAYER, Track={"Title": "Next", "ImgHandle": "1000002"})
     assert art.path is not None
+
+
+def test_vanished_player_gets_a_grace_period_while_avrcp_is_up(env):
+    env.bus.tree = tree(track={"Title": "A", "ImgHandle": "1000001"})
+    art = env.make()
+    art.start()
+    conn = env.obexd.live[0]
+    cover = art.path
+    assert cover is not None
+    # iOS recreates its player on an app change or pause/play.
+    env.bus.removed(PLAYER, {"org.bluez.MediaPlayer1": {}})
+    assert not conn.closed and art.session_open
+    assert art.path == cover          # no flicker
+    assert env.timers.delays() == [5]
+    env.bus.added(PLAYER2, {"org.bluez.MediaPlayer1": {
+        "ObexPort": 4105, "Track": {"Title": "A", "ImgHandle": "1000001"}}})
+    env.bus.control_changed(Player=PLAYER2)
+    assert env.timers.pending == {}   # grace cancelled
+    assert env.obexd.live == [conn]   # same session, no reopen
+    assert art.path == cover          # served from the cache
+    assert len(env.obexd.thumbnail_calls) == 1
+
+
+def test_grace_period_expires_and_closes(env):
+    art = env.make()
+    art.start()
+    conn = env.obexd.live[0]
+    env.bus.removed(PLAYER, {"org.bluez.MediaPlayer1": {}})
+    env.timers.fire()
+    assert conn.closed and not art.session_open
+    assert env.timers.pending == {}   # no retry without a player
+
+
+def test_avrcp_disconnect_during_grace_closes_at_once(env):
+    art = env.make()
+    art.start()
+    conn = env.obexd.live[0]
+    env.bus.removed(PLAYER, {"org.bluez.MediaPlayer1": {}})
+    env.bus.control_changed(Connected=False)
+    assert conn.closed
+    assert env.timers.pending == {}
+
+
+def test_now_playing_list_only_for_the_addressed_player(env):
+    """ListItems makes bluetoothd switch the browsed/addressed player."""
+    item = f"{PLAYER}/NowPlaying/item42"
+    env.bus.tree = tree(browsable=True, track={"Title": "Running", "Item": item})
+    # BlueZ addresses another (gone) player; ours is only the fallback.
+    env.bus.tree[DEV]["org.bluez.MediaControl1"]["Player"] = f"{DEV}/player9"
+    art = env.make()
+    art.start()
+    assert art.session_open
+    assert not any(c[2] in ("ChangeFolder", "ListItems") for c in env.bus.calls)
+
+
+def test_relative_xdg_cache_home_is_ignored(monkeypatch, tmp_path):
+    from blueferry.cover_art import cache_directory
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CACHE_HOME", "relative/cache")
+    assert cache_directory() == tmp_path / ".cache" / "blueferry" / "cover"
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "c"))
+    assert cache_directory() == tmp_path / "c" / "blueferry" / "cover"
+
+
+def test_early_status_only_for_own_session(env):
+    env.obexd.auto_complete = False
+    art = env.make()
+    art.start()
+    conn = env.obexd.live[0]
+    original = conn.call
+    held = []
+
+    def holding(bus_name, path, interface, method, signature, args, reply_type,
+                on_reply, on_error, *, timeout):
+        if method == "GetThumbnail":
+            held.append(on_reply)
+            return None
+        return original(bus_name, path, interface, method, signature, args,
+                        reply_type, on_reply, on_error, timeout=timeout)
+
+    conn.call = holding
+    env.bus.player_changed(PLAYER, Track={"Title": "A", "ImgHandle": "1000001"})
+    signal = conn.receivers["PropertiesChanged:org.bluez.obex.Transfer1"]
+    signal("/org/bluez/obex/client/session99/transfer1", "org.bluez.obex.Transfer1",
+           {"Status": "complete"}, [])
+    signal(f"{conn.session}/transfer1", "org.bluez.obex.Transfer1", {"Status": "error"}, [])
+    assert list(art._early_status) == [f"{conn.session}/transfer1"]
+
+
+def test_adopt_makes_the_file_owner_only(tmp_path):
+    cache = CoverCache(tmp_path / "c")
+    incoming = cache.reserve("1000001")
+    incoming.write_bytes(jpeg())
+    incoming.chmod(0o644)  # as if obexd had used another mode
+    stored = cache.adopt("1000001", incoming)
+    assert stored is not None
+    assert stat.S_IMODE(stored.stat().st_mode) == 0o600

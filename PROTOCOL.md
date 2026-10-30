@@ -826,7 +826,10 @@ Tested on a real iPhone (iOS 27, Intel AX200, BlueZ 5.87, obexd) on
   fails with "Connection refused (111)". BlueFerry keeps one session per
   phone (not per player), reopens it after a player with another port, an
   AVRCP disconnect or an obexd restart, and backs off after failures
-  (2, 5, 10, 30, then 60 s).
+  (2, 5, 10, 30, then 60 s). iOS removes and recreates its player on an app
+  change (and sometimes on pause/play); while AVRCP stays connected the
+  session waits 5 s for a player to return instead of closing and
+  reopening.
 - In every test the track already playing when the session opened had no
   `ImgHandle`; the next track change brought one. The phone apparently adds
   the handle only to attributes requested after the OBEX connect. BlueZ
@@ -834,13 +837,22 @@ Tested on a real iPhone (iOS 27, Intel AX200, BlueZ 5.87, obexd) on
   is browsable, `MediaFolder1.ChangeFolder(Playlist)` is a local scope change
   in bluetoothd and `ListItems` sends GetFolderItems with the image-handle
   attribute. BlueFerry does that once per session and takes the handle of
-  the item named in `Track.Item`. Whether iOS answers it with a handle is
-  not yet observed; without browsing (or if it does not) the cover appears
-  from the next track on. Playback is never interrupted for this.
+  the item named in `Track.Item`. `ListItems` is not side-effect free:
+  bluetoothd first makes that player the browsed (and possibly addressed)
+  player, sending SetBrowsedPlayer/SetAddressedPlayer (`set_ct_player` in
+  `avrcp.c`). BlueFerry therefore only lists the player BlueZ already
+  addresses (`MediaControl1.Player`), never a fallback. Without browsing the
+  cover appears from the next track on. Playback is never interrupted.
+- Observed with the daemon (2026-10-30, iOS 27, BlueZ 5.87): right after
+  "iPhone cover art session open (PSM 4105)" the cover of the Pocket FM
+  episode that was already playing arrived without a track change, and
+  `mpris:artUrl` (`file://…/cover-…-1000039.jpg`) showed in the DMS media
+  widget. Whether the handle came through the Now Playing list or the phone
+  re-sent the track attributes was not distinguished.
 - Handles are untrusted input: only seven ASCII digits (BIP) are accepted,
   and they are only valid within one BIP session, so the cache is cleared
   whenever the session ends. A downloaded file must be a complete JPEG
-  (start/end markers, a frame header with at most 4096x4096 pixels) of at
+  (start/end markers, a frame header with at most 1024x1024 pixels) of at
   most 1 MiB; anything else is deleted and that handle is not requested
   again in the session.
 

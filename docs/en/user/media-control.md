@@ -125,9 +125,8 @@ BlueFerry's message interface through it.
 - BlueFerry does not act as an AVRCP remote itself; that could make the
   iPhone send its audio to the computer. The cover art (see below) only uses
   the AVRCP connection BlueZ already has.
-- The cover of the track that is already playing when the phone connects
-  usually appears only from the next track on (the iPhone sends the image
-  reference only for tracks it describes after the cover connection opened).
+- With some players, the cover of the track that is already playing when
+  the phone connects appears only from the next track on.
 
 ## Cover art
 
