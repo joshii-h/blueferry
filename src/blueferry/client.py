@@ -100,6 +100,17 @@ def _contact_cards_error(error: Exception) -> BackendError:
     return BackendError(_dbus_message(error))
 
 
+def _search_error(error: Exception) -> BackendError:
+    if (
+        isinstance(error, dbus.exceptions.DBusException)
+        and error.get_dbus_name() == "org.freedesktop.DBus.Error.UnknownMethod"
+    ):
+        return BackendError(
+            "the running backend cannot search; restart it after upgrading"
+        )
+    return BackendError(_dbus_message(error))
+
+
 class TetherUnsupportedError(BackendError):
     """The running daemon does not export the optional Tether1 interface."""
 
@@ -313,6 +324,18 @@ class BackendClient:
                 if isinstance(error, dbus.exceptions.DBusException)
                 else str(error)
             ) from error
+
+    def search(self, query: str, limit: int = 20) -> dict:
+        """``Search``: conversations, messages, contacts and calls matching ``query``.
+
+        Shape it with ``blueferry.search_view`` for display.
+        """
+        try:
+            return decode_mapping(self._iface(MESSAGES_IFACE).Search(
+                query, dbus.UInt32(max(0, limit)), timeout=SNAPSHOT_CALL_TIMEOUT_SEC,
+            ))
+        except (dbus.exceptions.DBusException, ValueError) as error:
+            raise _search_error(error) from error
 
     def contact_cards(
         self, offset: int = 0, limit: int = MAX_CONTACT_PAGE, query: str = "",

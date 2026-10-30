@@ -69,6 +69,12 @@ MAX_CONTACT_RESULTS = 100
 MAX_CONTACT_PAGE = 150
 # Contact card ids are short hex digests (see contacts._card_id).
 MAX_CONTACT_ID_CHARS = 64
+# Messages1.Search: results per group (conversations, messages, contacts,
+# calls) and the excerpt shown around a message match.
+MAX_SEARCH_RESULTS = 50
+# Shorter queries match nearly everything; they return no results.
+MIN_SEARCH_QUERY_CHARS = 2
+MAX_SEARCH_SNIPPET_CHARS = 160
 MAX_DBUS_JSON_BYTES = 8 * 1024 * 1024
 
 # Long-lived daemon queues and subscriptions must remain bounded even if a

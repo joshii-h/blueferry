@@ -1,0 +1,192 @@
+"""Global search: in-memory matching and the Search operation."""
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+
+import pytest
+
+from blueferry import config
+from blueferry.backend_operations import BackendDependencies, BackendOperations
+from blueferry.call_history import CallRecord
+from blueferry.contact_repository import ContactRepository
+from blueferry.contacts import ContactsResolver
+from blueferry.errors import InvalidArgumentsError
+from blueferry.global_search import search_calls, search_threads, snippet
+from blueferry.history import append_event
+from blueferry.limits import MAX_SEARCH_RESULTS, MAX_SEARCH_SNIPPET_CHARS
+from blueferry.models import CallHistoryEntry
+
+NOW = datetime(2026, 10, 30, 12, 0, tzinfo=UTC)
+
+
+def _call(direction, minutes_ago, number="15551230001", name=None) -> CallRecord:
+    moment = NOW - timedelta(minutes=minutes_ago)
+    return CallRecord(
+        direction=direction, occurred_at=moment,
+        raw_time=moment.strftime("%Y%m%dT%H%M%SZ"),
+        address=f"+{number}", phone=number, name=name,
+    )
+
+
+THREADS = [
+    {"key": "address:15551112222", "name": "Alice Example", "is_group": False,
+     "members": [], "last_ts": "2026-10-30T11:00:00Z", "messages": [
+         {"handle": "m1", "body": "Lunch at the\nusual place?", "sender": "",
+          "timestamp": "2026-10-30T10:00:00Z", "outgoing": False},
+         {"handle": "m2", "body": "Sure, lunch at noon", "sender": "",
+          "timestamp": "2026-10-30T11:00:00+01:00", "outgoing": True},
+     ]},
+    {"key": "group:named:x", "name": "Climbing", "is_group": True,
+     "members": ["Bob Lunchbox"], "last_ts": "2026-10-29T09:00:00Z", "messages": [
+         {"handle": "g1", "body": "no match here", "sender": "Bob",
+          "timestamp": "2026-10-29T09:00:00Z", "outgoing": False},
+     ]},
+]
+
+
+# ---- matching -------------------------------------------------------------------
+
+def test_threads_match_names_members_and_bodies_newest_first() -> None:
+    conversations, messages = search_threads(THREADS, "lunch", 10)
+    assert conversations["total"] == 1
+    assert conversations["results"] == [{
+        "thread_key": "group:named:x", "name": "Climbing", "is_group": True,
+        "timestamp": "2026-10-29T09:00:00Z",
+    }]
+    assert messages["total"] == 2
+    # 11:00+01:00 is 10:00Z, the same instant as m1; m1 was stored first.
+    assert [hit["handle"] for hit in messages["results"]] == ["m1", "m2"]
+    first = messages["results"][0]
+    assert first["thread_key"] == "address:15551112222"
+    assert first["snippet"] == "Lunch at the usual place?"
+    assert (first["match_start"], first["match_length"]) == (0, 5)
+    # Whitespace in the query and the body is collapsed before matching.
+    assert search_threads(THREADS, "the   usual", 10)[1]["total"] == 1
+
+
+def test_thread_results_are_limited_but_counted() -> None:
+    _conversations, messages = search_threads(THREADS, "lunch", 1)
+    assert messages["total"] == 2 and len(messages["results"]) == 1
+
+
+def test_snippet_keeps_context_and_marks_the_match() -> None:
+    text = "x" * 500 + "needle" + "y" * 500
+    excerpt, start, length = snippet(text, 500, 6)
+    assert excerpt.startswith("…") and excerpt.endswith("…")
+    assert len(excerpt) <= MAX_SEARCH_SNIPPET_CHARS + 2
+    assert excerpt[start:start + length] == "needle"
+    assert snippet("short", 0, 5) == ("short", 0, 5)
+
+
+def test_calls_match_names_and_number_digits() -> None:
+    records = [
+        _call("missed", 1, "15551112222"),
+        _call("outgoing", 2, "41791234567", name="Pizza Place"),
+    ]
+    def resolve(address):
+        return "Alice Example" if address and address.endswith("5551112222") else None
+
+    hits = search_calls(records, "alice", 10, resolve)
+    assert hits["total"] == 1 and hits["results"][0]["name"] == "Alice Example"
+    assert hits["results"][0]["id"] == records[0].key
+    assert search_calls(records, "079 123 45", 10, None)["total"] == 0
+    assert search_calls(records, "79 123 45", 10, None)["results"][0]["name"] == "Pizza Place"
+    assert search_calls(records, "12", 10, None)["total"] == 0  # too short for digits
+
+
+# ---- operation ------------------------------------------------------------------
+
+class _Sessions:
+    map = object()
+    pbap = object()
+    map_path = "/session/map"
+
+    @staticmethod
+    def report_error(_error):
+        pass
+
+
+@pytest.fixture
+def operations(isolated_state):
+    ContactRepository().replace([
+        ("Alice Example", ["15551112222"], []), ("Bob Other", ["15553334444"], []),
+    ])
+    contacts = ContactsResolver(photos=lambda: False)
+    for index, body in enumerate(("lunch tomorrow?", "the report is ready")):
+        append_event({
+            "kind": "sms_received", "handle": f"h{index}", "sender_address": "+15551112222",
+            "body": body, "is_read": True, "seen_at": f"2026-10-30T1{index}:00:00Z",
+        })
+    history = SimpleNamespace(records=lambda: [_call("missed", 5, "15551112222")])
+    return BackendOperations(_Sessions(), BackendDependencies(
+        contacts=contacts, call_history=lambda: history,
+    ))
+
+
+def test_search_groups_every_source(operations) -> None:
+    result = operations.search("alice", 10)
+    assert result["query"] == "alice" and result["limit"] == 10
+    assert result["conversations"]["results"][0]["name"] == "Alice Example"
+    assert result["messages"]["total"] == 0
+    [contact] = result["contacts"]["results"]
+    assert contact["name"] == "Alice Example" and contact["id"]
+    assert result["calls"]["results"][0]["name"] == "Alice Example"
+    assert all(result[group]["available"] for group in (
+        "conversations", "messages", "contacts", "calls",
+    ))
+    report = operations.search("  REPORT ", 10)["messages"]["results"]
+    assert [(hit["handle"], hit["thread_key"]) for hit in report] == [
+        ("h1", operations.list_threads(5)[0]["key"]),
+    ]
+    # The call-history list reports the same id as the search hit.
+    [listed] = operations.list_call_history(5)
+    assert listed["id"] == result["calls"]["results"][0]["id"]
+    assert CallHistoryEntry.from_dict(listed).call_id == listed["id"]
+
+
+def test_search_bounds_and_short_queries(operations) -> None:
+    assert operations.search("a", 10)["messages"] == {
+        "total": 0, "results": [], "available": True,
+    }
+    assert operations.search("e", 10)["contacts"]["results"] == []
+    assert operations.search("e x", 1000)["limit"] == MAX_SEARCH_RESULTS
+    with pytest.raises(InvalidArgumentsError):
+        operations.search("x" * 300, 10)
+    assert operations.status()["search_result_limit"] == MAX_SEARCH_RESULTS
+
+
+def test_search_without_call_history_or_contacts(isolated_state) -> None:
+    operations = BackendOperations(
+        _Sessions(), BackendDependencies(call_history=lambda: None),
+    )
+    result = operations.search("anything", 10)
+    assert result["calls"]["available"] is False
+    assert result["contacts"]["available"] is False
+    assert result["messages"]["available"] is True
+
+
+def test_search_skips_calls_while_storage_is_locked(isolated_state) -> None:
+    locked = SimpleNamespace(status=SimpleNamespace(can_read=False))
+    history = SimpleNamespace(records=lambda: pytest.fail("locked history was read"))
+    operations = BackendOperations(_Sessions(), BackendDependencies(
+        call_history=lambda: history, storage=locked,
+    ))
+    operations._conversations.threads = lambda: []
+    assert operations.search("anything", 10)["calls"]["available"] is False
+
+
+def test_search_writes_nothing_to_disk(operations) -> None:
+    operations.list_threads(5)
+
+    def files():
+        return {
+            path: (path.stat().st_size, path.stat().st_mtime_ns)
+            for root in (config.STATE_DIR, config.CONFIG_DIR) if root.exists()
+            for path in root.rglob("*") if path.is_file()
+        }
+
+    before = files()
+    operations.search("lunch", 10)
+    operations.search("alice", 10)
+    assert files() == before

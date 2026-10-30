@@ -30,6 +30,7 @@ from blueferry.errors import (
     SendOutcomeUnknownError,
 )
 from blueferry.events import canonical_address
+from blueferry.global_search import normalize_query, search_calls, search_threads
 from blueferry.grouping import (
     CORRELATED_ANCS_ROW_IDS_FIELD,
     HISTORY_ROW_ID_FIELD,
@@ -57,10 +58,12 @@ from blueferry.limits import (
     MAX_GROUP_CONFIRMATION_TOKEN_CHARS,
     MAX_OUTGOING_BODY_BYTES,
     MAX_RECENT_QUERY_LIMIT,
+    MAX_SEARCH_RESULTS,
     MAX_THREAD_BODY_CHARS,
     MAX_THREAD_DELETE_COUNT,
     MAX_THREAD_KEY_CHARS,
     MAX_THREAD_QUERY_LIMIT,
+    MIN_SEARCH_QUERY_CHARS,
 )
 from blueferry.named_groups import stored_named_group_key
 from blueferry.notification_open import MAX_ACTIVATION_TOKEN_CHARS, MAX_CLICK_ID_CHARS
@@ -765,6 +768,60 @@ class BackendOperations:
             has_photo=has_photo and (bool(photo) or retry), photo_retry=retry,
         ), photo
 
+    def search(self, query: str, limit: int) -> dict[str, Any]:
+        """Search conversations, messages, contacts and call history at once.
+
+        Runs over what the daemon already holds decrypted in memory (see
+        ``global_search``); nothing is indexed on disk. Call
+        ``prepare_conversations`` first. Each group is cut to ``limit``
+        results and reports its full match count. A group whose source is
+        unavailable (no contact cache, call history off or locked storage)
+        is reported with ``available: false`` instead of failing the search.
+        """
+        selected = normalize_query(query)
+        if len(selected) > MAX_CONTACT_QUERY_CHARS:
+            raise InvalidArgumentsError("search query is too long")
+        bounded = max(1, min(int(limit), MAX_SEARCH_RESULTS))
+        contacts = self.dependencies.contacts
+        history = self._current_call_history()
+        storage = self.dependencies.storage
+        if storage is not None and not storage.status.can_read:
+            history = None
+        result: dict[str, Any] = {
+            "query": selected,
+            "limit": bounded,
+            **{
+                group: {"total": 0, "results": [], "available": available}
+                for group, available in (
+                    ("conversations", True), ("messages", True),
+                    ("contacts", contacts is not None), ("calls", history is not None),
+                )
+            },
+        }
+        if len(selected) < MIN_SEARCH_QUERY_CHARS:
+            return result
+        conversations, messages = search_threads(
+            self._conversations.threads(), selected, bounded,
+        )
+        result["conversations"].update(conversations)
+        result["messages"].update(messages)
+        if contacts is not None:
+            total, page = contacts.cards(0, bounded, selected)
+            photos = self._contact_photos_enabled()
+            result["contacts"].update(total=total, results=[
+                card_summary(
+                    card_id, name, phones, emails, details,
+                    has_photo=photos and photo is not None,
+                )
+                for card_id, (name, phones, emails), details, photo in page
+            ])
+        if history is not None:
+            result["calls"].update(search_calls(
+                history.records(), selected, bounded,
+                contacts.resolve if contacts is not None else None,
+            ))
+        return result
+
     def contact_photo(self, address: str) -> bytes:
         """Return the validated photo of the one contact owning ``address``.
 
@@ -884,6 +941,8 @@ class BackendOperations:
             "mirror_iphone_removals": self.get_mirror_notification_removals(),
             "contact_photos": self._contact_photos_enabled(),
         }
+        # Capability marker for Messages1.Search: results per group.
+        status["search_result_limit"] = MAX_SEARCH_RESULTS
         card_count = getattr(self.dependencies.contacts, "card_count", None)
         if callable(card_count):
             # Also the capability marker for ListContactCards and GetContact.

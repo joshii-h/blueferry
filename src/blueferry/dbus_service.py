@@ -244,6 +244,18 @@ class MessagesService(dbus.service.Object):
         ))
 
     @dbus.service.method(
+        IFACE, in_signature="su", out_signature="s", sender_keyword="sender",
+        async_callbacks=("reply_handler", "error_handler"),
+    )
+    def Search(self, query: str, limit: int, reply_handler, error_handler, sender=None) -> None:
+        """Search conversations, messages, contacts and calls in memory, as JSON."""
+        self._conversation_call(
+            sender, "read", lambda: reply_handler(
+                self._json_response(self.operations.search(str(query), int(limit))),
+            ), error_handler,
+        )
+
+    @dbus.service.method(
         IFACE, in_signature="uus", out_signature="s", sender_keyword="sender"
     )
     def ListContactCards(self, offset: int, limit: int, query: str, sender=None) -> str:
