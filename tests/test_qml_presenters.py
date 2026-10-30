@@ -5359,6 +5359,52 @@ def test_quickshell_now_playing_renders_the_bridge_view(qml_engine) -> None:
         QGuiApplication.processEvents()
 
 
+def test_quickshell_now_playing_shows_the_shared_volume_buttons(qml_engine) -> None:
+    from blueferry.quickshell_bridge import now_playing_view
+
+    theme_component = _component(qml_engine, "data/quickshell/ThemePalette.qml")
+    theme = theme_component.create()
+    assert theme is not None, theme_component.errors()
+    theme.setParent(qml_engine)
+    component = _component(qml_engine, "data/quickshell/QuickshellNowPlaying.qml")
+    strip = component.createWithInitialProperties({"ferryTheme": theme})
+    assert strip is not None, component.errors()
+    theme.setParent(strip)
+    snapshot = {
+        "enabled": True, "available": True,
+        "player": {"state": "playing", "volume": 0.4}, "track": {"title": "Song"},
+        "supported_commands": ["pause", "volume-down"], "supported_commands_known": True,
+    }
+    window = QQuickWindow()
+    window.resize(640, 100)
+    strip.setParentItem(window.contentItem())
+    window.show()
+    QGuiApplication.processEvents()
+    try:
+        strip.setProperty("view", now_playing_view(snapshot))
+        down = strip.findChild(QObject, "nowPlayingVolumeDown")
+        up = strip.findChild(QObject, "nowPlayingVolumeUp")
+        level = strip.findChild(QObject, "nowPlayingVolumeLevel")
+        assert down.property("visible") is True and up.property("visible") is True
+        assert down.property("enabled") is True and up.property("enabled") is False
+        assert level.property("text") == "Volume 40%"
+
+        commands = []
+        strip.commandRequested.connect(commands.append)
+        assert QMetaObject.invokeMethod(down, "clicked")
+        assert commands == ["volume-down"]
+
+        # An older bridge without the volume object: no buttons.
+        strip.setProperty("view", {"visible": True, "title": "Song", "toggle": True})
+        assert down.property("visible") is False and up.property("visible") is False
+        assert level.property("visible") is False
+    finally:
+        window.close()
+        strip.deleteLater()
+        window.deleteLater()
+        QGuiApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+
+
 def test_quickshell_now_playing_stays_hidden_during_empty_reconnects(qml_engine) -> None:
     from blueferry.quickshell_bridge import now_playing_view
 
