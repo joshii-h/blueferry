@@ -75,7 +75,8 @@ def volume_controls(snapshot: object) -> dict[str, Any]:
     Keys: ``visible`` (media control on and the iPhone's media service
     connected), ``up_enabled``/``down_enabled`` (the iPhone offers the step),
     ``level`` (int 0 to 100 or None), ``level_text`` (``""`` when unknown),
-    ``up_tooltip``/``down_tooltip`` (``""`` while hidden), and
+    ``up_tooltip``/``down_tooltip`` (``""`` while hidden),
+    ``up_label``/``down_label`` (short button names, also for screen readers), and
     ``up_command``/``down_command`` (the names to pass to ``SendMediaCommand``).
     """
     visible = isinstance(snapshot, Mapping) and snapshot.get("available") is True
@@ -95,6 +96,8 @@ def volume_controls(snapshot: object) -> dict[str, Any]:
         ),
         "up_tooltip": _("Turn the iPhone volume up") if up else unsupported,
         "down_tooltip": _("Turn the iPhone volume down") if down else unsupported,
+        "up_label": _("Volume Up"),
+        "down_label": _("Volume Down"),
         "up_command": VOLUME_UP,
         "down_command": VOLUME_DOWN,
     }
