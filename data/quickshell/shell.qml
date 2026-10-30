@@ -68,6 +68,16 @@ ShellRoot {
   // Recent iPhone notifications: private, read only while the settings
   // page shows the list in a visible window, forgotten otherwise.
   property var notificationList: ({})
+  property bool notificationPinBusy: false
+  // Muted iPhone apps: the bridge's list with its wording, read when
+  // Settings opens on a daemon that can mute and again on
+  // NotificationAppsChanged; forgotten when Settings closes.
+  property var notificationApps: ({})
+  property bool notificationAppsBusy: false
+  readonly property bool notificationAppsWanted: root.featuresWanted
+    && typeof root.backendStatus.notification_muted_app_count === "number"
+  onNotificationAppsWantedChanged: root.loadNotificationApps()
+  property string notificationPinError: ""
   readonly property bool notificationListWatched: window.visible && root.phoneSettingsVisible
     && phoneSettingsPage.notificationsExpanded
   property bool storagePolicyBusy: false
@@ -179,6 +189,15 @@ ShellRoot {
   onFeaturesWantedChanged: if (root.featuresWanted) root.loadFeatures()
   onNotificationListWatchedChanged: root.refreshNotificationList()
 
+  function loadNotificationApps() {
+    if (root.notificationAppsWanted) {
+      backendBridge.requestLatest("notification_apps", {})
+    } else {
+      backendBridge.cancelLatest("notification_apps")
+      root.notificationApps = ({})
+    }
+  }
+
   function loadFeatures() {
     if (setupController.configured) backendBridge.requestLatest("features", {})
   }
@@ -191,6 +210,7 @@ ShellRoot {
     } else {
       backendBridge.cancelLatest("notifications")
       root.notificationList = ({})
+      root.notificationPinError = ""
     }
   }
 
@@ -519,6 +539,20 @@ ShellRoot {
       } else if (method === "notifications") {
         if (root.notificationListWatched)
           root.notificationList = typeof result === "object" && result !== null ? result : ({})
+      } else if (method === "notification_apps") {
+        if (root.notificationAppsWanted)
+          root.notificationApps = typeof result === "object" && result !== null ? result : ({})
+      } else if (method === "toggle_notification_app") {
+        // The reply is the reread list, with the reason when nothing changed.
+        root.notificationAppsBusy = false
+        if (root.notificationAppsWanted && typeof result === "object" && result !== null)
+          root.notificationApps = result
+      } else if (method === "set_notification_pinned") {
+        // NotificationsChanged follows a change; a refusal rereads the list.
+        root.notificationPinBusy = false
+        root.notificationPinError = typeof result === "object" && result !== null
+          ? String(result.error || "") : ""
+        root.refreshNotificationList()
       }
     }
 
@@ -645,6 +679,16 @@ ShellRoot {
       } else if (method === "doctor") {
         root.doctor = {running: false, ran: true, ok: false, level: "error",
                        summary: "One or more checks failed.", text: message}
+      } else if (method === "notification_apps") {
+        root.notificationApps = ({})
+      } else if (method === "toggle_notification_app") {
+        root.notificationAppsBusy = false
+        root.errorText = message || "Could not change the muted apps."
+        root.loadNotificationApps()
+      } else if (method === "set_notification_pinned") {
+        root.notificationPinBusy = false
+        root.notificationPinError = message || "Could not change the pin."
+        root.refreshNotificationList()
       } else if (method === "notifications") {
         if (root.notificationListWatched)
           root.notificationList = {rows: [], failed: true,
@@ -663,6 +707,8 @@ ShellRoot {
         root.contactsOnlyNotificationsBusy = false
         root.ancsActionsBusy = false
         root.phoneAudioBusy = false
+        root.notificationPinBusy = false
+        root.notificationAppsBusy = false
         if (root.mediaControl.busy)
           root.mediaControl.failed(root.backendStatus.media_control_enabled === true)
         if (root.mprisPlayer.busy)
@@ -703,6 +749,11 @@ ShellRoot {
       else if (name === "now-playing-changed") root.refreshNowPlaying()
       else if (name === "notifications-changed" && root.notificationListWatched)
         root.refreshNotificationList()
+      else if (name === "notification-apps-changed") {
+        // Muting also dims the app's rows in a shown list.
+        if (root.notificationAppsWanted) root.loadNotificationApps()
+        if (root.notificationListWatched) root.refreshNotificationList()
+      }
       else if (name === "host" && data && typeof data.bluetooth_restart_command === "string")
         root.bluetoothRestartCommand = data.bluetooth_restart_command
       else if (name === "tether-changed") backendBridge.requestLatest("tether_state", {})
@@ -1374,6 +1425,8 @@ ShellRoot {
           featurePending: root.featurePending
           doctor: root.doctor
           notificationList: root.notificationList
+          notificationPinError: root.notificationPinError
+          notificationApps: root.notificationApps
           contactsSyncNotice: root.contactsSyncNotice
           busy: ({notifications: root.notificationPolicyBusy,
                   contactsOnly: root.contactsOnlyNotificationsBusy,
@@ -1394,6 +1447,8 @@ ShellRoot {
                   syncContacts: root.syncContactsBusy,
                   features: Object.keys(root.featurePending).length > 0,
                   restart: root.restartBusy,
+                  pin: root.notificationPinBusy,
+                  notificationApps: root.notificationAppsBusy,
                   storage: root.storagePolicyBusy})
           visible: root.phoneSettingsVisible
           Layout.fillWidth: true
@@ -1419,6 +1474,15 @@ ShellRoot {
               root.featurePending = pending
             }
             if (method === "restart_backend") root.restartBusy = true
+            if (method === "toggle_notification_app") {
+              if (root.notificationAppsBusy) return
+              root.notificationAppsBusy = true
+            }
+            if (method === "set_notification_pinned") {
+              if (root.notificationPinBusy) return
+              root.notificationPinBusy = true
+              root.notificationPinError = ""
+            }
             if (method === "doctor") {
               if (root.doctor.running === true) return
               root.doctor = Object.assign({}, root.doctor, {running: true})

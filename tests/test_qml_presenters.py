@@ -5810,6 +5810,138 @@ def test_quickshell_notification_list_is_shown_on_request_and_forgotten_when_hid
     close()
 
 
+def test_quickshell_notification_list_pins_rows_and_dims_removed_and_muted_ones(
+    qml_engine, quickshell_setup,
+):
+    from blueferry.quickshell_bridge import notifications_reply
+
+    page, calls, close = _quickshell_settings_page(
+        qml_engine, quickshell_setup, {"daemon": True},
+    )
+    _quickshell_press(page.findChild(QObject, "notificationListButton"))
+
+    def record(key, app_id, **flags):
+        return {"key": key, "app_id": app_id, "app_name": app_id, "title": "T",
+                "pinned": False, "removed": False, "actionable": True, **flags}
+
+    snapshot = {
+        "enabled": True, "content": True, "pins_max": 1,
+        "notifications": [
+            record("k0", "mail", pinned=True),
+            record("k1", "chat"),
+            record("k2", "mail", removed=True, actionable=False),
+        ],
+    }
+    page.setProperty("notificationList", notifications_reply(
+        snapshot, "", muted=frozenset({"chat"}),
+    ))
+    QGuiApplication.processEvents()
+    [pinned_button] = _quickshell_items(page, "notificationPin0")
+    [chat_button] = _quickshell_items(page, "notificationPin1")
+    [marker] = _quickshell_items(page, "notificationPinned0")
+    [removed] = _quickshell_items(page, "notificationRemoved2")
+    assert pinned_button.property("text") == "Unpin" and marker.property("text") == "Pinned"
+    assert chat_button.property("text") == "Pin"
+    # The one pin place is taken: pinning waits, unpinning works.
+    assert pinned_button.property("enabled") is True
+    assert chat_button.property("enabled") is False
+    limit = page.findChild(QObject, "notificationPinLimit")
+    assert limit.property("text") == "At most 1 notifications can be pinned; unpin one first."
+    assert removed.property("text") == "Removed on iPhone"
+    rows = [item.parentItem().parentItem() for item in (pinned_button, chat_button)]
+    assert rows[0].property("opacity") == 1.0
+    assert rows[1].property("opacity") < 1.0  # muted app
+    assert removed.parentItem().property("opacity") < 1.0  # removed on the iPhone
+
+    _quickshell_press(pinned_button)
+    assert calls[-1] == ("set_notification_pinned", {"key": "k0", "pinned": False})
+    page.setProperty("busy", {"pin": True})
+    QGuiApplication.processEvents()
+    assert pinned_button.property("enabled") is False
+    page.setProperty("busy", {})
+    page.setProperty("notificationPinError", "This notification is no longer in the list.")
+    QGuiApplication.processEvents()
+    error = page.findChild(QObject, "notificationPinError")
+    assert error.property("visible") is True
+    assert error.property("text") == "This notification is no longer in the list."
+
+    # An older daemon without keys: no pin control at all.
+    page.setProperty("notificationList", notifications_reply({
+        "enabled": True, "content": True, "notifications": [{"app_name": "Mail"}],
+    }, ""))
+    QGuiApplication.processEvents()
+    [old] = _quickshell_items(page, "notificationPin0")
+    assert old.property("visible") is False
+    close()
+
+
+def test_quickshell_mutes_apps_by_index_with_the_bridge_wording(qml_engine, quickshell_setup):
+    from blueferry.quickshell_bridge import notification_apps_reply
+
+    payload = {
+        "apps": [
+            {"app_id": "com.example.chat", "app_name": "<b>Chat</b>", "muted": True,
+             "seen": True},
+            {"app_id": "com.example.mail", "app_name": "", "muted": False, "seen": False},
+        ],
+        "mute_available": True, "all_notifications": True, "env_blocklist": True,
+    }
+    page, calls, close = _quickshell_settings_page(
+        qml_engine, quickshell_setup, {"daemon": True},
+    )
+    page.setProperty("notificationApps", notification_apps_reply(payload))
+    QGuiApplication.processEvents()
+    label = page.findChild(QObject, "notificationAppsLabel")
+    # Hidden without the daemon's capability key in the status.
+    assert label.property("visible") is False
+    assert _quickshell_items(page, "notificationAppToggle0") == []
+
+    page.setProperty("status", {"daemon": True, "notification_muted_app_count": 1})
+    QGuiApplication.processEvents()
+    assert label.property("visible") is True and label.property("text") == "Muted apps"
+    [chat_name] = _quickshell_items(page, "notificationAppName0")
+    [mail_name] = _quickshell_items(page, "notificationAppName1")
+    [mail_subtitle] = _quickshell_items(page, "notificationAppSubtitle1")
+    [chat_toggle] = _quickshell_items(page, "notificationAppToggle0")
+    [mail_toggle] = _quickshell_items(page, "notificationAppToggle1")
+    assert chat_name.property("text") == "<b>Chat</b>"
+    assert _plain_text_format(qml_engine, chat_name)
+    assert mail_name.property("text") == "com.example.mail"
+    assert "No notification since BlueFerry started" in mail_subtitle.property("text")
+    assert (chat_toggle.property("text"), mail_toggle.property("text")) == ("Unmute", "Mute")
+    hint = page.findChild(QObject, "notificationAppsHint")
+    assert "BLUEFERRY_ANCS_APP_BLOCKLIST" in hint.property("text")
+
+    _quickshell_press(mail_toggle)
+    assert calls[-1] == (
+        "toggle_notification_app", {"index": 1, "app_id": "com.example.mail"},
+    )
+    page.setProperty("busy", {"notificationApps": True})
+    QGuiApplication.processEvents()
+    assert mail_toggle.property("enabled") is False
+    page.setProperty("busy", {})
+    page.setProperty("notificationApps", notification_apps_reply(
+        payload, error="The app list changed meanwhile; check it and try again.",
+    ))
+    QGuiApplication.processEvents()
+    assert page.findChild(QObject, "notificationAppsError").property("text") == (
+        "The app list changed meanwhile; check it and try again."
+    )
+
+    # Storage locked: rows stay listed, the toggles are disabled.
+    page.setProperty("notificationApps", notification_apps_reply(
+        {**payload, "mute_available": False},
+    ))
+    QGuiApplication.processEvents()
+    [locked] = _quickshell_items(page, "notificationAppToggle1")
+    assert locked.property("enabled") is False
+
+    page.setProperty("notificationApps", notification_apps_reply({}, supported=False))
+    QGuiApplication.processEvents()
+    assert label.property("visible") is False
+    close()
+
+
 @pytest.mark.private_dbus
 def test_quickshell_reads_settings_and_notifications_only_on_events(
     tmp_path, quickshell_environment,
@@ -5921,6 +6053,34 @@ Item {
         phoneSettingsPage.operationRequested("doctor", {})
         phoneSettingsPage.operationRequested("doctor", {})
         check(backendBridge.take("doctor") === 1, "diagnostics ran twice")
+
+        // Muted apps: read on a daemon that can mute, reread on the event.
+        backendBridge.take("")
+        backendBridge.response("status", 30, {daemon: true, notification_muted_app_count: 0})
+        check(backendBridge.take("latest:notification_apps") === 1, "muted apps not read")
+        backendBridge.response("notification_apps", 31, {supported: true, rows: [{app_id: "a"}]})
+        check(root.notificationApps.rows.length === 1, "muted apps reply ignored")
+        phoneSettingsPage.operationRequested("toggle_notification_app", {index: 0, app_id: "a"})
+        phoneSettingsPage.operationRequested("toggle_notification_app", {index: 0, app_id: "a"})
+        check(backendBridge.take("toggle_notification_app") === 1, "toggle sent twice")
+        backendBridge.response("toggle_notification_app", 32, {supported: true, saved: true, rows: []})
+        check(!root.notificationAppsBusy && root.notificationApps.rows.length === 0, "toggle reply ignored")
+        backendBridge.eventReceived("notification-apps-changed", null)
+        check(backendBridge.take("latest:notification_apps") === 1, "apps event did not reread")
+        // Pinning: one request at a time, a refusal shown and the list reread.
+        phoneSettingsPage.notificationsExpanded = true
+        backendBridge.take("")
+        phoneSettingsPage.operationRequested("set_notification_pinned", {key: "k", pinned: true})
+        phoneSettingsPage.operationRequested("set_notification_pinned", {key: "k", pinned: true})
+        check(backendBridge.take("set_notification_pinned") === 1, "pin sent twice")
+        backendBridge.response("set_notification_pinned", 33, {saved: false, error: "full"})
+        check(!root.notificationPinBusy && root.notificationPinError === "full", "pin refusal lost")
+        check(backendBridge.take("latest:notifications") === 1, "refused pin did not reread")
+        backendBridge.eventReceived("notification-apps-changed", null)
+        check(backendBridge.take("latest:notifications") === 1, "mute did not redim the list")
+        root.phoneSettingsVisible = false
+        check(root.notificationApps.rows === undefined, "closed settings kept the apps")
+        check(root.notificationPinError === "", "hidden list kept the pin error")
         console.log("BLUEFERRY_QS1_OK")
       } catch (error) {
         console.error(error);
