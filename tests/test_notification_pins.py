@@ -312,8 +312,10 @@ def test_pins_follow_the_storage_policy(tmp_path, policy) -> None:
 # -- backend operation ---------------------------------------------------------
 
 
-def ops(log=None, *, readable=True) -> BackendOperations:
-    storage = SimpleNamespace(status=SimpleNamespace(can_read=readable, detail="locked"))
+def ops(log=None, *, readable=True, policy="encrypted") -> BackendOperations:
+    storage = SimpleNamespace(status=SimpleNamespace(
+        policy=policy, can_read=readable, detail="locked",
+    ))
     return BackendOperations(object(), BackendDependencies(  # type: ignore[arg-type]
         notification_log=log, storage=storage,  # type: ignore[arg-type]
     ))
@@ -332,6 +334,16 @@ def test_set_notification_pinned_errors_and_result() -> None:
     assert operations.set_notification_pinned("k1", True) is True
     listed = operations.list_notifications(5)
     assert listed["pins_max"] == 20
+    assert listed["notifications"][0]["pinned"] is True  # type: ignore[index]
+
+
+def test_pins_stay_in_memory_when_local_data_is_not_retained() -> None:
+    log = make_log()
+    log.handle_ancs(event(1))
+    # "none" never reports readable storage, yet the list and its pins work.
+    operations = ops(log, readable=False, policy="none")
+    assert operations.set_notification_pinned("k1", True) is True
+    listed = operations.list_notifications(5)
     assert listed["notifications"][0]["pinned"] is True  # type: ignore[index]
 
 
