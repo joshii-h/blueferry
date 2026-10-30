@@ -190,10 +190,11 @@ class PhoneOverviewScreen(ModalScreen[str | None]):
             yield Static("", id="phone-overview-connection", classes="phone-overview-line")
             yield Static("", id="phone-overview-status", classes="phone-overview-line")
             yield Static("", id="phone-overview-media", classes="phone-overview-line")
+            labels = volume_controls()  # the shared short button names
             with Horizontal(id="phone-overview-media-controls"):
-                yield Button(_("Volume Down  -"), id="phone-overview-volume-down")
+                yield Button(f"{labels['down_label']}  -", id="phone-overview-volume-down")
                 yield Button(_("Play/Pause  p"), id="phone-overview-play")
-                yield Button(_("Volume Up  +"), id="phone-overview-volume-up")
+                yield Button(f"{labels['up_label']}  +", id="phone-overview-volume-up")
             yield Static("", id="phone-overview-hints", classes="phone-overview-hint")
             with Horizontal(classes="dialog-actions"):
                 yield Button(_("Close"), id="phone-overview-close")
