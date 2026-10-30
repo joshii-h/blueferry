@@ -76,6 +76,13 @@ MAX_PENDING_READ_RECEIPTS = 2_000
 MAX_DESKTOP_MESSAGE_TRACKERS = 256
 MAX_PHONEBOOK_CONTACTS = 65_535
 MAX_CONTACT_ADDRESSES_PER_CARD = 64
+# Contact-card details beyond the messaging addresses (labels, postal
+# addresses, organization). Each text value is cut to MAX_CONTACT_DETAIL_CHARS
+# and each label to MAX_CONTACT_LABEL_CHARS; a card keeps at most
+# MAX_CONTACT_POSTAL_ADDRESSES_PER_CARD postal addresses.
+MAX_CONTACT_DETAIL_CHARS = 512
+MAX_CONTACT_LABEL_CHARS = 64
+MAX_CONTACT_POSTAL_ADDRESSES_PER_CARD = 16
 
 # Contact photos (opt-in). Measured on one iPhone (iOS 27, PBAP unfiltered
 # pull): iOS includes PHOTO, as small JPEG thumbnails. 42 of 3730 contacts
