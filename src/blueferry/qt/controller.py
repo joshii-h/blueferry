@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 from PySide6.QtCore import (
     SLOT,
@@ -17,10 +17,16 @@ from PySide6.QtCore import (
 )
 from PySide6.QtDBus import QDBusConnection
 
-from blueferry import __version__, media_volume_view, phone_audio_view, phone_overview
+from blueferry import (
+    __version__,
+    media_volume_view,
+    notification_pin_view,
+    phone_audio_view,
+    phone_overview,
+)
 from blueferry.backend_lifecycle import ensure_backend_current, restart_backend
 from blueferry.bluetooth_devices import iphone_candidates
-from blueferry.client import BackendClient, TetherUnsupportedError
+from blueferry.client import BackendClient, BackendError, TetherUnsupportedError
 from blueferry.conversation_state import (
     ConversationSnapshot,
     ConversationState,
@@ -45,6 +51,18 @@ from blueferry.setup_client import (
 )
 from blueferry.tel_links import dial_request, known_contact_name
 from blueferry.tether_status import TetherStatus
+
+
+def _pin_failure_text(error: BackendError) -> str:
+    """The shared pin error text, from the D-Bus error behind ``error``."""
+    cause = error.__cause__
+    get_name = getattr(cause, "get_dbus_name", None)
+    get_message = getattr(cause, "get_dbus_message", None)
+    if callable(get_name):
+        message = get_message() if callable(get_message) else ""
+        return notification_pin_view.pin_error_text(get_name(), message)
+    return notification_pin_view.pin_error_text("", str(error))
+
 
 # Bounds on the per-window avatar cache (least recently used entries are
 # dropped). The count covers a long list of small photos; the byte bound
@@ -198,6 +216,8 @@ class BridgeController(QObject):
         self._notifications_timer.setSingleShot(True)
         self._notifications_timer.setInterval(150)
         self._notifications_timer.timeout.connect(self.refreshNotifications)
+        # The pin error of the last failed pin/unpin, shown in the tab.
+        self._pin_error = ""
         self.devicesChanged.connect(self.phoneIdentityChanged)
         self.configuredChanged.connect(self.phoneIdentityChanged)
         self._tether: dict = {"available": False}
@@ -481,25 +501,32 @@ class BridgeController(QObject):
             self.refreshNotifications()
             return
         self._notifications_timer.stop()
+        self._pin_error = ""
         if self._notifications:
             self._notifications = []
             self.notificationsChanged.emit()
+
+    def _notifications_info_from(self, snapshot: Mapping[str, object]) -> dict:
+        maximum = snapshot.get("pins_max")
+        return {
+            "enabled": snapshot.get("enabled") is True,
+            "content": snapshot.get("content") is True,
+            "error": "",
+            "pinLimitReached": notification_pin_view.pin_limit_reached(snapshot),
+            "pinLimitText": notification_pin_view.pin_limit_text(maximum),
+            "pinError": self._pin_error,
+        }
 
     @Slot()
     def refreshNotifications(self) -> None:
         if not self._notifications_watched:
             return
-
         def completed(value: object) -> None:
             if not self._notifications_watched:
                 return
             snapshot = value if isinstance(value, dict) else {}
             self._notifications = phone_link.notification_rows(snapshot.get("notifications"))
-            self._notifications_info = {
-                "enabled": snapshot.get("enabled") is True,
-                "content": snapshot.get("content") is True,
-                "error": "",
-            }
+            self._notifications_info = self._notifications_info_from(snapshot)
             self.notificationsChanged.emit()
 
         def failed(message: str) -> None:
@@ -515,6 +542,37 @@ class BridgeController(QObject):
     def _notificationsInvalidated(self) -> None:
         if self._notifications_watched:
             self._notifications_timer.start()
+
+    def _set_pin_error(self, text: str) -> None:
+        if text != self._pin_error or self._notifications_info.get("pinError") != text:
+            self._pin_error = text
+            self._notifications_info = {**self._notifications_info, "pinError": text}
+            self.notificationsChanged.emit()
+
+    @Slot(str, bool)
+    def setNotificationPinned(self, key: str, pinned: bool) -> None:
+        """Pin or unpin one listed notification (Messages1.SetNotificationPinned)."""
+        selected = str(key or "")
+        if not selected:
+            return
+        wanted = bool(pinned)
+
+        def operation() -> object:
+            try:
+                return self._backend.set_notification_pinned(selected, wanted)
+            except BackendError as error:
+                raise BackendError(_pin_failure_text(error)) from error
+
+        def completed(_value: object) -> None:
+            self._set_pin_error("")
+            self.refreshNotifications()
+
+        def failed(message: str) -> None:
+            self._set_pin_error(message or notification_pin_view.GENERIC_ERROR_TEXT)
+            # An unknown key means the list moved on; show the current one.
+            self.refreshNotifications()
+
+        self._run(operation, completed, failed, busy=False)
 
     @Property(str, notify=callHistoryChanged)
     def callHistoryError(self) -> str:

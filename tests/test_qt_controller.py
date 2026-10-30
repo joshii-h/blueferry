@@ -1836,7 +1836,11 @@ def test_notifications_are_fetched_only_while_watched_and_forgotten_after(monkey
     assert backend.notification_calls == 1
     assert controller.notifications[0]["app"] == "com.example.chat"
     assert controller.notifications[0]["body"] == ""
-    assert controller.notificationsInfo == {"enabled": True, "content": False, "error": ""}
+    assert controller.notificationsInfo == {
+        "enabled": True, "content": False, "error": "",
+        # An older daemon reports no pin limit.
+        "pinLimitReached": False, "pinLimitText": "", "pinError": "",
+    }
 
     controller.watchNotifications(False)
     assert controller.notifications == []
@@ -2065,3 +2069,101 @@ def test_media_volume_follows_now_playing_and_steps_through_media_commands():
     controller._pool.waitForDone(1000)
     assert backend.media_commands == ["volume-up"]
     assert controller.busy is False
+
+
+class _PinBackend(_PhoneLinkBackend):
+    def __init__(self, *, muted=()):
+        super().__init__()
+        self.pin_calls = []
+        self.apps_calls = 0
+        self.muted = set(muted)
+        self.pin_error = None
+
+    def notifications(self, limit=50):
+        self.notification_calls += 1
+        return {"enabled": True, "content": True, "pins_max": 2, "notifications": [
+            {"key": "k1", "id": 1, "app_id": "com.example.chat", "app_name": "Chat",
+             "time": "2026-10-06T10:00:00+00:00", "pinned": True, "removed": True,
+             "actionable": False, "title": "Hi"},
+            {"key": "k2", "id": 2, "app_id": "com.example.mail", "app_name": "Mail",
+             "time": "2026-10-06T09:00:00+00:00", "pinned": False, "removed": False,
+             "actionable": True},
+        ]}
+
+    def notification_apps(self):
+        self.apps_calls += 1
+        return {"apps": [
+            {"app_id": app, "app_name": app.rsplit(".", 1)[-1].title(),
+             "muted": app in self.muted, "seen": True}
+            for app in ("com.example.chat", "com.example.mail")
+        ], "max_muted": 100, "mute_available": True, "all_notifications": True}
+
+    def set_notification_pinned(self, key, pinned):
+        self.pin_calls.append((key, pinned))
+        if self.pin_error is not None:
+            raise self.pin_error
+        return pinned
+
+    def set_notification_app_muted(self, app_id, muted):
+        if app_id == "fail":
+            raise BackendError("local data is locked")
+        (self.muted.add if muted else self.muted.discard)(app_id)
+        return muted
+
+
+def test_notification_rows_carry_pin_state(monkeypatch):
+    backend = _PinBackend()
+    controller = _inline_controller(monkeypatch, backend)
+    controller.watchNotifications(True)
+
+    first, second = controller.notifications
+    assert first["key"] == "k1" and first["pinned"] is True and first["can_pin"] is True
+    assert first["removed_text"] == "Removed on iPhone"
+    assert first["pin_label"] == "Unpin"
+    assert second["pin_label"] == "Pin"
+    info = controller.notificationsInfo
+    # One of at most two pinned: pinning stays possible.
+    assert info["pinLimitReached"] is False
+    assert info["pinLimitText"].startswith("At most 2 notifications")
+    assert info["pinError"] == ""
+
+
+def test_pinning_refreshes_the_list_and_explains_a_failure(monkeypatch):
+    class DBusFailure(Exception):
+        def get_dbus_name(self):
+            return "io.weirdware.BlueFerry.Error.InvalidArgs"
+
+        def get_dbus_message(self):
+            return "at most 20 notifications can be pinned"
+
+    backend = _PinBackend()
+    controller = _inline_controller(monkeypatch, backend)
+    controller.watchNotifications(True)
+    calls = backend.notification_calls
+
+    controller.setNotificationPinned("k2", True)
+    controller.setNotificationPinned("", True)
+    assert backend.pin_calls == [("k2", True)]
+    assert backend.notification_calls == calls + 1
+
+    try:
+        raise BackendError("at most 20 notifications can be pinned") from DBusFailure()
+    except BackendError as error:
+        backend.pin_error = error
+    controller.setNotificationPinned("k2", True)
+    assert controller.notificationsInfo["pinError"] == (
+        "The pinned list is full; unpin a notification first."
+    )
+    # The global error banner stays clean; leaving the tab forgets the error.
+    assert controller.errorText == ""
+    controller.watchNotifications(False)
+    backend.pin_error = None
+    controller.watchNotifications(True)
+    assert controller.notificationsInfo["pinError"] == ""
+
+
+def test_notification_rows_without_pin_keys_hide_the_pin_control():
+    rows = phone_link.notification_rows([{"app_id": "com.example.chat", "time": ""}, "junk"])
+    assert len(rows) == 1
+    assert rows[0]["can_pin"] is False and rows[0]["key"] == ""
+    assert rows[0]["app"] == "com.example.chat"

@@ -12,6 +12,7 @@ from typing import Any
 
 from blueferry import phone_overview
 from blueferry.i18n import _
+from blueferry.notification_pin_view import pin_row_extras
 from blueferry.time_display import format_message_timestamp
 
 
@@ -38,17 +39,25 @@ def feature_hints(status: Mapping[str, Any]) -> dict[str, str]:
     return hints
 
 
-def notification_rows(records: object) -> list[dict[str, str]]:
-    """Normalize ListNotifications records for the Notifications tab."""
-    rows: list[dict[str, str]] = []
+def notification_rows(records: object) -> list[dict[str, Any]]:
+    """Normalize ListNotifications records for the Notifications tab.
+
+    Each row carries the shared pin fields
+    (:func:`blueferry.notification_pin_view.pin_row_extras`).
+    """
+    rows: list[dict[str, Any]] = []
     if not isinstance(records, list):
         return rows
     for record in records:
         if not isinstance(record, Mapping):
             continue
-        app = str(record.get("app_name") or record.get("app_id") or _("iPhone app"))
+        app_id = record.get("app_id")
+        app_id = app_id if isinstance(app_id, str) else ""
+        app = str(record.get("app_name") or app_id or _("iPhone app"))
         rows.append({
+            **pin_row_extras(record),
             "app": app,
+            "app_id": app_id,
             "time": format_message_timestamp(str(record.get("time") or "")),
             "title": str(record.get("title") or ""),
             "subtitle": str(record.get("subtitle") or ""),
