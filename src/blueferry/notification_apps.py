@@ -140,6 +140,11 @@ class MutedAppsStore:
         self._preference = PrivatePreference(
             path or config.SETTINGS_JSON, SETTINGS_KEY, storage,
         )
+        # Every iPhone popup asks is_muted and every GetStatus counts the
+        # mutes, so keep the decrypted list until it is written or the
+        # storage state changes instead of reading settings.json each time.
+        self._cached: dict[str, str] | None = None
+        self._cached_for: object = None
 
     @property
     def available(self) -> bool:
@@ -150,10 +155,31 @@ class MutedAppsStore:
         )
 
     def migrate(self) -> None:
+        self.invalidate()
         self._preference.migrate()
+
+    def invalidate(self) -> None:
+        """Forget the cached list; the next read decrypts settings.json again."""
+        self._cached = None
+        self._cached_for = None
+
+    def _storage_state(self) -> object:
+        storage = self._storage
+        if storage is None:
+            return None
+        status = storage.status
+        return (status.policy, getattr(status, "state", None), status.can_read)
 
     def entries(self) -> dict[str, str]:
         """Valid saved entries in saved order; empty while unreadable."""
+        state = self._storage_state()
+        if self._cached is None or self._cached_for != state:
+            selected = self._read_entries()
+            # Reading can fail closed and so change the state it ran under.
+            self._cached, self._cached_for = selected, self._storage_state()
+        return dict(self._cached)
+
+    def _read_entries(self) -> dict[str, str]:
         raw = self._preference.read()
         if not isinstance(raw, list):
             return {}
@@ -216,11 +242,13 @@ class MutedAppsStore:
         return True
 
     def _write(self, entries: dict[str, str]) -> None:
+        self.invalidate()
         self._preference.write([
             {"app_id": app_id, "app_name": name} for app_id, name in entries.items()
         ])
 
     def clear(self) -> None:
+        self.invalidate()
         self._preference.clear()
 
 
@@ -268,6 +296,11 @@ class NotificationApps:
 
     def changed(self) -> None:
         self._notify(self._on_changed)
+
+    def storage_changed(self) -> None:
+        """Saved mutes became readable or unreadable with the storage."""
+        self.store.invalidate()
+        self.changed()
 
     @staticmethod
     def _notify(callback: Callable[[], None] | None) -> None:
