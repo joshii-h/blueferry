@@ -225,8 +225,10 @@ und erscheint in der Unterhaltung.
   eigenen Text schreiben.
 - Nur Anrufe mit Nummer bekommen diese Wahl; unterdrückte oder unbekannte
   Anrufer lassen sich nur ablehnen.
-- Lässt sich der Text nicht senden (etwa ohne Nachrichten-Verbindung), meldet
-  BlueFerry das; der Anruf bleibt abgelehnt.
+- Ohne Nachrichten-Verbindung wird der Anruf nicht abgelehnt, und BlueFerry
+  sagt warum. Scheitert das Senden erst nach dem Ablehnen, meldet BlueFerry
+  das; der Anruf bleibt abgelehnt. Ein eigener Text darf bis zu 1000 Zeichen
+  haben.
 - Die gespeicherten Antworten bearbeitest du in den Einstellungen unter
   **Calls & Audio**: bis zu 5 Zeilen mit je höchstens 160 Zeichen. Bis du sie
   änderst, stehen drei englische Antworten bereit (übersetzt, wo es eine
