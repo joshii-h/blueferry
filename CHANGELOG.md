@@ -4,6 +4,11 @@
 
 ### Added
 
+- Decline a ringing call with a text to the caller: saved replies (up to 5,
+  translated defaults) or your own text, through
+  `Calls1.DeclineWithMessage`, `SetCallQuickReplies`,
+  `blueferry calls decline-with-message` and `blueferry calls replies`.
+  A text that cannot be sent is reported; the call stays declined.
 - Report a stable opaque phone profile ID in `GetStatus` for clients that need
   to scope local per-phone metadata.
 - Choose the speaker and microphone for phone calls, saved for every call or
