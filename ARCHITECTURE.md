@@ -261,13 +261,15 @@ All paths are relative to `src/blueferry/` unless noted.
 | `qt/qml/GroupConfirmationDialog.qml` | Group recipient confirmation before sending. |
 | `qt/qml/NewMessageDialog.qml` | New message composition. |
 | `qt/qml/PhoneCard.qml` | The phone card left of the tabs: name, connection, battery/signal, now playing and quick switches (sound, away lock); opt-ins that are off stay greyed out with a hint. Folds behind a header button in a narrow window. |
-| `qt/qml/CallsTab.qml` | Calls tab: running calls as cards (answer, hold, hang up), their speaker and microphone with a switch for this call only, dial pad, and the day-grouped recent calls (`RecentCallsPage.qml`). |
+| `qt/qml/CallsTab.qml` | Calls tab: running calls as cards (answer, hold, hang up, decline with a message), their speaker and microphone with a switch and a mute button for this call only, dial pad, and the day-grouped recent calls (`RecentCallsPage.qml`). |
+| `qt/qml/DeclineMessageDialog.qml` | Saved replies and an own-text field for declining a ringing call with a message (`quick_reply_view`); closes when the call stops ringing. |
 | `qt/qml/NotificationsTab.qml` | Notifications tab: the opt-in recent-notification list, loaded only while shown. |
 | `qt/qml/ui/` | Shared building blocks of the design: `SectionHeader`, `ListRow`, `CardFrame`, `FilterBar`, `EmptyState`, `Notice`. |
 | `qt/qml/ContactPhotoSettings.qml` | Contact-photo checkbox; loaded only for daemons that report `contact_photos`. |
 | `qt/qml/OtpAutocopySettings.qml` | One-time code auto-copy checkbox; loaded only for daemons that report `otp_autocopy`. |
 | `qt/qml/PhoneCallsSettings.qml` | Phone-calls opt-in checkbox; loaded only for daemons that report `calls_enabled`. |
 | `qt/qml/CallAudioSettings.qml` | Speaker and microphone for calls (`call_audio_view.settings_view`); loaded only for daemons that report `calls_audio_output`. |
+| `qt/qml/QuickReplySettings.qml` | Saved replies for declining a call: list, add, edit, remove, checked with `quick_reply_view.reply_error`; loaded only for daemons that report `calls_quick_replies`. |
 | `qt/qml/PhoneStatusIndicator.qml` | Optional iPhone battery/signal indicator (loaded only when values are known; plain-text tooltip). |
 | `qt/qml/ExpandingMessageComposer.qml` | Growing message editor. |
 | `qt/qml/MessageBubble.qml` | Message bubble. |
