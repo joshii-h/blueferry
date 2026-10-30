@@ -809,6 +809,37 @@ iPhone's connection once (see
 [Reconnect and self-healing](#reconnect-and-self-healing)). Audio routing
 itself is PipeWire's job; BlueFerry only controls the call.
 
+## Companion tools (optional)
+
+The Qt phone card (section **Tools**) and `blueferry tools` can start three
+programs that BlueFerry does not ship. Each entry only works when its tool
+is installed; otherwise it stays greyed out with what to install. These are
+local client actions; the daemon is not involved.
+
+- **Mirror iPhone screen** starts [UxPlay](https://github.com/FDH2/UxPlay).
+  A `uxplay.desktop` entry (with your own UxPlay options) is used when
+  present, otherwise `uxplay -n <host name> -nh`. On the iPhone, open Control
+  Center, tap Screen Mirroring and choose this computer. The same entry stops
+  the UxPlay that BlueFerry started (tracked by a pid file in
+  `$XDG_RUNTIME_DIR/blueferry`, never by a process search).
+- **Send a file (LocalSend)** opens the Flathub app
+  `org.localsend.localsend_app`, or `localsend` from PATH.
+- **iPhone photos (USB)** needs `ifuse` and libimobiledevice (`idevice_id`,
+  `idevicepair`) and an iPhone on a USB cable. It mounts the camera roll at
+  `$XDG_RUNTIME_DIR/blueferry/iphone-photos` (mode 0700) and opens `DCIM` in
+  the file manager; **Eject** runs `fusermount3 -u`. If the iPhone does not
+  trust this computer yet, unlock it and confirm "Trust This Computer"; "Ask
+  the iPhone again" runs `idevicepair pair`.
+
+```sh
+blueferry tools            # which tools are ready
+blueferry tools mirror     # start or stop UxPlay
+blueferry tools send
+blueferry tools photos     # mount and open the camera roll
+blueferry tools eject
+blueferry tools pair       # ask the iPhone to trust this computer
+```
+
 ## Plugins (optional)
 
 Features outside messaging run as separate plugin processes on your session
@@ -816,22 +847,29 @@ bus, not inside the backend (see [PLUGINS.md](PLUGINS.md)). Nothing is
 installed by default.
 
 - **Install** with `blueferry plugins install URL` (any https Git URL) or
-  pick one from the curated store (`blueferry plugins available`). Every install and update
+  pick one from the curated store (`blueferry plugins available`), or from
+  **Settings › Plugins** in the Qt client. Every install and update
   shows the source, the pinned ref and commit, the capabilities and the
   command the plugin's manifest runs (`Exec`), and asks first. Each plugin
   gets its own virtual environment under `~/.local/share/blueferry/plugins`;
   pip fetches its dependencies from the network. Everything runs as you;
   nothing asks for root.
-- **Settings** of a plugin come from its schema:
+- **Settings** of a plugin come from its schema: a form in the Qt client with
+  help links, **Test connection**, where offered a browser sign-in and the
+  plugin's own buttons (such as "Set up iPhone"), or
   `blueferry plugins config ID --set KEY=VALUE --secret KEY` (`--test`,
-  `--login`). BlueFerry stores no plugin secrets; each plugin keeps its own
-  (the published plugins use the desktop keyring).
+  `--login`, `--action ACTION`). BlueFerry stores no plugin secrets; each
+  plugin keeps its own (the published plugins use the desktop keyring).
 - **Disable** stops BlueFerry from calling a plugin at once and stops a
   plugin process it installed; `blueferry plugins disable ID`.
 - **Card and Send to**: `blueferry cards` lists what plugins offer, for
   example the next calendar entry or a running transfer, with their
   actions; `blueferry send FILE --to TARGET` hands files to a plugin target
   such as "iPhone (LocalSend)".
+- **From Plugins** in the Qt phone card shows the same items with buttons;
+  a plugin that fails shows a dimmed line. **Send to…** at the end of that
+  section hands files to a plugin target, and an item can also take files
+  directly (file dialog or drop).
 - **Popups** from plugins follow BlueFerry's notification setting: off with
   "None", only the plugin name while notification content is hidden, at most
   six a minute per plugin. The popup's text never travels on a D-Bus
@@ -839,9 +877,9 @@ installed by default.
 - **Photos**: with a plugin that has the `photos` capability, such as
   [blueferry-plugin-immich](https://github.com/joshii-h/blueferry-plugin-immich)
   for a self-hosted Immich server, `blueferry photos recent` lists the newest
-  photos and videos.
+  photos and videos and the Qt client's **Photos** tab shows them.
 - **Logs**: plugins write `~/.local/state/blueferry/plugins/<id>.log`
-  (owner-only, rotated, secrets masked); `blueferry plugins log ID`.
+  (owner-only, rotated, secrets masked); `blueferry plugins log ID` or **Show Log** in the settings.
 
 ```bash
 blueferry plugins list
@@ -856,6 +894,9 @@ blueferry photos recent
 
 Plugin text is plain text, and a plugin may only ask BlueFerry to open web
 links or files in its own cache.
+A plugin can replace a companion tool: while the
+LocalSend plugin is enabled, the LocalSend app disappears from **Tools**,
+because both would answer on the same port.
 
 ## Lock when the iPhone goes away
 
