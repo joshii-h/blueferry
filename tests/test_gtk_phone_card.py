@@ -838,7 +838,8 @@ def _check_dropped_answers():
 
     def records(prefix):
         return {"notifications": [
-            {**record, "key": f"{prefix}-{record.get('key')}"} for record in _pin_records()
+            {**record, "key": f"{prefix}-{record['key']}"} if "key" in record else record
+            for record in _pin_records()
         ]}
 
     def keys():
