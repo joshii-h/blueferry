@@ -2376,9 +2376,15 @@ def test_pinning_refreshes_the_list_and_explains_a_failure(monkeypatch):
 
 
 def test_muted_apps_are_read_only_while_shown_and_only_from_capable_daemons(monkeypatch):
+    from blueferry.qt import controller as controller_module
+    from tests.client_fakes import ManualRunner
+
+    timers = ManualRunner()
+    monkeypatch.setattr(controller_module, "qt_timers", lambda _parent: timers.timer)
     backend = _PinBackend(muted={"com.example.chat"})
     controller = BridgeController(backend=backend, setup=object(), subscribe=False, autostart=False)
     _run_inline_any(controller, monkeypatch)
+    (notifications_timer,) = timers.timers
 
     assert controller.notificationAppsSupported is False
     controller.watchNotificationApps(True)
@@ -2401,7 +2407,11 @@ def test_muted_apps_are_read_only_while_shown_and_only_from_capable_daemons(monk
     controller.watchNotificationApps(True)
     controller._notificationAppsInvalidated()
     assert controller._notification_apps_timer.isActive()
-    assert not controller._notification_history._timer._timer.isActive()
+    assert not notifications_timer.active  # the Notifications tab is hidden
+    # A shown Notifications tab reloads too, to dim the newly muted rows.
+    controller.watchNotifications(True)
+    controller._notificationAppsInvalidated()
+    assert notifications_timer.active
 
 
 def test_muting_an_app_refreshes_the_list_and_reports_failures_in_the_section(monkeypatch):
