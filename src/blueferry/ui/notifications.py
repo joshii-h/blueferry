@@ -212,7 +212,7 @@ class NotificationsPage(Gtk.Box):
         )
         states = [part for part in (
             pin["pinned_text"], pin["removed_text"],
-            _("Muted") if muted else "",
+            notification_apps_view.muted_label() if muted else "",
         ) if part]
         row.update_property(
             [Gtk.AccessibleProperty.LABEL],

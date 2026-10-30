@@ -46,9 +46,10 @@ def _media_buttons() -> dict[str, tuple[str, str]]:
 
 
 def _volume_buttons() -> dict[str, tuple[str, str]]:
+    names = volume_controls({})
     return {
-        "down": ("audio-volume-low-symbolic", _("Volume Down")),
-        "up": ("audio-volume-high-symbolic", _("Volume Up")),
+        "down": ("audio-volume-low-symbolic", names["down_label"]),
+        "up": ("audio-volume-high-symbolic", names["up_label"]),
     }
 
 
