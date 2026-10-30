@@ -34,6 +34,7 @@ from blueferry.setup_verification import (
 from blueferry.tether_status import TetherStatus
 from blueferry.ui.doctor import DoctorSection
 from blueferry.ui.feature_switches import FeatureSwitches
+from blueferry.ui.notification_apps import MutedApps
 from blueferry.ui.notification_rules import NotificationRules
 from blueferry.ui.saved_choice import SavedChoice
 from blueferry.ui.settings_presenter import categories, service_state
@@ -408,6 +409,7 @@ class SettingsDialog(Adw.PreferencesDialog):
         self._ancs_actions_row.set_activatable_widget(self._ancs_actions_switch)
 
         self.notification_rules = NotificationRules(client, self._toast)
+        self.muted_apps = MutedApps(client, self._toast, is_open=self.get_mapped)
 
         content_group = Adw.PreferencesGroup(title=_("Content and Actions"))
         content_group.add(self.features.row(
@@ -721,8 +723,8 @@ class SettingsDialog(Adw.PreferencesDialog):
                 contacts_group, self._photos_group,
             )),
             ("notifications", (
-                notification_group, *self.notification_rules.groups, content_group,
-                history_group,
+                notification_group, self.muted_apps.group,
+                *self.notification_rules.groups, content_group, history_group,
             )),
             ("calls", (
                 self._calls_group, self._call_history_group, self._battery_group,
@@ -763,6 +765,7 @@ class SettingsDialog(Adw.PreferencesDialog):
         if category:
             self.set_visible_page_name(category)
         self.features.load()
+        self.muted_apps.load()
         self.present(parent)
 
     def _selected_device(self) -> PairedDevice | None:
@@ -1466,6 +1469,7 @@ class SettingsDialog(Adw.PreferencesDialog):
         self._applying_contacts_only_notifications = False
         self._apply_ancs_actions(status, reachable)
         self.notification_rules.apply(status, reachable)
+        self.muted_apps.apply(status, reachable)
         self._apply_mirror_removals(status, reachable)
         self._apply_battery_warning(status, values, reachable)
         self._apply_media_switches(status, reachable)
