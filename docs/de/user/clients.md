@@ -193,7 +193,7 @@ anderen Clients:
 | Nachrichtenverlauf löschen | Bietet auch der Terminal-Client nicht an | `blueferry history-clear` |
 | Click Rules, letzte Anrufe, das Anruf-Panel (und damit das Umschalten eines laufenden Anrufs auf einen anderen Lautsprecher oder ein anderes Mikrofon) | Noch nicht im Quickshell-Client | Qt-, GTK- oder Terminal-Client, `blueferry calls audio … --this-call` |
 | Diesen Computer während eines Anrufs stummschalten | Braucht das Anruf-Panel, das das Panel nicht hat | Qt-, GTK- oder Terminal-Client, `blueferry calls mute on` / `off` |
-| Einen klingelnden Anruf mit einer Nachricht ablehnen | Braucht das Anruf-Panel; die gespeicherten Antworten bearbeitest du in den Einstellungen des Panels | Qt-, GTK- oder Terminal-Client, der Antwortknopf im Popup des klingelnden Anrufs, `blueferry calls decline-with-message` |
+| Einen klingelnden Anruf mit einer Nachricht ablehnen | Braucht das Anruf-Panel; die gespeicherten Antworten bearbeitest du in den Einstellungen des Panels | Qt-, GTK- oder Terminal-Client, der Antwortknopf im Popup des klingelnden Anrufs (kommt mit dem Klingel-Popup aus #230), `blueferry calls decline-with-message` |
 
 Das Panel lädt keinen Übersetzungskatalog, seine eigenen Beschriftungen
 sind deshalb englisch. Texte aus dem gemeinsamen BlueFerry-Code, etwa der

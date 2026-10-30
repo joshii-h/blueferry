@@ -9,6 +9,9 @@
   `Calls1.DeclineWithMessage`, `SetCallQuickReplies`,
   `blueferry calls decline-with-message` and `blueferry calls replies`.
   A text that cannot be sent is reported; the call stays declined.
+- Edit the replies for declining a call in the Quickshell settings
+  (Calls & Audio). Muting during a call and declining with a message stay
+  with the other clients, because the panel has no call view.
 - Report a stable opaque phone profile ID in `GetStatus` for clients that need
   to scope local per-phone metadata.
 - Choose the speaker and microphone for phone calls, saved for every call or

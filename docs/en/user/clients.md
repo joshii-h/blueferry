@@ -182,7 +182,7 @@ Quickshell is a compact panel, so some parts stay with the other clients:
 | Clearing the message history | Not offered by the terminal client either | `blueferry history-clear` |
 | Click Rules, recent calls, the calls panel (and with it switching a running call to another speaker or microphone) | Not in the Quickshell client yet | Qt, GTK or terminal client, `blueferry calls audio … --this-call` |
 | Muting this computer during a call | Needs the calls panel, which the panel does not have | Qt, GTK or terminal client, `blueferry calls mute on` / `off` |
-| Declining a ringing call with a message | Needs the calls panel; the saved replies are edited in the panel's settings | Qt, GTK or terminal client, the reply button on the ringing call's popup, `blueferry calls decline-with-message` |
+| Declining a ringing call with a message | Needs the calls panel; the saved replies are edited in the panel's settings | Qt, GTK or terminal client, the reply button on the ringing call's popup (comes with the ringing popup of #230), `blueferry calls decline-with-message` |
 
 The panel loads no translation catalog, so its own labels are English.
 Texts that come from the shared BlueFerry code, such as the reconnect hint,
