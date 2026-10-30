@@ -15,7 +15,9 @@ Desktops.
 
 Das Fenster ist eine Telefon-Übersicht. Eine Karte über den Reitern zeigt
 Name und Verbindung des iPhones, Akku, Empfang und Netz sowie, was gerade
-läuft (mit zurück, Wiedergabe/Pause und weiter). Ihr Knopf **Quick
+läuft (mit zurück, Wiedergabe/Pause und weiter sowie
+[leiser und lauter](media-control.md) um die zuletzt vom iPhone
+gemeldete Lautstärke). Ihr Knopf **Quick
 Settings** enthält die Schalter für [den Ton](phone-audio.md) und die
 [Abwesenheitssperre](proximity-lock.md). Ist etwas ausgeschaltet, nennt die
 Karte die Einstellung, die es einschaltet. Die Reiter wechselt man
@@ -28,8 +30,10 @@ in der Kopfzeile, in einem schmalen Fenster unten:
   gruppiert, mit All und Missed, Rückruf- und Nachrichtenknöpfen und
   **Refresh from iPhone**. Jeder Anruf fragt vorher nach.
 - **Notifications**: die [letzten iPhone-Mitteilungen](notification-history.md)
-  anderer Apps. Ist die Liste aus, sagt der Reiter warum und öffnet die
-  Einstellung.
+  anderer Apps, mit einem Knopf zum Anheften an jedem Eintrag; angeheftete
+  Einträge stehen oben, Einträge, die das iPhone entfernt hat oder die von
+  [stummgeschalteten Apps](notification-mute.md) stammen, sind abgeblendet.
+  Ist die Liste aus, sagt der Reiter warum und öffnet die Einstellung.
 
 **Settings** (Hauptmenü, `Strg+,`) hat dieselben Kategorien wie der
 KDE-Client, je eine Seite; die Umschaltleiste sitzt in der Kopfzeile, in
@@ -38,7 +42,7 @@ einem schmalen Fenster unten, und der Suchknopf findet jede Einstellung:
 | Kategorie | Inhalt |
 | --- | --- |
 | Phone | Kopplung, Verbindungszustand mit **Reconnect**, **Run Diagnostics** (dieselben Prüfungen wie `blueferry doctor`; der Bericht öffnet sich in einem eigenen Dialog mit Kopierknopf), Kopplungsbericht, Kontaktabgleich, Kontaktfotos |
-| Notifications | Welche Ereignisse Popups erzeugen, nur Kontakte, Klickregeln, Mitteilungsinhalt, Aktionsknöpfe, Mitteilungen mit dem iPhone abgleichen, beim Wegklicken als gelesen markieren, letzte Mitteilungen behalten |
+| Notifications | Welche Ereignisse Popups erzeugen, nur Kontakte, [stummgeschaltete Apps](notification-mute.md), Klickregeln, Mitteilungsinhalt, Aktionsknöpfe, Mitteilungen mit dem iPhone abgleichen, beim Wegklicken als gelesen markieren, letzte Mitteilungen behalten |
 | Calls & Audio | Anrufe, Anrufliste, Akku-Warnung, [iPhone-Ton am Computer](phone-audio.md), Mediensteuerung |
 | Security | Einmalcodes, Abwesenheitssperre, lokale Daten und ihre Verschlüsselung, Verlauf löschen |
 | About | Version, Hintergrunddienst, About BlueFerry, Tastenkürzel, **Restart Service**, Beenden |

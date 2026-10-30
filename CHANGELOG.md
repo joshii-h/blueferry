@@ -14,6 +14,9 @@
   `Events1.NotificationAppsChanged` invalidates the list. CLI:
   `blueferry notifications apps|mute|unmute`. The environment allowlist and
   blocklist stay a hard filter in front of it.
+- GTK client: volume down/up buttons with the reported level on the phone
+  card, Pin/Unpin on each Notifications entry (removed and muted-app entries
+  dimmed), and a **Muted apps** group under Settings › Notifications.
 
 ## [0.9.0](https://github.com/erikwb/blueferry/releases/tag/v0.9.0) - 2026-10-27
 

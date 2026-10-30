@@ -12,7 +12,8 @@ desktops.
 
 The window is a phone overview. A card above the tabs shows the iPhone's
 name and connection, battery, signal and network, and what is playing (with
-previous, play/pause and next). Its **Quick Settings** button holds the
+previous, play/pause and next, and [volume down and up](media-control.md#volume)
+around the level the iPhone last reported). Its **Quick Settings** button holds the
 switches for [the sound](phone-audio.md) and the
 [away lock](proximity-lock.md). When something is off, the card says which
 setting turns it on. The tabs are switched in the header bar, or at the
@@ -25,8 +26,10 @@ bottom in a narrow window:
   with All and Missed, call back and message buttons, and **Refresh from
   iPhone**. Every call asks for confirmation first.
 - **Notifications**: the [recent iPhone notifications](notification-history.md)
-  of other apps. When the list is off, the tab says why and opens the
-  setting.
+  of other apps, with a pin button on each entry; pinned entries are listed
+  first, and entries removed on the iPhone or from
+  [muted apps](notification-mute.md) are dimmed. When the list is off, the
+  tab says why and opens the setting.
 
 **Settings** (main menu, `Ctrl+,`) has the same categories as the KDE
 client, one page each; the switcher sits in the header bar, or at the
@@ -35,7 +38,7 @@ bottom in a narrow window, and the search button finds any setting:
 | Category | What's there |
 | --- | --- |
 | Phone | Pairing, connection health with **Reconnect**, **Run Diagnostics** (the same checks as `blueferry doctor`; the report opens in its own dialog with a copy button), pairing report, contact sync, contact photos |
-| Notifications | Which events create popups, contacts only, click rules, notification content, action buttons, sync notifications with iPhone, mark read on dismiss, keeping recent notifications |
+| Notifications | Which events create popups, contacts only, [muted apps](notification-mute.md), click rules, notification content, action buttons, sync notifications with iPhone, mark read on dismiss, keeping recent notifications |
 | Calls & Audio | Phone calls, call history, battery warning, [iPhone sound on this computer](phone-audio.md), media control |
 | Security | One-time codes, away lock, local storage and its encryption, Clear History |
 | About | Version, the background service, About BlueFerry, keyboard shortcuts, **Restart Service**, Quit |
