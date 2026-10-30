@@ -18,16 +18,18 @@ from blueferry.client import (
     BackendError,
     CompatibilityCache,
     TetherUnsupportedError,
+    _dbus_message,
 )
 from blueferry.doctor_report import DoctorReport, run_doctor, terminate_running
 from blueferry.models import BackendStatus
-from blueferry.notification_pin_view import pin_error_text
+from blueferry.notification_pin_view import GENERIC_ERROR_TEXT, pin_error_text
 from blueferry.protocol import (
     BUS_NAME,
     EVENTS_IFACE,
     OBJECT_PATH,
     TETHER_IFACE,
 )
+from blueferry.reconnect_view import is_rate_limited
 from blueferry.setup_client import SetupClient
 from blueferry.tether_status import TetherStatus
 
@@ -55,12 +57,22 @@ def _plain(value):
     return value
 
 
+# The D-Bus errors SetNotificationPinned itself answers with; the shared pin
+# wording covers them. Anything else (no daemon, no reply, ...) keeps its text.
+_PIN_ERROR_SUFFIXES = (".UnknownMethod", ".NotReady", ".InvalidArgs")
+
+
 def _pin_error(error: BaseException) -> str:
-    """The shared pin wording for a failed SetNotificationPinned call."""
+    """The text for a failed SetNotificationPinned call."""
     cause = error if isinstance(error, dbus.exceptions.DBusException) else error.__cause__
     if isinstance(cause, dbus.exceptions.DBusException):
-        return pin_error_text(cause.get_dbus_name(), cause.get_dbus_message() or "")
-    return pin_error_text("", str(error))
+        name = cause.get_dbus_name() or ""
+        if is_rate_limited(name) or name.endswith(_PIN_ERROR_SUFFIXES):
+            return pin_error_text(name, cause.get_dbus_message() or "")
+        return _dbus_message(cause) or GENERIC_ERROR_TEXT
+    if isinstance(error, BackendError):
+        return str(error) or GENERIC_ERROR_TEXT
+    return GENERIC_ERROR_TEXT
 
 
 class DaemonClient(GObject.Object):

@@ -640,6 +640,14 @@ def test_pins_and_muted_apps_use_their_workers_and_shared_texts(monkeypatch) -> 
         dbus.exceptions.DBusException(
             "no such method", name="org.freedesktop.DBus.Error.UnknownMethod",
         ),
+        # Not a pin refusal: the bus's own text is kept.
+        dbus.exceptions.DBusException(
+            "The name is not activatable",
+            name="org.freedesktop.DBus.Error.ServiceUnknown",
+        ),
+        dbus.exceptions.DBusException(
+            "Did not receive a reply", name="org.freedesktop.DBus.Error.NoReply",
+        ),
     ])
 
     class Backend:
@@ -648,6 +656,8 @@ def test_pins_and_muted_apps_use_their_workers_and_shared_texts(monkeypatch) -> 
             if key == "refused":
                 error = next(refusals)
                 raise BackendError(str(error)) from error
+            if key == "plain":
+                raise BackendError("Daemon is not running")
             return state
 
         def notification_apps(self):
@@ -661,18 +671,23 @@ def test_pins_and_muted_apps_use_their_workers_and_shared_texts(monkeypatch) -> 
     results, errors = [], []
     try:
         client.set_notification_pinned_async("k1", True, results.append, errors.append)
-        client.set_notification_pinned_async("refused", True, results.append, errors.append)
-        client.set_notification_pinned_async("refused", True, results.append, errors.append)
+        for _refusal in range(4):
+            client.set_notification_pinned_async(
+                "refused", True, results.append, errors.append)
+        client.set_notification_pinned_async("plain", True, results.append, errors.append)
         client.notification_apps_async(results.append)
         client.set_notification_app_muted_async(
             "com.example.Chat", True, results.append, errors.append)
     finally:
         client.stop()
     assert results == [True, {"apps": [], "mute_available": True}, True]
-    assert errors == [notification_pin_view.FULL_TEXT, notification_pin_view.UNSUPPORTED_TEXT]
-    assert pinned == [("k1", True), ("refused", True), ("refused", True)]
+    assert errors == [
+        notification_pin_view.FULL_TEXT, notification_pin_view.UNSUPPORTED_TEXT,
+        "The name is not activatable", "Did not receive a reply", "Daemon is not running",
+    ]
+    assert pinned == [("k1", True), *[("refused", True)] * 4, ("plain", True)]
     assert muted == [("com.example.Chat", True)]
-    assert submitted == ["mutation", "mutation", "mutation", "read", "mutation"]
+    assert submitted == [*["mutation"] * 6, "read", "mutation"]
 
 
 def test_notification_apps_changed_is_forwarded_as_a_gobject_signal(monkeypatch) -> None:
