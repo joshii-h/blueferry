@@ -80,11 +80,12 @@ class _Backend:
         self.requests: list[tuple] = []
         self.snapshot = _snapshot(("voicecall01", "incoming", "Alice"))
         self.contacts: dict[str, list[tuple[str, str]]] = {}
+        self.extra: dict = {}
 
     def status(self) -> BackendStatus:
         return BackendStatus(
             daemon=True, map=True, calls_enabled=self.enabled,
-            calls_state="ready" if self.enabled else "disabled",
+            calls_state="ready" if self.enabled else "disabled", extra=dict(self.extra),
         )
 
     def threads(self, limit: int = 1000):
@@ -125,6 +126,9 @@ class _Backend:
 
     def set_call_audio_device_for_call(self, direction: str, name: str) -> None:
         self.requests.append(("call_audio", direction, name))
+
+    def set_call_muted(self, muted: bool) -> None:
+        self.requests.append(("mute", muted))
 
 
 def _run(coroutine) -> None:
@@ -592,3 +596,49 @@ def test_keypad_keys_dial_while_no_call_is_active() -> None:
             assert not [r for r in backend.requests if r[0] == "tones"]
 
     _run(scenario())
+
+
+def test_mute_toggles_the_running_call_only_where_the_daemon_can() -> None:
+    async def scenario() -> None:
+        backend = _Backend()
+        audio = {"state": "ready", "output": {"stream": True, "description": "A50"},
+                 "input": {"stream": True, "description": "Webcam"}}
+        backend.snapshot = _audio_snapshot(audio, ("voicecall01", "active", "Alice"))
+        app = BlueFerryApp(TuiState(backend), monitor_factory=lambda: None)
+        async with app.run_test(size=(120, 50)) as pilot:
+            screen = await _open_calls(app, pilot)
+            # An older daemon reports no audio.muted: no button, the key does nothing.
+            assert not screen.query_one("#calls-mute-row").display
+            app.set_focus(None)
+            await pilot.press("m")
+            await pilot.pause(0.2)
+            assert not [r for r in backend.requests if r[0] == "mute"]
+
+            backend.snapshot = _audio_snapshot(
+                {**audio, "muted": False}, ("voicecall01", "active", "Alice"),
+            )
+            screen.refresh_calls()
+            mute = screen.query_one("#calls-mute", Button)
+            await _until(pilot, lambda: screen.query_one("#calls-mute-row").display)
+            assert str(mute.label) == "Mute  m" and not mute.disabled
+            screen.toggle_mute()
+            await _until(pilot, lambda: ("mute", True) in backend.requests)
+
+            backend.snapshot = _audio_snapshot(
+                {**audio, "muted": True}, ("voicecall01", "active", "Alice"),
+            )
+            screen.refresh_calls()
+            await _until(pilot, lambda: str(mute.label) == "Unmute  m")
+            assert "muted for this call" in str(
+                screen.query_one("#calls-mute-hint", Static).render())
+            app.set_focus(None)
+            await pilot.press("m")
+            await _until(pilot, lambda: ("mute", False) in backend.requests)
+
+            backend.snapshot = _audio_snapshot({"state": "idle", "muted": False})
+            screen.refresh_calls()
+            await _until(pilot, lambda: not screen.query_one("#calls-audio").display)
+            assert mute.disabled
+
+    _run(scenario())
+

@@ -16,8 +16,9 @@ call runs, the panel shows its speaker and microphone with a switch for
 this call only (``call_audio_view.call_view``); the device lists are read
 again whenever the call's audio report changes (a call starts, a choice is
 applied, or a plugged or unplugged device is the chosen or the used one).
-Names, numbers, device names and
-errors are rendered as Rich ``Text`` after ``terminal_text``.
+Mute/Unmute (``m``) mutes this computer's microphone for the running call
+(``call_audio_view.mute``). Names, numbers, device names and errors are
+rendered as Rich ``Text`` after ``terminal_text``.
 """
 from __future__ import annotations
 
@@ -71,6 +72,8 @@ class CallsClient(Protocol):
     def call_audio_devices(self) -> dict: ...
 
     def set_call_audio_device_for_call(self, direction: str, name: str) -> None: ...
+
+    def set_call_muted(self, muted: bool) -> None: ...
 
 
 def _plain(value: object) -> str:
@@ -193,6 +196,7 @@ class DialConfirmScreen(ModalScreen[bool]):
 class CallsScreen(ModalScreen[None]):
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("escape", "close", "Close", show=False),
+        Binding("m", "toggle_mute", "Mute", show=False),
     ]
 
     def __init__(
@@ -261,6 +265,9 @@ class CallsScreen(ModalScreen[None]):
                             id=f"calls-audio-{direction}", classes="call-audio-select",
                         )
                 yield Static("", id="calls-audio-text", classes="dialog-copy")
+                with Horizontal(id="calls-mute-row"):
+                    yield Button(call_audio_view.mute_label(False), id="calls-mute")
+                    yield Static("", id="calls-mute-hint", classes="dialog-copy")
             yield Static(_("Number or name"), classes="field-label")
             yield Input(
                 value=self._initial_number, placeholder="+1 555 123 4567",
@@ -377,6 +384,11 @@ class CallsScreen(ModalScreen[None]):
         )
         for row in view["rows"]:
             self.query_one(f"#calls-audio-{row['direction']}", DeviceSelect).show(row)
+        mute = view["mute"]
+        self.query_one("#calls-mute-row").display = mute["supported"] is True
+        # The key is part of the label, as in the recent calls' buttons.
+        self.query_one("#calls-mute", Button).label = f"{mute['label']}  m"
+        self.query_one("#calls-mute-hint", Static).update(Text(_plain(mute["hint"])))
 
     def _follow_active_call(self) -> None:
         active = active_call(self.snapshot)
@@ -426,6 +438,7 @@ class CallsScreen(ModalScreen[None]):
         )
         for direction in call_audio_view.DIRECTIONS:
             self.query_one(f"#calls-audio-{direction}", DeviceSelect).disabled = busy
+        self.query_one("#calls-mute", Button).disabled = busy or self._mute_view() is None
         active = active_call(snapshot)
         self.query_one("#calls-tones-row").display = active is not None
         # Tones queue up behind a running request, so busy does not block them.
@@ -508,6 +521,27 @@ class CallsScreen(ModalScreen[None]):
             return
         call_id = target.call_id
         self._act(lambda: self._client.hangup_call(call_id), _("Declined"))
+
+    def _mute_view(self) -> dict[str, Any] | None:
+        """The mute button's view while a call runs and the daemon can mute."""
+        if not self.snapshot.calls:
+            return None
+        view = call_audio_view.mute(self.snapshot.audio)
+        return view if view["supported"] is True else None
+
+    @on(Button.Pressed, "#calls-mute")
+    def toggle_mute(self) -> None:
+        view = self._mute_view()
+        if view is None:
+            return
+        muted = not view["muted"]
+        self._act(
+            lambda: self._client.set_call_muted(muted),
+            call_audio_view.mute_hint(muted),
+        )
+
+    def action_toggle_mute(self) -> None:
+        self.toggle_mute()
 
     @on(Button.Pressed, "#calls-tones-send")
     @on(Input.Submitted, "#calls-tones")
