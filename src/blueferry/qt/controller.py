@@ -140,6 +140,10 @@ class BridgeController(QObject):
     callTonesDraftChanged = Signal()
     callTonesSentChanged = Signal()
     callNoticeChanged = Signal()
+    # A short message for a passive notification (a refused mute).
+    callToastRequested = Signal(str)
+    quickRepliesSaved = Signal()
+    quickRepliesSaveFailed = Signal(str)
     # (number, problem) of a clicked tel:/callto: link to confirm; see
     # tel_links.dial_request. Never dials by itself.
     dialLinkRequested = Signal(str, str)
@@ -212,6 +216,9 @@ class BridgeController(QObject):
         self._call_audio_loading = False
         # The outcome of the last "decline with message": {"text", "error"}.
         self._call_notice: dict = {}
+        # The mute state just asked for, shown until the next ListCalls
+        # reports the real one (None: nothing pending).
+        self._mute_pending: bool | None = None
         # (calls_enabled, calls_state) of the last status that refreshed the
         # call list. Calls themselves are announced by CallsChanged.
         self._calls_status_key: tuple[object, object] | None = None
@@ -319,7 +326,13 @@ class BridgeController(QObject):
 
     @Property("QVariantMap", notify=phoneCallsChanged)
     def phoneCallAudio(self):
-        """ListCalls ``audio``: the running call's speaker and microphone."""
+        """ListCalls ``audio``: the running call's speaker and microphone.
+
+        A mute just asked for shows until the next ListCalls reports the
+        real state, so the button does not jump back meanwhile.
+        """
+        if self._mute_pending is not None and "muted" in self._phone_call_audio:
+            return {**self._phone_call_audio, "muted": self._mute_pending}
         return self._phone_call_audio
 
     @Property("QVariantMap", notify=callAudioDevicesChanged)
@@ -621,12 +634,9 @@ class BridgeController(QObject):
         """The "Decline with message" button and its menu (quick_reply_view)."""
         current = dict(status or {})
         return {
+            **quick_reply_view.dialog_view(current),
             "available": quick_reply_view.can_decline_with_message(current, dict(call or {})),
             "label": quick_reply_view.button_label(),
-            "title": quick_reply_view.dialog_title(),
-            "placeholder": quick_reply_view.custom_placeholder(),
-            "custom": quick_reply_view.CUSTOM,
-            "choices": quick_reply_view.choices(current),
         }
 
     @Slot(str, result=str)
@@ -1453,15 +1463,22 @@ class BridgeController(QObject):
 
     # ---- optional phone calls (Calls1) -----------------------------------
 
-    def _apply_calls(self, snapshot: object) -> None:
+    def _apply_calls(self, snapshot: object, *, settle_mute: bool = False) -> None:
         if not isinstance(snapshot, CallsSnapshot):
             return
         calls = [call.to_dict() for call in snapshot.calls]
         audio = snapshot.audio.to_dict() if snapshot.audio is not None else {}
+        # The list read after SetCallMuted returned carries the real state;
+        # a list that was already on its way may still predate the write.
+        pending = self._mute_pending
+        if settle_mute or not calls:
+            self._mute_pending = None  # a mute ends with the call
         if (
             calls == self._phone_calls and snapshot.state == self._calls_state
             and audio == self._phone_call_audio
         ):
+            if settle_mute and pending is not None and pending != audio.get("muted"):
+                self.phoneCallsChanged.emit()  # the request did not stick
             return  # an unchanged list must not rebuild the call cards
         if calls and not self._phone_calls and audio:
             self.loadCallAudioDevices()  # a call started: offer its switch
@@ -1477,6 +1494,7 @@ class BridgeController(QObject):
         state = str(self._status.get("calls_state") or "disabled")
         if state == "ready":
             state = "unavailable"  # ListCalls just failed despite the status
+        self._mute_pending = None
         if self._phone_calls or state != self._calls_state or self._phone_call_audio:
             self._phone_calls = []
             self._calls_state = state
@@ -1548,7 +1566,27 @@ class BridgeController(QObject):
     @Slot(bool)
     def setCallMuted(self, muted: bool) -> None:
         """Mute or unmute this computer's microphone for the running call."""
-        self._call_action(lambda: self._backend.set_call_muted(bool(muted)))
+        wanted = bool(muted)
+
+        def failed(message: str) -> None:
+            # NotReady (no call audio yet, PipeWire unreadable) or a failed
+            # write: drop the request and show the daemon's state again.
+            if self._mute_pending is not None:
+                self._mute_pending = None
+                self.phoneCallsChanged.emit()
+            self.callToastRequested.emit(call_audio_view.mute_failure_text(message))
+            self.refreshCalls()
+
+        def settle(_value: object) -> None:
+            self._run(
+                self._backend.calls,
+                lambda snapshot: self._apply_calls(snapshot, settle_mute=True),
+                self._calls_unavailable, busy=False,
+            )
+
+        self._mute_pending = wanted
+        self.phoneCallsChanged.emit()
+        self._run(lambda: self._backend.set_call_muted(wanted), settle, failed)
 
     @Slot(str, str)
     def declineCallWithMessage(self, call_id: str, text: str) -> None:
@@ -1571,7 +1609,11 @@ class BridgeController(QObject):
 
     @Slot(str, result=str)
     def addQuickReply(self, text: str) -> str:
-        """Save one more reply; returns why it cannot be saved, "" when sent."""
+        """Save one more reply; returns why it cannot be saved, "" when sent.
+
+        The outcome follows as quickRepliesSaved or quickRepliesSaveFailed;
+        QML keeps the typed text until the save succeeded.
+        """
         current = quick_reply_view.replies(self._status)
         problem = quick_reply_view.reply_error(str(text or ""), current)
         if not problem:
@@ -1599,8 +1641,14 @@ class BridgeController(QObject):
             if isinstance(value, dict):
                 self._status.update(value)
                 self.statusChanged.emit()
+            self.quickRepliesSaved.emit()
 
-        self._run(lambda: self._backend.set_call_quick_replies(list(replies)), completed)
+        def failed(message: str) -> None:
+            self.quickRepliesSaveFailed.emit(message or _("Could not save the replies."))
+
+        self._run(
+            lambda: self._backend.set_call_quick_replies(list(replies)), completed, failed,
+        )
 
     @Slot()
     def loadCallAudioDevices(self) -> None:

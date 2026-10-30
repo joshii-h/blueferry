@@ -2132,17 +2132,12 @@ def test_mute_and_decline_with_message_reach_the_backend(monkeypatch):
     notices = []
     controller.callNoticeChanged.connect(lambda: notices.append(dict(controller.callNotice)))
 
-    controller.setCallMuted(True)
-    assert backend.requests[:2] == [("mute", True), ("calls",)]
-    view = controller.callAudioView({"state": "ready", "muted": True}, {})
-    assert view["mute"] == {"supported": True, "muted": True, "label": "Unmute",
-                            "hint": "Your microphone is muted for this call."}
-
     ringing = {"call_id": "voicecall01", "state": "incoming", "number": "+41790000001"}
     decline = controller.declineMessageView(controller.status, ringing)
     assert decline["available"] is True and decline["label"] == "Decline with message"
     assert [choice["label"] for choice in decline["choices"]] == ["Later", "Own text…"]
     assert decline["choices"][-1]["value"] == decline["custom"]
+    assert decline["max_chars"] == 1000 and decline["title"] == "Decline with message"
     assert controller.declineMessageView(controller.status, {**ringing, "number": ""})[
         "available"] is False
     assert controller.declineMessageView({}, ringing)["available"] is False
@@ -2167,6 +2162,75 @@ def test_mute_and_decline_with_message_reach_the_backend(monkeypatch):
     assert notices[-1] == {} and len(notices) == 4
 
 
+def test_mute_shows_the_request_until_the_next_list_and_reports_a_refusal(monkeypatch):
+    from blueferry.models import CallsSnapshot
+
+    call = {"call_id": "voicecall01", "state": "active"}
+
+    def snapshot(muted, *extra):
+        return CallsSnapshot.from_dict({"state": "ready", "calls": [call, *extra], "audio": {
+            "state": "ready", "muted": muted, "input": {"stream": True}}})
+
+    class MuteBackend:
+        def __init__(self):
+            self.requests = []
+            self.listed = snapshot(False)
+            self.refuse = ""
+
+        def set_call_muted(self, muted):
+            self.requests.append(("mute", muted))
+            if self.refuse:
+                raise BackendError(self.refuse)
+            # A CallsChanged list that was already on its way predates the write.
+            controller._apply_calls(snapshot(not muted, {"call_id": "voicecall02", "state": "held"}))
+
+        def calls(self):
+            self.requests.append(("calls",))
+            return self.listed
+
+    backend = MuteBackend()
+    controller = BridgeController(backend=backend, setup=object(), subscribe=False, autostart=False)
+    _inline_runs(controller, monkeypatch)
+    controller._status = {"calls_enabled": True}
+    controller._apply_calls(snapshot(False))
+    toasts = []
+    controller.callToastRequested.connect(toasts.append)
+    shown = []
+    controller.phoneCallsChanged.connect(
+        lambda: shown.append(controller.phoneCallAudio.get("muted")))
+
+    def mute_view():
+        return controller.callAudioView(controller.phoneCallAudio, {})["mute"]
+
+    assert mute_view()["available"] is True and mute_view()["label"] == "Mute"
+    backend.listed = snapshot(True)
+    controller.setCallMuted(True)
+    assert backend.requests == [("mute", True), ("calls",)]
+    assert shown[0] is True, "the button follows the request at once"
+    assert len(shown) >= 2 and False not in shown, "an older list must not undo the request"
+    assert controller._mute_pending is None
+    assert mute_view()["muted"] is True and mute_view()["label"] == "Unmute"
+
+    # The daemon reported another state: the real one wins.
+    shown.clear()
+    backend.listed = snapshot(True)
+    controller.setCallMuted(False)
+    assert shown[-1] is True and mute_view()["muted"] is True
+
+    # NotReady: back to the daemon's state, with a passive notification.
+    shown.clear()
+    backend.refuse = "The call audio is not ready yet."
+    controller.setCallMuted(False)
+    assert toasts == ["The call audio is not ready yet."]
+    assert shown[:2] == [False, True] and mute_view()["muted"] is True
+    assert controller.errorText == ""
+
+    # A mute ends with the call.
+    controller._mute_pending = False
+    controller._apply_calls(CallsSnapshot.from_dict({"state": "ready", "calls": []}))
+    assert controller._mute_pending is None
+
+
 def test_quick_replies_are_checked_and_saved_from_the_settings(monkeypatch):
     class ReplyBackend:
         def __init__(self):
@@ -2179,6 +2243,9 @@ def test_quick_replies_are_checked_and_saved_from_the_settings(monkeypatch):
     backend = ReplyBackend()
     controller = BridgeController(backend=backend, setup=object(), subscribe=False, autostart=False)
     _inline_runs(controller, monkeypatch)
+    outcomes = []
+    controller.quickRepliesSaved.connect(lambda: outcomes.append("saved"))
+    controller.quickRepliesSaveFailed.connect(outcomes.append)
     assert controller.quickReplySettingsView({})["supported"] is False
     controller._status = {"daemon": True, "calls_quick_replies": ["A", "B"]}
     changed = []
@@ -2192,7 +2259,7 @@ def test_quick_replies_are_checked_and_saved_from_the_settings(monkeypatch):
     assert backend.saved == []
 
     assert controller.addQuickReply(" C ") == ""
-    assert backend.saved[-1] == ["A", "B", "C"]
+    assert backend.saved[-1] == ["A", "B", "C"] and outcomes == ["saved"]
     assert controller.status["calls_quick_replies"] == ["A", "B", "C"] and changed
     assert controller.replaceQuickReply(0, "") == "A reply cannot be empty."
     assert controller.replaceQuickReply(0, "Z") == ""
@@ -2211,4 +2278,14 @@ def test_quick_replies_are_checked_and_saved_from_the_settings(monkeypatch):
     controller.removeQuickReply(0)
     controller.removeQuickReply(0)
     assert backend.saved[-1] == []
-    assert controller.quickReplySettingsView(controller.status)["replies"] == []
+    view = controller.quickReplySettingsView(controller.status)
+    assert view["replies"] == [] and view["max_chars"] == 160
+
+    def refuse(_replies):
+        raise BackendError("could not save the quick replies")
+
+    backend.set_call_quick_replies = refuse
+    outcomes.clear()
+    assert controller.addQuickReply("D") == ""
+    assert outcomes == ["could not save the quick replies"]
+    assert controller.status["calls_quick_replies"] == []
