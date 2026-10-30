@@ -14,7 +14,7 @@ from tests.gtk_broadway import run_scenario
 @pytest.mark.parametrize(
     "scenario", [
         "layout", "card", "quick-settings", "dial-pad", "running-calls", "recent-calls",
-        "notifications", "close",
+        "notifications", "close", "volume",
     ],
 )
 def test_gtk_phone_card(tmp_path, scenario):
@@ -639,8 +639,60 @@ def _exercise_close():
     assert not timer.active and not window.phone_card._status_read.pending
 
 
+def _exercise_volume():
+    window, client = _window()
+    card = window.phone_card
+    down, up, level = card.volume_buttons["down"], card.volume_buttons["up"], card.volume_level
+    # Media control off: neither the buttons nor the level.
+    assert not down.get_visible() and not up.get_visible() and not level.get_visible()
+    client.answer_status({**CALLS_READY, "media_control_enabled": True})
+    assert not up.get_visible(), "waiting for the media service"
+    client.take("media")[1]({
+        "available": True, "player": {"state": "playing", "volume": 0.4},
+        "track": {"title": "Song"}, "supported_commands": ["pause", "volume-up"],
+    })
+    assert down.get_visible() and up.get_visible()
+    assert level.get_visible() and level.get_label() == "Volume 40%"
+    assert up.get_sensitive() and not down.get_sensitive()
+    assert up.get_tooltip_text() == "Turn the iPhone volume up"
+    assert down.get_tooltip_text() == (
+        "The current iPhone player does not offer volume control")
+    # The buttons sit between the transport buttons and the hint.
+    order = []
+    child = card.media_box.get_first_child()
+    while child is not None:
+        order.append(child)
+        child = child.get_next_sibling()
+    assert order.index(card.media_buttons["next"]) < order.index(down) < order.index(
+        level) < order.index(up) < order.index(card.media_hint)
+    up.emit("clicked")
+    client.take(("media-command", "volume-up"))[1](None)
+    down.emit("clicked")  # not offered: nothing is sent
+    assert ("media-command", "volume-down") not in client.names()
+    # A refused step says why and reads the player again.
+    toasts = []
+    card._toast = toasts.append
+    up.emit("clicked")
+    client.take(("media-command", "volume-up"))[2]("Not ready")
+    assert toasts == ["Not ready"]
+    # Commands not known yet: both offered; no level reported: no label.
+    client.take("media")[1]({
+        "available": True, "player": {"state": "paused"}, "track": {"title": "Song"},
+        "supported_commands_known": False,
+    })
+    assert up.get_sensitive() and down.get_sensitive() and not level.get_visible()
+    down.emit("clicked")
+    client.take(("media-command", "volume-down"))
+    # The media service went away: hidden again.
+    client.emit("now-playing-changed")
+    client.take("media")[1]({"available": False})
+    assert not up.get_visible() and not down.get_visible() and not level.get_visible()
+    window.destroy()
+
+
 if __name__ == "__main__":
     {
+        "volume": _exercise_volume,
         "layout": _exercise_layout,
         "card": _exercise_card,
         "dial-pad": _exercise_dial_pad,
