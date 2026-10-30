@@ -10,6 +10,9 @@
   switched for the running call only, without changing the system defaults
   (`Calls1.ListCallAudioDevices`, `SetCallAudioDevice`,
   `SetCallAudioDeviceForCall`, `blueferry calls audio`).
+- Mute this computer's microphone for the running call only, without muting
+  the microphone for other applications (`Calls1.SetCallMuted`, ListCalls
+  `audio.muted`, `blueferry calls mute on|off`).
 
 ## [0.8.1](https://github.com/erikwb/blueferry/releases/tag/v0.8.1) - 2026-09-14
 
