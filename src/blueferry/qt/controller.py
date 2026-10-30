@@ -20,6 +20,7 @@ from PySide6.QtDBus import QDBusConnection
 from blueferry import (
     __version__,
     media_volume_view,
+    notification_apps_view,
     notification_pin_view,
     phone_audio_view,
     phone_overview,
@@ -99,6 +100,7 @@ class BridgeController(QObject):
     callHistoryChanged = Signal()
     nowPlayingChanged = Signal()
     notificationsChanged = Signal()
+    notificationAppsChanged = Signal()
     phoneIdentityChanged = Signal()
     featuresChanged = Signal()
     doctorChanged = Signal()
@@ -218,6 +220,13 @@ class BridgeController(QObject):
         self._notifications_timer.timeout.connect(self.refreshNotifications)
         # The pin error of the last failed pin/unpin, shown in the tab.
         self._pin_error = ""
+        # Settings > Notifications > Muted apps: fetched only while shown.
+        self._notification_apps: dict = self._empty_notification_apps()
+        self._notification_apps_watched = False
+        self._notification_apps_timer = QTimer(self)
+        self._notification_apps_timer.setSingleShot(True)
+        self._notification_apps_timer.setInterval(150)
+        self._notification_apps_timer.timeout.connect(self.refreshNotificationApps)
         self.devicesChanged.connect(self.phoneIdentityChanged)
         self.configuredChanged.connect(self.phoneIdentityChanged)
         self._tether: dict = {"available": False}
@@ -521,11 +530,28 @@ class BridgeController(QObject):
     def refreshNotifications(self) -> None:
         if not self._notifications_watched:
             return
+        # Rows of muted apps are dimmed; only daemons that support muting
+        # are asked which apps those are.
+        with_apps = notification_apps_view.supported(self._status)
+
+        def operation() -> tuple[object, frozenset[str]]:
+            snapshot = self._backend.notifications(100)
+            muted: frozenset[str] = frozenset()
+            if with_apps:
+                try:
+                    muted = notification_apps_view.muted_ids(self._backend.notification_apps())
+                except BackendError:
+                    pass
+            return snapshot, muted
+
         def completed(value: object) -> None:
             if not self._notifications_watched:
                 return
-            snapshot = value if isinstance(value, dict) else {}
-            self._notifications = phone_link.notification_rows(snapshot.get("notifications"))
+            raw, muted = value if isinstance(value, tuple) else ({}, frozenset())
+            snapshot = raw if isinstance(raw, dict) else {}
+            self._notifications = phone_link.notification_rows(
+                snapshot.get("notifications"), muted,
+            )
             self._notifications_info = self._notifications_info_from(snapshot)
             self.notificationsChanged.emit()
 
@@ -536,7 +562,7 @@ class BridgeController(QObject):
             }
             self.notificationsChanged.emit()
 
-        self._run(lambda: self._backend.notifications(100), completed, failed, busy=False)
+        self._run(operation, completed, failed, busy=False)
 
     @Slot()
     def _notificationsInvalidated(self) -> None:
@@ -573,6 +599,98 @@ class BridgeController(QObject):
             self.refreshNotifications()
 
         self._run(operation, completed, failed, busy=False)
+
+    @staticmethod
+    def _empty_notification_apps() -> dict:
+        return {
+            "loaded": False,
+            "available": False,
+            "label": notification_apps_view.section_label(),
+            "description": notification_apps_view.section_description(),
+            "hint": "",
+            "rows": [],
+            "count": 0,
+            "error": "",
+        }
+
+    @Property(bool, notify=statusChanged)
+    def notificationAppsSupported(self) -> bool:
+        """Whether the running daemon can mute single iPhone apps."""
+        return notification_apps_view.supported(self._status)
+
+    @Property("QVariantMap", notify=notificationAppsChanged)
+    def notificationApps(self):
+        return self._notification_apps
+
+    @Slot(bool)
+    def watchNotificationApps(self, watched: bool) -> None:
+        """Settings > Notifications shows (load) or hides (forget) the muted apps."""
+        self._notification_apps_watched = bool(watched)
+        if self._notification_apps_watched:
+            self.refreshNotificationApps()
+            return
+        self._notification_apps_timer.stop()
+        if self._notification_apps != self._empty_notification_apps():
+            self._notification_apps = self._empty_notification_apps()
+            self.notificationAppsChanged.emit()
+
+    @Slot()
+    def refreshNotificationApps(self) -> None:
+        if not self._notification_apps_watched or not self.notificationAppsSupported:
+            return
+
+        def completed(value: object) -> None:
+            if not self._notification_apps_watched:
+                return
+            view = notification_apps_view.list_view(value)
+            self._notification_apps = {**view, "loaded": True, "error": ""}
+            self.notificationAppsChanged.emit()
+
+        def failed(message: str) -> None:
+            if not self._notification_apps_watched:
+                return
+            self._notification_apps = {
+                **self._empty_notification_apps(),
+                "error": message or _("Could not read the muted apps."),
+            }
+            self.notificationAppsChanged.emit()
+
+        self._run(self._backend.notification_apps, completed, failed, busy=False)
+
+    @Slot()
+    def _notificationAppsInvalidated(self) -> None:
+        # Content-free signal: refetch only what is on screen.
+        if self._notification_apps_watched:
+            self._notification_apps_timer.start()
+        if self._notifications_watched:
+            self._notifications_timer.start()
+
+    @Slot(str, bool)
+    def setNotificationAppMuted(self, app_id: str, muted: bool) -> None:
+        """Mute or unmute the desktop popups of one iPhone app."""
+        selected = str(app_id or "")
+        if not selected:
+            return
+        wanted = bool(muted)
+
+        def completed(_value: object) -> None:
+            self._notification_apps = {**self._notification_apps, "error": ""}
+            self.refreshNotificationApps()
+            self._notificationsInvalidated()
+
+        def failed(message: str) -> None:
+            # Re-emit so the switch shows the saved state again.
+            self._notification_apps = {
+                **self._notification_apps,
+                "error": notification_apps_view.change_failed_text(message),
+            }
+            self.notificationAppsChanged.emit()
+
+        self._run(
+            lambda: self._backend.set_notification_app_muted(selected, wanted),
+            completed,
+            failed,
+        )
 
     @Property(str, notify=callHistoryChanged)
     def callHistoryError(self) -> str:
@@ -781,6 +899,14 @@ class BridgeController(QObject):
             "NotificationsChanged",
             self,
             SLOT("_notificationsInvalidated()"),
+        )
+        self._bus.connect(
+            BUS_NAME,
+            OBJECT_PATH,
+            EVENTS_IFACE,
+            "NotificationAppsChanged",
+            self,
+            SLOT("_notificationAppsInvalidated()"),
         )
         self._bus.connect(
             BUS_NAME,

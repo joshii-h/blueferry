@@ -39,11 +39,14 @@ def feature_hints(status: Mapping[str, Any]) -> dict[str, str]:
     return hints
 
 
-def notification_rows(records: object) -> list[dict[str, Any]]:
+def notification_rows(
+    records: object, muted: frozenset[str] = frozenset(),
+) -> list[dict[str, Any]]:
     """Normalize ListNotifications records for the Notifications tab.
 
     Each row carries the shared pin fields
-    (:func:`blueferry.notification_pin_view.pin_row_extras`).
+    (:func:`blueferry.notification_pin_view.pin_row_extras`) and ``muted``
+    for rows of apps whose popups are muted (``muted`` holds their IDs).
     """
     rows: list[dict[str, Any]] = []
     if not isinstance(records, list):
@@ -58,6 +61,7 @@ def notification_rows(records: object) -> list[dict[str, Any]]:
             **pin_row_extras(record),
             "app": app,
             "app_id": app_id,
+            "muted": bool(app_id) and app_id in muted,
             "time": format_message_timestamp(str(record.get("time") or "")),
             "title": str(record.get("title") or ""),
             "subtitle": str(record.get("subtitle") or ""),

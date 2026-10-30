@@ -2047,6 +2047,24 @@ def test_tether_read_completion_cannot_release_pending_command(read_outcome):
     assert controller.tether["pending"] is False
 
 
+def _run_inline_any(controller, monkeypatch):
+    """Run tasks inline, recording whether each one asked for busy state."""
+    busy_flags = []
+
+    def run_inline(operation, on_done=None, on_failed=None, *, busy=True):
+        busy_flags.append(busy)
+        try:
+            value = operation()
+        except Exception as error:
+            (on_failed or controller._operation_failed)(str(error))
+        else:
+            if on_done is not None:
+                on_done(value)
+
+    monkeypatch.setattr(controller, "_run", run_inline)
+    return busy_flags
+
+
 def test_media_volume_follows_now_playing_and_steps_through_media_commands():
     backend = _MediaBackend()
     controller = BridgeController(backend=backend, setup=object(), subscribe=False, autostart=False)
@@ -2111,21 +2129,29 @@ class _PinBackend(_PhoneLinkBackend):
         return muted
 
 
-def test_notification_rows_carry_pin_state(monkeypatch):
-    backend = _PinBackend()
+def test_notification_rows_carry_pin_state_and_muted_apps(monkeypatch):
+    backend = _PinBackend(muted={"com.example.mail"})
     controller = _inline_controller(monkeypatch, backend)
+    controller._status = {"notification_muted_app_count": 1}
     controller.watchNotifications(True)
 
     first, second = controller.notifications
     assert first["key"] == "k1" and first["pinned"] is True and first["can_pin"] is True
     assert first["removed_text"] == "Removed on iPhone"
-    assert first["pin_label"] == "Unpin"
-    assert second["pin_label"] == "Pin"
+    assert first["pin_label"] == "Unpin" and first["muted"] is False
+    assert second["pin_label"] == "Pin" and second["muted"] is True
     info = controller.notificationsInfo
     # One of at most two pinned: pinning stays possible.
     assert info["pinLimitReached"] is False
     assert info["pinLimitText"].startswith("At most 2 notifications")
     assert info["pinError"] == ""
+    assert backend.apps_calls == 1
+
+    # A daemon without muting is not asked which apps are muted.
+    controller._status = {}
+    controller.refreshNotifications()
+    assert backend.apps_calls == 1
+    assert controller.notifications[1]["muted"] is False
 
 
 def test_pinning_refreshes_the_list_and_explains_a_failure(monkeypatch):
@@ -2162,8 +2188,64 @@ def test_pinning_refreshes_the_list_and_explains_a_failure(monkeypatch):
     assert controller.notificationsInfo["pinError"] == ""
 
 
+def test_muted_apps_are_read_only_while_shown_and_only_from_capable_daemons(monkeypatch):
+    backend = _PinBackend(muted={"com.example.chat"})
+    controller = BridgeController(backend=backend, setup=object(), subscribe=False, autostart=False)
+    _run_inline_any(controller, monkeypatch)
+
+    assert controller.notificationAppsSupported is False
+    controller.watchNotificationApps(True)
+    assert backend.apps_calls == 0
+
+    controller._status = {"notification_muted_app_count": 1}
+    assert controller.notificationAppsSupported is True
+    controller.watchNotificationApps(True)
+    apps = controller.notificationApps
+    assert apps["loaded"] is True and apps["label"] == "Muted apps"
+    assert [row["name"] for row in apps["rows"]] == ["Chat", "Mail"]
+    assert apps["rows"][0]["muted"] is True
+
+    controller.watchNotificationApps(False)
+    assert controller.notificationApps["rows"] == []
+    assert controller.notificationApps["loaded"] is False
+    # The content-free signal refetches only what is on screen.
+    controller._notificationAppsInvalidated()
+    assert not controller._notification_apps_timer.isActive()
+    controller.watchNotificationApps(True)
+    controller._notificationAppsInvalidated()
+    assert controller._notification_apps_timer.isActive()
+    assert not controller._notifications_timer.isActive()
+
+
+def test_muting_an_app_refreshes_the_list_and_reports_failures_in_the_section(monkeypatch):
+    backend = _PinBackend()
+    controller = BridgeController(backend=backend, setup=object(), subscribe=False, autostart=False)
+    busy = _run_inline_any(controller, monkeypatch)
+    controller._status = {"notification_muted_app_count": 0}
+    controller.watchNotificationApps(True)
+    busy.clear()
+
+    controller.setNotificationAppMuted("com.example.mail", True)
+    # The setter is busy like the other settings; the reread is not.
+    assert busy == [True, False]
+    assert backend.muted == {"com.example.mail"}
+    assert controller.notificationApps["rows"][1]["muted"] is True
+
+    changes = []
+    controller.notificationAppsChanged.connect(lambda: changes.append(True))
+    controller.setNotificationAppMuted("fail", True)
+    assert controller.notificationApps["error"] == "local data is locked"
+    assert changes == [True]
+    assert controller.errorText == ""
+    controller.setNotificationAppMuted("com.example.mail", False)
+    assert controller.notificationApps["error"] == ""
+    assert backend.muted == set()
+
+
 def test_notification_rows_without_pin_keys_hide_the_pin_control():
-    rows = phone_link.notification_rows([{"app_id": "com.example.chat", "time": ""}, "junk"])
+    rows = phone_link.notification_rows(
+        [{"app_id": "com.example.chat", "time": ""}, "junk"], frozenset({"com.example.chat"}),
+    )
     assert len(rows) == 1
     assert rows[0]["can_pin"] is False and rows[0]["key"] == ""
-    assert rows[0]["app"] == "com.example.chat"
+    assert rows[0]["muted"] is True and rows[0]["app"] == "com.example.chat"

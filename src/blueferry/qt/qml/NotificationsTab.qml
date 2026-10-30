@@ -82,9 +82,9 @@ ColumnLayout {
                 readonly property bool pinned: row.modelData.pinned === true
                 partPrefix: "notification"
                 iconName: "preferences-desktop-notification"
-                // Pinned rows carry a pin badge; removed ones are dimmed.
+                // Pinned rows carry a pin badge; removed and muted ones are dimmed.
                 badgeIcon: row.pinned ? "pin" : ""
-                dimmed: row.modelData.removed === true
+                dimmed: row.modelData.removed === true || row.modelData.muted === true
                 pinActions: row.pinned
                 title: row.modelData.app
                 bold: true
