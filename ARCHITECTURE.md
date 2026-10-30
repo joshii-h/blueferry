@@ -62,8 +62,9 @@ All paths are relative to `src/blueferry/` unless noted.
 | `wireplumber_policy.py` | Manages one WirePlumber fragment that keeps iPhone audio on the phone (keeps the hands-free roles when calls are enabled). |
 | `proximity_lock.py` | Opt-in lock-only desktop lock after the iPhone's bearers stay down for a grace period; lock dispatch via ScreenSaver, then logind. |
 | `media.py` | Opt-in now-playing projection, media command policy, coalesced change listeners, and the persisted opt-in (`MediaControlSettings`). |
+| `cover_art.py` | AVRCP cover art: holds one BIP session per phone (`bip-avrcp` on `MediaPlayer1.ObexPort`, on a private session-bus connection because obexd ends a session with its D-Bus client), fetches `Track.ImgHandle` thumbnails into the owner-only, bounded `CoverCache`, validates them as JPEG and reports the current file to `media.py` (`cover`, `mpris:artUrl`, `phone_media_cover`). Follows the media-control opt-in. |
 | `phone_audio_route.py` | Content-free iPhone A2DP route (`pc`/`phone`/`unavailable`) from BlueZ `MediaTransport1`/`Device1` over GDBus, switched through `ConnectProfile`/`DisconnectProfile`; also where the sound plays (`phone_audio_playing`) from `MediaTransport1.State` and the AMS playback state, debounced. |
-| `gio_dbus.py` | `GioBus`: a two-method seam (typed asynchronous `call`, `subscribe`) over a `Gio.DBusConnection`, with dbus-python-compatible error names; used by `phone_audio_route.py`. |
+| `gio_dbus.py` | `GioBus`: a two-method seam (typed asynchronous `call`, `subscribe`) over a `Gio.DBusConnection`, with dbus-python-compatible error names; used by `phone_audio_route.py` and `cover_art.py`. |
 | `phone_audio_view.py` | Toolkit-free wording of the PC/iPhone sound switch for every client. |
 | `features.py` | The `local.env` switches without a runtime setter of their own that clients may store in settings.json (`Messages1.GetFeatures/SetFeature`): notification content, mark read on dismiss, keeping iPhone audio on the phone. |
 | `doctor_report.py` | Runs `blueferry doctor` in a child process for the settings UIs and returns a plain-text report; its state map and summary (`view()`) are shared by the Qt and GTK settings. |
@@ -116,6 +117,8 @@ All paths are relative to `src/blueferry/` unless noted.
 | `calls/controller.py` | Optional HFP calls: oFono modem discovery, Powered→Online bring-up, call tracking and control, backoff; watches the phone's battery/signal interfaces while online. |
 | `phone_battery.py` | The phone's battery over LE (BlueZ `Battery1` or GATT Battery Level), asynchronous, no HFP; saved low-battery warning opt-in. |
 | `calls/phone_status.py` | Optional phone status: pure parsing of oFono's Handsfree/NetworkRegistration properties and the once-per-cycle low-battery decision. |
+| `tether.py` | Opt-in Bluetooth PAN tethering: saved opt-in (`TetherSettings`), state machine, Network1 link watch, and BlueZ error tokens. |
+| `tether_backends.py` | Tethering strategies: a per-user NetworkManager PAN profile, or plain `Network1.Connect("nap")`. |
 
 ### Sinks
 
@@ -169,6 +172,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `glib_client_activation.py` | GLib adapter for client activation (GTK and the Quickshell bridge). |
 | `notification_open.py` | Opens a click rule's URL or desktop entry through Gio in a helper process, via a transient systemd user unit when available. |
 | `time_display.py` | Human-readable local timestamps for all clients. |
+| `tether_status.py` | Client-side tether state model and error guidance shared by every client. |
 | `i18n.py` | gettext helpers for Python presentation layers. |
 
 ### Clients and entry points
@@ -206,6 +210,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `companion_model.py` | Toolkit-neutral state of the card's Tools section, shared by Qt and (soon) GTK: probe and actions on a `TaskRunner`, one action at a time, the last message and the "trust this computer" hint. `qt/companion.py` adapts it to a `QThreadPool` and the `changed`/`reported` signals. |
 | `cli_notification_actions.py` | `notification-actions` status, enable, and disable for the opt-in iPhone action buttons. |
 | `cli_calls.py` | Optional `blueferry calls` commands over `Calls1` and `blueferry phone-status` (battery, signal, network from `GetStatus`). |
+| `cli_tether.py` | `blueferry tether [status\|enable\|disable\|on\|off]`. |
 | `cli_otp.py` | `blueferry otp status`, `enable`, `disable` and `check` for one-time code auto-copy (`otp-status` and `otp-check` stay as aliases). |
 | `tui.py` | Textual terminal client. |
 | `tui_launcher.py` | Launches the TUI with the package-private Textual bundle when present. |
@@ -254,6 +259,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `qt/qml/NotificationOpenMapEditor.qml` | Loaded editor for notification click rules (shown with the "all" policy). |
 | `qt/qml/OnboardingSummary.qml` | Renders the onboarding stage message. |
 | `qt/qml/ProximityLockSettings.qml` | Away-lock toggle, grace period, and warning; loaded only for daemons that report it. |
+| `qt/qml/TetherSection.qml` | "Enable Bluetooth tethering" checkbox, then the connect switch and automatic choice; loaded only when the daemon offers `Tether1`. |
 | `qt/qml/GroupConfirmationDialog.qml` | Group recipient confirmation before sending. |
 | `qt/qml/NewMessageDialog.qml` | New message composition. |
 | `qt/qml/PhoneCard.qml` | The phone card left of the tabs: name, connection, battery/signal, now playing and quick switches (sound, away lock); opt-ins that are off stay greyed out with a hint. Folds behind a header button in a narrow window. |
@@ -367,6 +373,16 @@ dbus-python; the guard tolerates that.
   numbers and names are only returned by the rate-limited `ListCalls`.
   Dialing has its own strict quota. Adding it did not change the API
   generation.
+
+- `Tether1` is a separate, optional interface for Bluetooth PAN tethering:
+  `Connect`, `Disconnect`, `GetState`, and `SetTethering` return a small
+  JSON state (state, interface name, backend, error token, the `enabled` and
+  `autoconnect` choices; never IP configuration), and its own content-free
+  `TetherChanged` signal invalidates it. It is outside the messaging
+  generation, so clients treat a missing interface as "not offered" rather
+  than as an incompatible daemon. `Connect`/`Disconnect` have their own
+  `tether` rate bucket; `SetTethering` uses the `settings` bucket like
+  `SetProximityLock`, and `GetState` shares the status bucket.
 - `data/io.weirdware.BlueFerry.xml` is canonical, installed under
   `dbus-1/interfaces`, and checked against the service's dbus-python
   decorators.
@@ -643,6 +659,32 @@ A change to these rules has to be made in both places.
   (`org.freedesktop.ScreenSaver.Lock`, then logind `Session.Lock`). It is
   configured through `Presence1.SetProximityLock`, and `GetStatus` reports
   only its state keys through the existing argument-free `StatusChanged`.
+- **Tethering** (`tether`) is off until the user enables it
+  (`Tether1.SetTethering`, saved in `settings.json` by `TetherSettings`;
+  `BLUEFERRY_TETHER_ENABLED`/`_AUTOCONNECT` only seed the first value, as
+  with the proximity lock). While it is off the controller installs no
+  `Network1` watch, adopts nothing, never contributes to the recovery
+  `busy` flag, never autoconnects, and `Connect` is refused with `NotReady`.
+  Disabling at runtime stops a tether this daemon started, forgets an
+  adopted one without stopping it, removes the watch, and cancels retries.
+  Once enabled, tethering is an explicit user action layered on the Classic
+  link the bearer supervisor owns. `Connect` is refused until that link is
+  up, and the code never calls `Device1`/`Bearer` `Connect`/`Disconnect` or
+  `ConnectProfile`, only `Network1` or NetworkManager, so it cannot fight the
+  supervisor over the ACL link or reorder MAP-first startup (a fake bus and
+  a source check enforce this). With NetworkManager the daemon reuses the
+  phone's existing `bluetooth`/`panu` profile untouched (its own, else the
+  most recently used) or creates a per-user, non-autoconnecting one, and
+  NetworkManager runs DHCP; without it the daemon brings up the `bnep` link
+  only and never spawns a DHCP client. A `Network1` property watch reports
+  link loss and adopts links started elsewhere; stopping an adopted link
+  finishes only once BlueZ confirms it is down. Only a tether whose network
+  interface exists (with an unknown interface, for at most ten minutes)
+  marks the adapter busy for recovery, and a BlueZ owner loss resets it.
+  Automatic tethering is a second saved choice, effective only while
+  tethering is enabled; it waits for MAP/PBAP, backs off after refusals, never chases links another
+  tool started, and pauses after an explicit disconnect, including a
+  NetworkManager deactivation with reason `USER_DISCONNECTED`.
 - **Read receipts** go through `read_receipts`, which delays MAP write-back so
   ANCS can still fetch group metadata. Local reads take effect immediately.
 
