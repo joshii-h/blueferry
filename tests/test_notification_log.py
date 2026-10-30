@@ -29,8 +29,13 @@ def test_log_skips_messages_hides_content_and_signals() -> None:
     assert changes == [1]
     assert log.snapshot(10) == [{
         "id": 2, "app_id": "com.example.chat", "app_name": "Chat",
-        "time": WHEN.isoformat(),
+        "time": WHEN.isoformat(), "key": snapshot_key(log),
+        "removed": False, "pinned": False, "actionable": True,
     }]
+
+
+def snapshot_key(log: NotificationLog) -> object:
+    return log.snapshot(1)[0]["key"]
 
 
 def test_log_keeps_content_when_allowed_is_bounded_and_newest_first() -> None:
