@@ -58,6 +58,7 @@ class MainWindow(Adw.ApplicationWindow):
                      self.calls.set_watched)
         self.notifications = NotificationsPage(
             client, open_settings=self.present_phone_settings, timer=timer,
+            toast=self.toast,
         )
         self.add_tab(
             "notifications", _("Notifications"),

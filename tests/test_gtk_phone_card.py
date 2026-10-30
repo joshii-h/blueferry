@@ -14,7 +14,7 @@ from tests.gtk_broadway import run_scenario
 @pytest.mark.parametrize(
     "scenario", [
         "layout", "card", "quick-settings", "dial-pad", "running-calls", "recent-calls",
-        "notifications", "close", "volume",
+        "notifications", "close", "volume", "pins",
     ],
 )
 def test_gtk_phone_card(tmp_path, scenario):
@@ -86,6 +86,12 @@ class FakeClient:
 
     def set_proximity_lock_async(self, enabled, grace, on_ok, on_err):
         self.calls.append((("proximity", enabled, grace), on_ok, on_err))
+
+    def notification_apps_async(self, on_ok, on_err=None):
+        self.calls.append(("apps", on_ok, on_err))
+
+    def set_notification_pinned_async(self, key, pinned, on_ok, on_err):
+        self.calls.append((("pin", key, pinned), on_ok, on_err))
 
     # TaskRunner for NotificationHistory
     def submit(self, operation, on_done=None, on_error=None, on_finished=None):
@@ -690,9 +696,102 @@ def _exercise_volume():
     window.destroy()
 
 
+def _pin_records(*, removed=True):
+    return [
+        {"key": "k1", "id": 1, "app_id": "com.example.Mail", "app_name": "Mail",
+         "title": "Invoice", "time": "2026-10-26T09:00:00+00:00",
+         "pinned": True, "removed": removed, "actionable": False},
+        {"key": "k2", "id": 2, "app_id": "com.example.Chat", "app_name": "<b>Chat</b>",
+         "title": "Kim", "time": "2026-10-26T10:00:00+00:00",
+         "pinned": False, "removed": False, "actionable": True},
+        {"app_name": "Old", "time": "2026-10-26T08:00:00+00:00"},  # an older daemon
+    ]
+
+
+def _pin_buttons(row):
+    from gi.repository import Gtk
+
+    return [w for w in _descendants(row)
+            if isinstance(w, Gtk.Button) and w.get_icon_name() == "view-pin-symbolic"]
+
+
+def _exercise_pins():
+    from blueferry import notification_pin_view as pins
+    from tests.client_fakes import ManualRunner
+
+    runner = ManualRunner()
+    status = {**NOTIFICATIONS_ON, "notification_muted_app_count": 1}
+    window, client = _window(status, timer=runner.timer)
+    page = window.notifications
+    timer = runner.timers[-1]
+    toasts = []
+    page._toast = toasts.append
+    assert "apps" not in client.names(), "hidden tab: the muted apps are not read"
+    window.show_tab("notifications")
+    _settle()
+    client.take("apps")[1]({"apps": [
+        {"app_id": "com.example.Chat", "app_name": "<b>Chat</b>", "muted": True, "seen": True},
+    ], "mute_available": True})
+    client.take("notifications")[1]({
+        "enabled": True, "content": True, "pins_max": 20, "notifications": _pin_records(),
+    })
+    mail, chat, old = _rows(page.list)
+    # Pinned and removed on the iPhone: marked, dimmed, Unpin offered.
+    assert mail.has_css_class("dim-label")
+    assert mail.get_subtitle() == "Invoice\nRemoved on iPhone"
+    [unpin] = _pin_buttons(mail)
+    assert unpin.get_tooltip_text() == pins.UNPIN_TOOLTIP and unpin.has_css_class("accent")
+    assert unpin.get_sensitive()
+    # A muted app's row is dimmed; it can still be pinned.
+    assert chat.has_css_class("dim-label") and chat.get_title() == "<b>Chat</b>"
+    [pin] = _pin_buttons(chat)
+    assert pin.get_tooltip_text() == pins.PIN_TOOLTIP and not pin.has_css_class("accent")
+    # Without a key (older daemon): no pin control, not dimmed.
+    assert _pin_buttons(old) == [] and not old.has_css_class("dim-label")
+
+    # Pinning: one call per row at a time, then a read; errors as toasts.
+    pin.emit("clicked")
+    [pin] = _pin_buttons(_rows(page.list)[1])
+    assert not pin.get_sensitive()
+    pin.emit("clicked")
+    _name, _ok, failed = client.take(("pin", "k2", True))
+    assert ("pin", "k2", True) not in client.names()
+    failed(pins.FULL_TEXT)
+    assert toasts == [pins.FULL_TEXT] and timer.active
+    assert _pin_buttons(_rows(page.list)[1])[0].get_sensitive()
+    [unpin] = _pin_buttons(_rows(page.list)[0])
+    unpin.emit("clicked")
+    client.take(("pin", "k1", False))[1](False)
+    timer.fire()
+
+    # At the limit: Pin is greyed out with the reason, Unpin still works.
+    client.take("notifications")[1]({
+        "enabled": True, "content": True, "pins_max": 1,
+        "notifications": _pin_records(removed=False),
+    })
+    mail, chat, _old = _rows(page.list)
+    assert not mail.has_css_class("dim-label")
+    assert _pin_buttons(mail)[0].get_sensitive()
+    [pin] = _pin_buttons(chat)
+    assert not pin.get_sensitive() and pin.get_tooltip_text() == pins.pin_limit_text(1)
+
+    # NotificationAppsChanged rereads the muted apps while the tab is shown.
+    client.emit("notification-apps-changed")
+    client.take("apps")[1]({"apps": [], "mute_available": True})
+    assert not _rows(page.list)[1].has_css_class("dim-label")
+    # Hidden: records and muted apps are forgotten, nothing is read.
+    window.show_tab("messages")
+    _settle()
+    assert page._snapshot == {} and page.history.rows == []
+    client.emit("notification-apps-changed")
+    assert "apps" not in client.names()
+    window.destroy()
+
+
 if __name__ == "__main__":
     {
         "volume": _exercise_volume,
+        "pins": _exercise_pins,
         "layout": _exercise_layout,
         "card": _exercise_card,
         "dial-pad": _exercise_dial_pad,
