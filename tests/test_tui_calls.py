@@ -12,6 +12,7 @@ from blueferry.models import BackendStatus, CallsSnapshot
 from blueferry.tui import BlueFerryApp, TuiState
 from blueferry.tui_calls import (
     CallsScreen,
+    DeclineMessageScreen,
     DialConfirmScreen,
     calls_text,
     hangup_target,
@@ -129,6 +130,11 @@ class _Backend:
 
     def set_call_muted(self, muted: bool) -> None:
         self.requests.append(("mute", muted))
+
+    def decline_call_with_message(self, call_id: str, text: str) -> None:
+        if text == "fail":
+            raise BackendError("The call was declined, but the message was not sent: busy")
+        self.requests.append(("decline_message", call_id, text))
 
 
 def _run(coroutine) -> None:
@@ -642,3 +648,123 @@ def test_mute_toggles_the_running_call_only_where_the_daemon_can() -> None:
 
     _run(scenario())
 
+
+def _replies_backend(replies, *calls) -> _Backend:
+    backend = _Backend()
+    backend.extra = {} if replies is None else {"calls_quick_replies": replies}
+    if calls:
+        backend.snapshot = _snapshot(*calls)
+    return backend
+
+
+async def _reply_dialog(app, pilot, screen) -> DeclineMessageScreen:
+    reply = screen.query_one("#calls-reply", Button)
+    await _until(pilot, lambda: screen.query_one("#calls-reply-row").display)
+    assert str(reply.label) == "Decline with message" and not reply.disabled
+    screen.decline_with_message()
+    await _until(pilot, lambda: isinstance(app.screen, DeclineMessageScreen))
+    dialog = app.screen
+    await pilot.pause(0.05)
+    return dialog
+
+
+def test_a_ringing_call_is_declined_with_a_saved_reply() -> None:
+    async def scenario() -> None:
+        backend = _replies_backend(["Driving [b]now[/b]", "Call you later"])
+        app = BlueFerryApp(TuiState(backend), monitor_factory=lambda: None)
+        async with app.run_test(size=(120, 50)) as pilot:
+            screen = await _open_calls(app, pilot)
+            dialog = await _reply_dialog(app, pilot, screen)
+            choices = dialog.query_one("#calls-reply-choices")
+            assert choices.option_count == 3
+            assert str(choices.get_option_at_index(0).prompt) == "Driving [b]now[/b]"
+            assert str(choices.get_option_at_index(2).prompt) == "Own text…"
+            assert dialog.focused is choices
+            await pilot.press("down", "enter")
+            await _until(pilot, lambda: (
+                "decline_message", "voicecall01", "Call you later") in backend.requests)
+            assert app.screen is screen
+
+    _run(scenario())
+
+
+def test_own_text_is_checked_and_a_failed_send_says_the_call_was_declined() -> None:
+    async def scenario() -> None:
+        backend = _replies_backend([])  # replies saved empty: own text only
+        app = BlueFerryApp(TuiState(backend), monitor_factory=lambda: None)
+        notices = []
+        async with app.run_test(size=(120, 50)) as pilot:
+            screen = await _open_calls(app, pilot)
+            screen.notify = lambda message, **kw: notices.append((message, kw))
+            dialog = await _reply_dialog(app, pilot, screen)
+            assert not dialog.query_one("#calls-reply-choices").display
+            field = dialog.query_one("#calls-reply-text", Input)
+            assert dialog.focused is field
+            await pilot.press("enter")
+            await pilot.pause(0.1)
+            assert "Type a message first." in str(
+                dialog.query_one("#calls-reply-error", Static).render())
+            assert app.screen is dialog
+
+            field.value = "fail"
+            await pilot.press("enter")
+            await _until(pilot, lambda: bool(notices))
+            message, kwargs = notices[0]
+            assert "declined" in message and kwargs["severity"] == "error"
+            assert not [r for r in backend.requests if r[0] == "hangup"]
+
+            notices.clear()
+            dialog = await _reply_dialog(app, pilot, screen)
+            dialog.query_one("#calls-reply-text", Input).value = "  In a meeting  "
+            dialog.send()
+            await _until(pilot, lambda: (
+                "decline_message", "voicecall01", "In a meeting") in backend.requests)
+            await _until(pilot, lambda: bool(notices))
+            assert notices[0][0] == "Call declined and message sent."
+
+    _run(scenario())
+
+
+def test_decline_with_message_is_offered_only_where_it_can_work() -> None:
+    async def scenario() -> None:
+        backend = _replies_backend(None)  # an older daemon
+        app = BlueFerryApp(TuiState(backend), monitor_factory=lambda: None)
+        async with app.run_test(size=(120, 50)) as pilot:
+            screen = await _open_calls(app, pilot)
+            row = screen.query_one("#calls-reply-row")
+            assert not row.display
+
+            screen.status_changed({**app.state.status.to_dict(), "calls_quick_replies": []})
+            await _until(pilot, lambda: row.display)
+            # Connected calls have nothing to decline.
+            backend.snapshot = _snapshot(("voicecall01", "active", "Alice"))
+            screen.refresh_calls()
+            await _until(pilot, lambda: not row.display)
+            screen.decline_with_message()
+            await pilot.pause(0.1)
+            assert app.screen is screen
+
+            # A caller without a number cannot get a message.
+            backend.snapshot = CallsSnapshot.from_dict({"state": "ready", "calls": [
+                {"call_id": "voicecall02", "state": "incoming", "number": ""},
+            ]})
+            screen.refresh_calls()
+            await pilot.pause(0.2)
+            assert not row.display
+
+    _run(scenario())
+
+
+def test_the_reply_dialog_closes_when_the_call_stops_ringing() -> None:
+    async def scenario() -> None:
+        backend = _replies_backend(["Busy"])
+        app = BlueFerryApp(TuiState(backend), monitor_factory=lambda: None)
+        async with app.run_test(size=(120, 50)) as pilot:
+            screen = await _open_calls(app, pilot)
+            dialog = await _reply_dialog(app, pilot, screen)
+            backend.snapshot = _snapshot(("voicecall01", "active", "Alice"))
+            screen.refresh_calls()
+            await _until(pilot, lambda: app.screen is screen and not dialog.is_attached)
+            assert not [r for r in backend.requests if r[0] == "decline_message"]
+
+    _run(scenario())

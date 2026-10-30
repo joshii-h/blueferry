@@ -822,7 +822,7 @@ ModalScreen {
     color: #cbd5e1;
 }
 
-#calls-mute-row {
+#calls-reply-row, #calls-mute-row {
     height: auto;
     margin-top: 1;
 }
@@ -830,4 +830,23 @@ ModalScreen {
 #calls-mute-hint {
     width: 1fr;
     padding: 1 1 0 1;
+}
+
+#calls-reply-dialog {
+    width: 72;
+}
+
+#calls-reply-choices {
+    height: auto;
+    max-height: 8;
+    background: #151f35;
+}
+
+#calls-reply-text {
+    height: 3;
+}
+
+#calls-reply-error {
+    height: auto;
+    color: #fca5a5;
 }
