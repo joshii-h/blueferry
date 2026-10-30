@@ -21,9 +21,10 @@ bevor sie überhaupt eine Mitteilung geschickt hat. BlueFerry holt App-Mitteilun
 nur, solange **All iPhone Notifications** gewählt ist; mit einer anderen
 Richtlinie enthält die Liste nur die stummgeschalteten Apps.
 
-Die grafischen Clients und der Terminal-Client bekommen dieselbe Liste unter
-*Einstellungen → Mitteilungen* mit einer separaten Änderung; bis dahin nutze
-die Kommandozeile.
+Der KDE-, der GTK- und der Terminal-Client zeigen dieselbe Liste als **Muted
+apps** unter **Settings › Notifications**, das Quickshell-Panel unter **iPhone
+settings › Notifications**; jede App hat dort **Mute** / **Unmute** (siehe
+[Clients](clients.md)).
 
 ## Was Stummschalten tut und was nicht
 
@@ -56,8 +57,8 @@ hin, damit du weißt, warum manche Apps nie auftauchen.
   `ancs_muted_apps` in `~/.config/blueferry/settings.json` gespeichert, im
   selben [Speichermodus](privacy.md#lokale-daten) wie markierte Unterhaltungen
   (standardmäßig verschlüsselt). Ein Wechsel des Speichermodus löscht sie.
-- Solange die Wallet gesperrt ist oder **Do not retain local data** gewählt
-  ist, ist keine App stummgeschaltet und Stummschalten nicht möglich.
+- Solange der Schlüsselbund gesperrt ist oder **Keine lokalen Daten behalten**
+  gewählt ist, ist keine App stummgeschaltet und Stummschalten nicht möglich.
   BlueFerry überschreibt die gespeicherte Liste nie, solange es sie nicht
   lesen kann.
 - Das D-Bus-Signal `NotificationAppsChanged` trägt keinen Inhalt; Clients

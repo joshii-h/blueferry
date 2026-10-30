@@ -30,7 +30,9 @@ Notifications** unter **Show Popups**.
 
 Der Reiter **Notifications** zeigt die neuesten zuerst, mit App, Zeit und,
 wenn erlaubt, Titel und Text; der Terminal-Client zeigt dieselbe Liste
-unter **iPhone Notifications** in seiner Befehlspalette. Im Terminal:
+unter **iPhone Notifications** in seiner Befehlspalette und das
+Quickshell-Panel unter **iPhone settings › Notifications** mit **Show Recent
+Notifications** (siehe [Clients](clients.md)). Im Terminal:
 
 ```bash
 blueferry notifications recent             # die letzten 20
