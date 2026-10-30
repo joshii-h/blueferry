@@ -170,6 +170,11 @@ class _Client(_TetherClient, Protocol):
 
     def send_media_command(self, command: str) -> None: ...
 
+    # Messages1 muted notification apps.
+    def notification_apps(self) -> dict: ...
+
+    def set_notification_app_muted(self, app_id: str, muted: bool) -> bool: ...
+
     def call_history(self, limit: int = 200) -> list[CallHistoryEntry]: ...
 
     def sync_call_history(self) -> int: ...
@@ -303,6 +308,7 @@ class _EventMonitor:
         self.now_playing_changed = False
         self.call_history_changed = False
         self.notifications_changed = False
+        self.notification_apps_changed = False
         self._context = GLib.MainContext.default()
         bus = get_session_bus()
         common = {
@@ -357,6 +363,12 @@ class _EventMonitor:
                 signal_name="NotificationsChanged",
                 **common,
             ),
+            # Content-free; the muted apps come from ListNotificationApps.
+            bus.add_signal_receiver(
+                lambda: setattr(self, "notification_apps_changed", True),
+                signal_name="NotificationAppsChanged",
+                **common,
+            ),
         ]
 
     def _calls_changed(self) -> None:
@@ -376,6 +388,10 @@ class _EventMonitor:
 
     def take_notifications_changed(self) -> bool:
         changed, self.notifications_changed = self.notifications_changed, False
+        return changed
+
+    def take_notification_apps_changed(self) -> bool:
+        changed, self.notification_apps_changed = self.notification_apps_changed, False
         return changed
 
     def _invalidate(self) -> None:
@@ -1055,6 +1071,11 @@ class BlueFerryApp(App[None]):
             for screen in self.screen_stack:
                 if isinstance(screen, NotificationsScreen):
                     screen.invalidated()
+        take_apps = getattr(self._monitor, "take_notification_apps_changed", None)
+        if take_apps is not None and take_apps():
+            for screen in self.screen_stack:
+                if isinstance(screen, OptionsScreen):
+                    screen.apps_changed()
         if handle:
             self._pending_open_handle = handle
             if self.state.select_message(handle):

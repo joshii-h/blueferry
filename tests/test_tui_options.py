@@ -774,3 +774,122 @@ def test_a_status_forwarded_while_options_is_being_pushed_does_not_crash() -> No
             assert app.is_running
 
     asyncio.run(scenario())
+
+
+# ---- muted apps ---------------------------------------------------------------
+
+
+class _MuteBackend(_OptionsBackend):
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.extra["notification_muted_app_count"] = 1
+        self.apps = [
+            {"app_id": "com.example.mail", "app_name": "[@click=app.quit]Mail[/]",
+             "muted": True, "seen": True},
+            {"app_id": "com.example.chat", "app_name": "", "muted": False, "seen": False},
+        ]
+        self.app_loads = 0
+        self.mute_error: str | None = None
+
+    def notification_apps(self) -> dict:
+        self.app_loads += 1
+        return {
+            "apps": [dict(app) for app in self.apps], "max_muted": 100,
+            "mute_available": True, "all_notifications": True,
+            "env_allowlist": False, "env_blocklist": True,
+        }
+
+    def set_notification_app_muted(self, app_id: str, muted: bool) -> bool:
+        self._record("mute", app_id, muted)
+        if self.mute_error:
+            raise BackendError(self.mute_error)
+        for app in self.apps:
+            if app["app_id"] == app_id:
+                app["muted"] = muted
+        return muted
+
+
+def _mute_boxes(screen) -> dict:
+    from blueferry.tui_options import MuteCheckbox
+
+    return {box.app_id: box for box in screen.query(MuteCheckbox)}
+
+
+def test_muted_apps_list_each_app_with_a_checkbox_and_save_a_change() -> None:
+    async def scenario() -> None:
+        backend = _MuteBackend()
+        app = _app(backend)
+        async with app.run_test(size=(120, 60)) as pilot:
+            screen = await _open(app, pilot, "notifications")
+            group = screen.query_one("#options-group-muted-apps")
+            await _until(pilot, lambda: len(_mute_boxes(screen)) == 2)
+            assert group.display
+            boxes = _mute_boxes(screen)
+            mail, chat = boxes["com.example.mail"], boxes["com.example.chat"]
+            # The iPhone's app name is plain text, never markup.
+            assert mail.label.plain == "[@click=app.quit]Mail[/]"
+            assert chat.label.plain == "com.example.chat"
+            assert mail.value is True and chat.value is False
+            assert "BLUEFERRY_ANCS_APP_BLOCKLIST" in _plain(screen, "#options-muted-apps-hint")
+
+            chat.toggle()
+            await _until(pilot, lambda: ("mute", "com.example.chat", True) in backend.calls)
+            await _until(pilot, lambda: not screen.muting and backend.app_loads >= 2)
+            await _until(pilot, lambda: _mute_boxes(screen)["com.example.chat"].value is True)
+
+            # A failed change says so and shows the daemon's state again.
+            backend.mute_error = "[b]storage locked[/b]"
+            _mute_boxes(screen)["com.example.mail"].toggle()
+            await _until(pilot, lambda: "storage locked" in _plain(screen, "#options-error"))
+            assert "[b]storage locked[/b]" in _plain(screen, "#options-error")
+            await _until(pilot, lambda: not screen.muting)
+            await _until(pilot, lambda: _mute_boxes(screen)["com.example.mail"].value is True)
+
+    asyncio.run(scenario())
+
+
+def test_muted_apps_stay_hidden_without_daemon_support() -> None:
+    async def scenario() -> None:
+        backend = _MuteBackend()
+        del backend.extra["notification_muted_app_count"]
+        app = _app(backend)
+        async with app.run_test(size=(120, 60)) as pilot:
+            screen = await _open(app, pilot, "notifications")
+            await pilot.pause(0.2)
+            assert not screen.query_one("#options-group-muted-apps").display
+            assert backend.app_loads == 0
+
+    asyncio.run(scenario())
+
+
+def test_notification_apps_changed_reloads_the_open_list() -> None:
+    class _Monitor:
+        def __init__(self) -> None:
+            self.changed = False
+
+        def pump(self):
+            return False, None
+
+        def take_notification_apps_changed(self) -> bool:
+            changed, self.changed = self.changed, False
+            return changed
+
+        def close(self) -> None:
+            pass
+
+    async def scenario() -> None:
+        backend = _MuteBackend()
+        monitor = _Monitor()
+        app = BlueFerryApp(TuiState(backend), monitor_factory=lambda: monitor)
+        async with app.run_test(size=(120, 60)) as pilot:
+            screen = await _open(app, pilot, "notifications")
+            await _until(pilot, lambda: len(_mute_boxes(screen)) == 2)
+            loads = backend.app_loads
+            backend.apps.append(
+                {"app_id": "com.example.news", "app_name": "News", "muted": False, "seen": True},
+            )
+            monitor.changed = True
+            await _until(pilot, lambda: len(_mute_boxes(screen)) == 3)
+            assert backend.app_loads == loads + 1
+
+    asyncio.run(scenario())
