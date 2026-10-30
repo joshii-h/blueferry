@@ -548,11 +548,13 @@ ShellRoot {
         if (root.notificationAppsWanted && typeof result === "object" && result !== null)
           root.notificationApps = result
       } else if (method === "set_notification_pinned") {
-        // NotificationsChanged follows a change; a refusal rereads the list.
+        // A saved pin sends NotificationsChanged, which rereads the list;
+        // only a refusal rereads it here.
         root.notificationPinBusy = false
+        var saved = typeof result === "object" && result !== null && result.saved === true
         root.notificationPinError = typeof result === "object" && result !== null
           ? String(result.error || "") : ""
-        root.refreshNotificationList()
+        if (!saved) root.refreshNotificationList()
       }
     }
 

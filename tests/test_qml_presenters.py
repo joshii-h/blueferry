@@ -6076,6 +6076,12 @@ Item {
         backendBridge.response("set_notification_pinned", 33, {saved: false, error: "full"})
         check(!root.notificationPinBusy && root.notificationPinError === "full", "pin refusal lost")
         check(backendBridge.take("latest:notifications") === 1, "refused pin did not reread")
+        phoneSettingsPage.operationRequested("set_notification_pinned", {key: "k", pinned: true})
+        backendBridge.response("set_notification_pinned", 34, {saved: true, pinned: true, error: ""})
+        check(root.notificationPinError === "", "saved pin kept the old refusal")
+        check(backendBridge.take("latest:notifications") === 0, "saved pin reread before the event")
+        backendBridge.eventReceived("notifications-changed", null)
+        check(backendBridge.take("latest:notifications") === 1, "pin event did not reread")
         backendBridge.eventReceived("notification-apps-changed", null)
         check(backendBridge.take("latest:notifications") === 1, "mute did not redim the list")
         root.phoneSettingsVisible = false
