@@ -179,6 +179,31 @@ def test_disabled_storage_offers_no_mutes(isolated_state) -> None:
         disabled.close()
 
 
+def test_store_reads_settings_once_until_written_or_storage_changes(
+    storage, isolated_state, monkeypatch,
+) -> None:
+    store = MutedAppsStore(config.SETTINGS_JSON, storage=storage)
+    store.set_muted("com.example.A", True, "A")
+    reads: list[bool] = []
+    original = store._preference.read
+    monkeypatch.setattr(
+        store._preference, "read", lambda: reads.append(True) or original(),
+    )
+    for _ in range(3):  # one popup each, plus a GetStatus count
+        assert store.is_muted("com.example.A") is True
+    assert store.entries() == {"com.example.A": "A"}
+    assert len(reads) == 1
+    store.set_muted("com.example.B", True)
+    assert store.is_muted("com.example.B") is True
+    assert len(reads) == 2  # the write used the cached list, then reread
+    storage.fail_closed("locked for the test")
+    assert store.entries() == {}
+    assert len(reads) == 3
+    store.invalidate()
+    store.entries()
+    assert len(reads) == 4
+
+
 def test_migrate_seals_legacy_plaintext(storage) -> None:
     SettingsStore(config.SETTINGS_JSON).update(**{SETTINGS_KEY: [
         {"app_id": "com.example.Legacy", "app_name": "Legacy"},
@@ -429,6 +454,14 @@ def test_daemon_wires_seen_apps_mutes_and_status(make_daemon, monkeypatch, stora
     assert daemon.events.ancs_app_muted("com.example.Chat") is True
     assert signals[-2:] == ["apps", "status"]
     assert daemon.notification_apps.muted_count() == 1
+
+    invalidated = []
+    monkeypatch.setattr(
+        daemon.notification_apps.store, "invalidate", lambda: invalidated.append(True),
+    )
+    signals.clear()
+    daemon._on_storage_changed()
+    assert invalidated and signals[0] == "apps"
 
 
 # ---- D-Bus round trip ----------------------------------------------------------

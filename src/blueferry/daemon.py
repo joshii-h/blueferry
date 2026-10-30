@@ -1278,7 +1278,7 @@ class Daemon:
         if self.call_history is not None:
             self.call_history.storage_changed()
         # Saved mutes become readable (or unreadable) with the storage.
-        self._notification_apps_changed()
+        self.notification_apps.storage_changed()
         self._emit_status()
 
     def _initialize(self) -> bool:
