@@ -6082,6 +6082,12 @@ Item {
         check(backendBridge.take("latest:notifications") === 0, "saved pin reread before the event")
         backendBridge.eventReceived("notifications-changed", null)
         check(backendBridge.take("latest:notifications") === 1, "pin event did not reread")
+        backendBridge.failure("set_notification_pinned", 35, "Bridge says no")
+        check(root.notificationPinError === "Bridge says no", "pin failure not the bridge's text")
+        check(backendBridge.take("latest:notifications") === 1, "failed pin did not reread")
+        backendBridge.failure("notifications", 36, "Bridge text")
+        check(root.notificationList.explanation === "Bridge text"
+          && root.notificationList.title === undefined, "list failure worded by the shell")
         backendBridge.eventReceived("notification-apps-changed", null)
         check(backendBridge.take("latest:notifications") === 1, "mute did not redim the list")
         root.phoneSettingsVisible = false

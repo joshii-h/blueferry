@@ -1048,6 +1048,24 @@ def test_bridge_explains_an_empty_or_failing_notification_list() -> None:
     assert failing["explanation"] == "ListNotifications failed"
 
 
+def test_bridge_words_an_unreadable_status_in_the_notification_replies() -> None:
+    from blueferry.client import BackendError
+
+    client = NotificationAppsClient()
+
+    def no_status(**_kwargs):
+        raise BackendError("")
+
+    client.status = no_status  # type: ignore[method-assign]
+    bridge = QuickshellBridge(client)  # type: ignore[arg-type]
+    listed = bridge.dispatch("notifications", {})
+    assert listed["failed"] is True and listed["rows"] == []
+    assert listed["title"] == "Notifications Are Unavailable"
+    assert listed["explanation"] == "Notifications are unavailable"
+    apps = bridge.dispatch("notification_apps", {})
+    assert apps["rows"] == [] and apps["error"] == "Could not read the muted apps."
+
+
 def test_bridge_runs_diagnostics_with_the_shared_summary(monkeypatch) -> None:
     from blueferry import doctor_report
 

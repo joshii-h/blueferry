@@ -684,18 +684,18 @@ ShellRoot {
       } else if (method === "notification_apps") {
         root.notificationApps = ({})
       } else if (method === "toggle_notification_app") {
+        // The bridge answers daemon failures in its reply with translated
+        // text; what lands here is its own (or the bridge process's) error.
         root.notificationAppsBusy = false
-        root.errorText = message || "Could not change the muted apps."
+        root.errorText = message
         root.loadNotificationApps()
       } else if (method === "set_notification_pinned") {
         root.notificationPinBusy = false
-        root.notificationPinError = message || "Could not change the pin."
+        root.notificationPinError = message
         root.refreshNotificationList()
       } else if (method === "notifications") {
         if (root.notificationListWatched)
-          root.notificationList = {rows: [], failed: true,
-            title: "Notifications Are Unavailable",
-            explanation: message || "Notifications are unavailable"}
+          root.notificationList = {rows: [], failed: true, explanation: message}
       } else {
         avatars.disconnected()
         root.statusBusy = false

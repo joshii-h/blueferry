@@ -336,7 +336,12 @@ class QuickshellBridge:
         return features_view.loaded(features_view.initial(), value)
 
     def _notifications(self) -> dict[str, Any]:
-        status = self.client.status().to_dict()
+        # Every daemon failure comes back as the list's translated
+        # placeholder; the shell words none of it itself.
+        try:
+            status = self.client.status().to_dict()
+        except BackendError as error:
+            return notifications_reply({}, "", str(error) or _("Notifications are unavailable"))
         hint = phone_link_view.feature_hints(status).get("notifications", "")
         if hint:
             # Switched off: nothing private to read.
@@ -393,7 +398,13 @@ class QuickshellBridge:
         return {"saved": True, "pinned": state is True, "error": ""}
 
     def _notification_apps(self) -> dict[str, Any]:
-        if not notification_apps_view.supported(self.client.status().to_dict()):
+        try:
+            status = self.client.status().to_dict()
+        except BackendError as error:
+            return notification_apps_reply(
+                {}, error=str(error) or _("Could not read the muted apps.")
+            )
+        if not notification_apps_view.supported(status):
             # An older daemon without muting: the page hides the section.
             return notification_apps_reply({}, supported=False)
         with self._muted_lock:
