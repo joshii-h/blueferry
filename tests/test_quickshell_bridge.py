@@ -1436,6 +1436,7 @@ def test_concurrent_toggles_reread_the_list_one_at_a_time() -> None:
         thread.start()
     for thread in threads:
         thread.join(5)
+    assert not any(thread.is_alive() for thread in threads)
     assert max(overlap) == 1
 
 
