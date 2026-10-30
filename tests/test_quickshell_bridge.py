@@ -1222,6 +1222,28 @@ def test_bridge_rows_carry_the_shared_pin_fields_and_dim_muted_and_removed_apps(
     assert json.loads(json.dumps(reply)) == reply
 
 
+def test_bridge_keeps_pin_fields_with_their_row_when_a_record_is_skipped(monkeypatch) -> None:
+    from blueferry import phone_link_view
+
+    shared_rows = phone_link_view.notification_rows
+    monkeypatch.setattr(phone_link_view, "notification_rows", lambda records: [
+        row for record, row in zip(records, shared_rows(records), strict=True)
+        if record.get("key") != "skipped"
+    ])
+    client = NotificationAppsClient()
+    client.notification_snapshot = {
+        "enabled": True, "content": True, "pins_max": 20,
+        "notifications": [
+            _record("skipped", "com.example.chat"),
+            _record("k2", "com.example.mail", pinned=True),
+        ],
+    }
+    reply = QuickshellBridge(client).dispatch("notifications", {})  # type: ignore[arg-type]
+    assert [(row["key"], row["app"], row["pinned"]) for row in reply["rows"]] == [
+        ("k2", "mail", True),
+    ]
+
+
 def test_bridge_reports_the_pin_limit_once_the_list_is_full() -> None:
     client = NotificationAppsClient()
     client.notification_snapshot = {

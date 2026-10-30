@@ -186,7 +186,13 @@ def notifications_reply(
     if error or opt_in_hint:
         records = []
     rows = []
-    for record, row in zip(records, phone_link_view.notification_rows(records), strict=True):
+    for record in records:
+        # One record at a time: the pin fields always belong to the row built
+        # from the same record, even when the shared presenter skips one.
+        shown = phone_link_view.notification_rows([record])
+        if not shown:
+            continue
+        row = shown[0]
         extras = notification_pin_view.pin_row_extras(record)
         is_muted = record.get("app_id") in muted
         rows.append({
