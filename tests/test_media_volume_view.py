@@ -29,6 +29,7 @@ def test_ready_snapshot_shows_both_buttons_and_the_level() -> None:
         "level": 40, "level_text": "Volume 40%",
         "up_tooltip": "Turn the iPhone volume up",
         "down_tooltip": "Turn the iPhone volume down",
+        "up_label": "Volume Up", "down_label": "Volume Down",
         "up_command": VOLUME_UP, "down_command": VOLUME_DOWN,
     }
 
