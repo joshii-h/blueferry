@@ -89,6 +89,8 @@ and retries on a later status read.
 | --- | --- |
 | `FindContacts` | `s query` → `s json` |
 | `ListContacts` | `u offset, u limit` → `s json` |
+| `ListContactCards` | `u offset, u limit, s query` → `s json`: `{"contacts": [{"id", "name", "organization", "primary", "phone_count", "email_count", "address_count", "has_photo"}], "total", "offset", "query"}` in display-name order, at most 150 per page. `query` (may be empty) matches name, organization, title, email and postal-address text case-insensitively, and phone numbers by their digits (three or more). `total` counts all matches. Ids stay valid while a card is unchanged within one daemon run. Rows carry no photo bytes; `has_photo` is false while contact photos are off. `GetStatus` reports `contact_card_count` (also the capability marker). Shape it with `blueferry.contacts_view` |
+| `GetContact` | `s contact_id` → `s json, ay photo`: `{"id", "name", "organization", "title", "phones": [{"kind", "label", "value", "number"}], "emails": [{"kind", "label", "value"}], "addresses": [{"kind", "label", "po_box", "extended", "street", "locality", "region", "postal_code", "country"}], "has_photo", "photo_retry"}` plus the card's bounded JPEG/PNG photo (empty without one or while contact photos are off). `kind` is `mobile`, `iphone`, `home`, `work`, `main`, `home_fax`, `work_fax`, `other_fax`, `pager`, `other` or `custom` (then `label` holds the iPhone label); `value` is the number as stored on the phone, `number` its normalized form for messaging and dialling (empty when it has none). `photo_retry` means a contact sync held the photo store; ask again later. `NotFound` for an unknown or stale id. Bucket `contact-photo` |
 | `SyncContacts` | → `u cached_count` |
 
 ### Status and settings

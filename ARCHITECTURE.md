@@ -81,6 +81,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `contacts.py` | PBAP phonebook pull, vCard parsing, and address-to-name resolution. |
 | `contact_sync.py` | Schedules PBAP pulls (MAP grace period, daily refresh, joined manual requests) and discards pulls that span a storage key or policy change. |
 | `contact_repository.py` | Contact-cache SQLite schema, replacement transaction, encryption, legacy cleanup. |
+| `contact_details.py` | Contact-card details from vCards (labelled numbers and email, postal addresses, organization, title), their sealed storage form, and the `ListContactCards`/`GetContact` documents. |
 | `call_history.py` | Opt-in: pure parsing of PBAP call-history vCards (`ich`/`och`/`mch`) and their merge. |
 | `call_history_repository.py` | Encrypted call-history mirror, retention, and the already-announced missed-call set. |
 | `call_history_sync.py` | Schedules call-history pulls (ANCS-triggered, missed-calls-only fallback poll, one OBEX worker job per listing) and reports newly seen missed calls. |
@@ -176,7 +177,8 @@ All paths are relative to `src/blueferry/` unless noted.
 | --- | --- |
 | `cli.py`, `__main__.py` | Typer CLI (`run`, `doctor`, sync, setup, and hidden `pairing-*` JSON helpers). |
 | `cli_messages.py` | CLI message listing, recipient selection, and send. |
-| `cli_contacts.py` | `contact-photos enable`/`disable`/`status` and `contacts-photo` export of one cached contact photo. |
+| `cli_contacts.py` | `contact-photos enable`/`disable`/`status`, `contacts-photo` export of one cached contact photo, and `contacts list`/`show` for contact cards. |
+| `contacts_view.py` | Toolkit-free list rows, card sections, labels and hints for the contact view (`Messages1.ListContactCards`, `GetContact`). |
 | `cli_call_history.py` | Opt-in `call-history` listing, enable, and disable. |
 | `cli_common.py` | Small CLI presentation helpers. |
 | `cli_proximity.py` | `proximity-lock` status, dry run, enable, and disable. |

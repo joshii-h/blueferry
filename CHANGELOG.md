@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Contact cards: the contact cache now keeps each number with its iPhone
+  label, labelled email addresses, postal addresses, company and job title,
+  inside the encrypted contact records only. `Messages1.ListContactCards`
+  pages through the cards (optionally filtered, no photo bytes) and
+  `GetContact` returns one card with its photo; `GetStatus` reports
+  `contact_card_count`. CLI: `blueferry contacts list|show`.
+
 ## [0.9.0](https://github.com/erikwb/blueferry/releases/tag/v0.9.0) - 2026-10-27
 
 ### Added

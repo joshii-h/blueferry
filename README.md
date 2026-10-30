@@ -489,6 +489,17 @@ region, BlueFerry does not guess a country for local numbers.
 After upgrading from a version that removed `+` during import, run
 `blueferry contacts-sync` once to restore the saved international prefixes.
 
+### Contact cards
+
+`blueferry contacts list` pages through the cached contacts (`-q` filters
+by name, company, mail, postal address or number digits), and
+`blueferry contacts show ID` (or a name that matches one card) prints every
+number with its label, the email and postal addresses, the company and the
+job title; `--photo FILE` also saves the photo when
+[contact photos](docs/en/user/contacts.md#photos) are on. These details are
+kept only in the encrypted contact cache. See
+[Contacts](docs/en/user/contacts.md).
+
 ### Contact photos (optional)
 
 Contact photos are off by default. To show the iPhone's contact pictures as
@@ -1096,6 +1107,7 @@ blueferry sms-send Alice 'running late'
 blueferry contacts-sync
 blueferry contact-photos enable                     # opt in; disable / status
 blueferry contacts-photo Alice --output alice.jpg   # needs contact photos on
+blueferry contacts list -q Alice                    # cards with ids; show ID for details
 blueferry call-history --missed   # after `blueferry call-history enable`
 blueferry media status
 blueferry audio            # inspect the iPhone audio route

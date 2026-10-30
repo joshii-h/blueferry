@@ -110,6 +110,7 @@ nav:
           - Phone calls (experimental): en/user/calls.md
           - Phone battery and signal: en/user/phone-status.md
           - Privacy and storage: en/user/privacy.md
+          - Contacts: en/user/contacts.md
           - Contact photos: en/user/contact-photos.md
           - Notification actions: en/user/notification-actions.md
           - Reconnect and self-healing: en/user/reconnect.md
@@ -141,6 +142,7 @@ nav:
           - Anrufe (experimentell): de/user/calls.md
           - Akku und Empfang: de/user/phone-status.md
           - Datenschutz und Speicher: de/user/privacy.md
+          - Kontakte: de/user/contacts.md
           - Kontaktfotos: de/user/contact-photos.md
           - Mitteilungs-Aktionen: de/user/notification-actions.md
           - Neu verbinden und Selbstheilung: de/user/reconnect.md
