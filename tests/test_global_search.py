@@ -1,12 +1,13 @@
-"""Global search: in-memory matching and the Search operation."""
+"""Global search: in-memory matching, the Search operation and presenter."""
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
 
-from blueferry import config
+from blueferry import config, search_view
 from blueferry.backend_operations import BackendDependencies, BackendOperations
 from blueferry.call_history import CallRecord
 from blueferry.contact_repository import ContactRepository
@@ -132,9 +133,7 @@ def test_search_groups_every_source(operations) -> None:
     [contact] = result["contacts"]["results"]
     assert contact["name"] == "Alice Example" and contact["id"]
     assert result["calls"]["results"][0]["name"] == "Alice Example"
-    assert all(result[group]["available"] for group in (
-        "conversations", "messages", "contacts", "calls",
-    ))
+    assert all(result[group]["available"] for group in search_view.GROUPS)
     report = operations.search("  REPORT ", 10)["messages"]["results"]
     assert [(hit["handle"], hit["thread_key"]) for hit in report] == [
         ("h1", operations.list_threads(5)[0]["key"]),
@@ -190,3 +189,55 @@ def test_search_writes_nothing_to_disk(operations) -> None:
     operations.search("lunch", 10)
     operations.search("alice", 10)
     assert files() == before
+
+
+# ---- presenter --------------------------------------------------------------------
+
+RESULT = {
+    "query": "lunch", "limit": 2,
+    "conversations": {"total": 1, "available": True, "results": [
+        {"thread_key": "g", "name": "Climbing", "is_group": True,
+         "timestamp": "2026-10-29T09:00:00Z"},
+    ]},
+    "messages": {"total": 3, "available": True, "results": [
+        {"thread_key": "t", "handle": "m1", "thread_name": "Alice", "is_group": False,
+         "sender": "", "outgoing": True, "timestamp": "2026-10-30T10:00:00Z",
+         "snippet": "Sure, lunch at noon", "match_start": 6, "match_length": 5},
+        {"thread_key": "t", "handle": "", "snippet": "dropped"},
+    ]},
+    "contacts": {"total": 1, "available": True, "results": [
+        {"id": "c1", "name": "Lunch Club", "organization": "", "primary": "+1 555"},
+    ]},
+    "calls": {"total": 0, "available": False, "results": []},
+}
+
+
+def test_presenter_sections_rows_and_targets() -> None:
+    groups = search_view.sections(json.dumps(RESULT))
+    assert [section["id"] for section in groups] == ["conversations", "messages", "contacts"]
+    messages = groups[1]
+    assert messages["more"] == "2 more matches" and len(messages["rows"]) == 1
+    row = messages["rows"][0]
+    assert row["title"] == "Alice" and row["subtitle"] == "You"
+    assert row["snippet"][slice(row["highlight"][0], sum(row["highlight"]))] == "lunch"
+    assert row["target"] == {"kind": "message", "thread_key": "t", "handle": "m1"}
+    assert groups[0]["rows"][0]["subtitle"] == "Group conversation"
+    assert groups[2]["rows"][0]["target"] == {"kind": "contact", "contact_id": "c1"}
+    assert search_view.target_at(RESULT, 2) == {"kind": "contact", "contact_id": "c1"}
+    assert search_view.target_at(RESULT, 3) is None and search_view.target_at(RESULT, True) is None
+    assert "Call history is off" in search_view.hint(RESULT)
+    assert search_view.search_view(RESULT)["count"] == 3
+
+
+def test_presenter_hints_and_capability() -> None:
+    assert "two characters" in search_view.hint({"query": "a"})
+    assert "Nothing matches “zzz”" in search_view.hint({"query": "zzz"})
+    assert search_view.sections("garbage") == []
+    assert search_view.should_search(" ab ") and not search_view.should_search(" a ")
+    assert search_view.supported({"search_result_limit": 50})
+    assert not search_view.supported({})
+    call = {"calls": {"results": [{"id": "k", "direction": "missed", "address": "+1555",
+                                   "name": "Alice", "timestamp": "2026-10-30T10:00:00+00:00"}]}}
+    [section] = search_view.sections(call)
+    assert section["rows"][0]["subtitle"] == "Missed call · +1555"
+    assert section["rows"][0]["target"] == {"kind": "call", "call_id": "k"}

@@ -41,3 +41,4 @@ src/blueferry/plugin_surfaces.py
 src/blueferry/photos_view.py
 src/blueferry/phone_audio_view.py
 src/blueferry/contacts_view.py
+src/blueferry/search_view.py
