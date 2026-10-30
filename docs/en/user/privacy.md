@@ -69,8 +69,8 @@ restarts. You choose how:
   `blueferry storage-unlock`).
 - Changing the storage mode clears the existing cache, so encrypted and
   unencrypted records are never mixed.
-- Starred conversations, saved group members, and group confirmations follow
-  the same storage mode.
+- Starred conversations, saved group members, group confirmations and pinned
+  iPhone notifications follow the same storage mode.
 - `blueferry history-clear` deletes local message history.
 
 With the optional [contact photos](contact-photos.md), the contact cache

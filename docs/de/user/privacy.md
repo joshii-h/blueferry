@@ -74,8 +74,9 @@ Unterhaltungen einen Neustart überstehen. Du entscheidest, wie:
   Client oder mit `blueferry storage-unlock`).
 - Ein Wechsel des Speichermodus leert den bisherigen Cache, damit
   verschlüsselte und unverschlüsselte Daten nie gemischt werden.
-- Markierte Unterhaltungen, gespeicherte Gruppenmitglieder und
-  Gruppenbestätigungen folgen demselben Speichermodus.
+- Markierte Unterhaltungen, gespeicherte Gruppenmitglieder,
+  Gruppenbestätigungen und angeheftete iPhone-Mitteilungen folgen demselben
+  Speichermodus.
 - `blueferry history-clear` löscht den lokalen Nachrichtenverlauf.
 
 Mit den optionalen [Kontaktfotos](contact-photos.md) enthält der
