@@ -6,9 +6,10 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
 // Decline a ringing call and text the caller (Calls1.DeclineWithMessage):
-// one button per saved reply, then a field for an own text. Wording and the
-// choices come from quick_reply_view through bridge.declineMessageView; the
-// replies are the user's own texts and are shown as plain text only.
+// one button per saved reply, then a field for an own text. Wording, the
+// choices and the length limit come from quick_reply_view.dialog_view through
+// bridge.declineMessageView; the replies are the user's own texts and are
+// shown as plain text only.
 Kirigami.Dialog {
     id: dialog
     objectName: "declineMessageDialog"
@@ -50,7 +51,7 @@ Kirigami.Dialog {
                 return
             const calls = dialog.bridge.phoneCalls || []
             const ringing = calls.some(call => call.call_id === dialog.callId
-                && (call.state === "incoming" || call.state === "waiting"))
+                && call.ringing === true)
             if (!ringing)
                 dialog.close()
         }
@@ -94,6 +95,8 @@ Kirigami.Dialog {
                 Layout.fillWidth: true
                 placeholderText: dialog.view.placeholder || ""
                 Accessible.name: placeholderText
+                // quick_reply_view.MAX_CUSTOM_CHARS, via dialog_view.
+                maximumLength: dialog.view.max_chars || 32767
                 onAccepted: {
                     if (dialog.customError === "")
                         dialog.send(customField.text)

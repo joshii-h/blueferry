@@ -25,6 +25,12 @@ ColumnLayout {
         ? section.bridge.quickReplyError(section.editDraft, section.editingIndex) : ""
     readonly property string addError: addField.text !== ""
         ? section.bridge.quickReplyError(addField.text, -1) : ""
+    // quick_reply_view.MAX_REPLY_CHARS, via settings_view.
+    readonly property int maxChars: section.view.max_chars || 32767
+    // The save on its way ("add", "edit", "remove" or ""): the typed text
+    // stays until the daemon saved it, and a failure keeps it for a retry.
+    property string pendingSave: ""
+    property string saveError: ""
     spacing: Kirigami.Units.smallSpacing
 
     function startEdit(index: int): void {
@@ -35,13 +41,39 @@ ColumnLayout {
     function saveEdit(): void {
         if (section.editingIndex < 0)
             return
+        section.saveError = ""
         if (section.bridge.replaceQuickReply(section.editingIndex, section.editDraft) === "")
-            section.editingIndex = -1
+            section.pendingSave = "edit"
     }
 
     function add(): void {
+        section.saveError = ""
         if (section.bridge.addQuickReply(addField.text) === "")
-            addField.text = ""
+            section.pendingSave = "add"
+    }
+
+    function remove(index: int): void {
+        section.saveError = ""
+        section.pendingSave = "remove"
+        section.bridge.removeQuickReply(index)
+    }
+
+    Connections {
+        target: section.bridge
+
+        function onQuickRepliesSaved() {
+            if (section.pendingSave === "add")
+                addField.text = ""
+            else if (section.pendingSave === "edit")
+                section.editingIndex = -1
+            section.pendingSave = ""
+        }
+
+        function onQuickRepliesSaveFailed(message) {
+            if (section.pendingSave !== "")
+                section.saveError = String(message || "")
+            section.pendingSave = ""
+        }
     }
 
     // A saved list that changed under an open editor: stop editing a row
@@ -98,6 +130,7 @@ ColumnLayout {
                     Layout.fillWidth: true
                     visible: row.editing
                     text: section.editDraft
+                    maximumLength: section.maxChars
                     Accessible.name: qsTr("Edit reply")
                     onTextEdited: section.editDraft = text
                     onAccepted: section.saveEdit()
@@ -150,7 +183,7 @@ ColumnLayout {
                     Accessible.name: text
                     Controls.ToolTip.text: text
                     Controls.ToolTip.visible: hovered
-                    onClicked: section.bridge.removeQuickReply(row.index)
+                    onClicked: section.remove(row.index)
                 }
             }
             Controls.Label {
@@ -174,6 +207,7 @@ ColumnLayout {
             Layout.fillWidth: true
             placeholderText: section.view.add_label || ""
             Accessible.name: placeholderText
+            maximumLength: section.maxChars
             onAccepted: {
                 if (section.addError === "" && text !== "")
                     section.add()
@@ -192,6 +226,16 @@ ColumnLayout {
         Layout.fillWidth: true
         visible: text !== ""
         text: section.view.can_add === true ? section.addError : ""
+        textFormat: Text.PlainText
+        wrapMode: Text.WordWrap
+        color: Kirigami.Theme.negativeTextColor
+    }
+    // A save the daemon refused; the typed text is still there.
+    Controls.Label {
+        objectName: "quickReplySaveError"
+        Layout.fillWidth: true
+        visible: text !== ""
+        text: section.saveError
         textFormat: Text.PlainText
         wrapMode: Text.WordWrap
         color: Kirigami.Theme.negativeTextColor

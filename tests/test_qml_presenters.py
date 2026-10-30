@@ -873,7 +873,7 @@ def settings_window(qml_engine):
             }
             function callAudioView(audio, devices) {
                 if (audio.state === undefined) return {supported: false, rows: [], hint: "",
-                    mute: {supported: false, muted: false, label: "Mute", hint: ""}};
+                    mute: {supported: false, available: false, muted: false, label: "Mute", hint: ""}};
                 const rows = ["output", "input"].map(direction => {
                     const route = audio[direction] || {};
                     const options = [{value: "", label: "Same as system"}].concat(
@@ -887,12 +887,21 @@ def settings_window(qml_engine):
                 return {supported: true, rows: rows, call_hint: "Applies to this call only.",
                         hint: audio.state === "waiting" ? "Waiting for the call audio\\u2026" : "",
                         mute: {supported: audio.muted !== undefined, muted: muted,
+                               available: audio.muted !== undefined && audio.state === "ready"
+                                   && (audio.input || {}).stream === true,
                                label: muted ? "Unmute" : "Mute",
                                hint: muted ? "Your microphone is muted for this call." : ""}};
             }
-            function setCallMuted(muted) { record("setCallMuted", [muted]); }
+            // Like the controller: the request shows until the next list.
+            function setCallMuted(muted) {
+                record("setCallMuted", [muted]);
+                phoneCallAudio = Object.assign({}, phoneCallAudio, {muted: muted});
+            }
             // Simplified stand-ins for quick_reply_view (tested in test_quick_replies).
             property var callNotice: ({})
+            signal callToastRequested(string text)
+            signal quickRepliesSaved()
+            signal quickRepliesSaveFailed(string message)
             function clearCallNotice() { record("clearCallNotice", []); callNotice = {}; }
             function declineMessageView(status, call) {
                 const replies = status.calls_quick_replies;
@@ -900,7 +909,7 @@ def settings_window(qml_engine):
                     available: replies !== undefined && replies !== null && (call.state === "incoming"
                         || call.state === "waiting") && String(call.number || "") !== "",
                     label: "Decline with message", title: "Decline with message",
-                    placeholder: "Message to the caller", custom: "custom",
+                    placeholder: "Message to the caller", custom: "custom", max_chars: 1000,
                     choices: (replies || []).map(r => ({value: r, label: r}))
                         .concat([{value: "custom", label: "Own text\\u2026"}]),
                 };
@@ -916,6 +925,7 @@ def settings_window(qml_engine):
                 return {supported: status.calls_quick_replies !== undefined,
                         label: "Replies when declining a call", hint: "Offered when you decline.",
                         replies: replies, can_add: replies.length < 5, add_label: "Add reply",
+                        max_chars: 160, max_replies: 5,
                         empty: "No saved replies: declining offers only your own text."};
             }
             function quickReplyError(text, editing) {
@@ -4927,7 +4937,13 @@ def test_running_call_mutes_this_computers_microphone(qml_engine, settings_windo
     mute = _visual_find(window.contentItem(), "callMuteButton", qml_engine)
     assert mute.property("visible") is False
 
-    bridge.setProperty("phoneCallAudio", {"state": "ready", "muted": False})
+    # No call audio yet: the daemon would refuse with NotReady.
+    bridge.setProperty("phoneCallAudio", {"state": "waiting", "muted": False})
+    QGuiApplication.processEvents()
+    assert mute.property("visible") is False
+
+    bridge.setProperty("phoneCallAudio", {"state": "ready", "muted": False,
+                                          "input": {"stream": True}})
     QGuiApplication.processEvents()
     assert mute.property("visible") is True
     assert mute.property("text") == "Mute" and mute.property("checked") is False
@@ -4935,11 +4951,15 @@ def test_running_call_mutes_this_computers_microphone(qml_engine, settings_windo
     QMetaObject.invokeMethod(mute, "toggled")
     QGuiApplication.processEvents()
     assert _recorded(qml_engine)[-1] == {"method": "setCallMuted", "args": [True]}
-    assert mute.property("checked") is False  # until the daemon reports it
+    assert mute.property("checked") is True, "the button holds the request"
+    assert mute.property("text") == "Unmute"
 
-    bridge.setProperty("phoneCallAudio", {"state": "ready", "muted": True})
+    # The next list reports the real state; a refusal comes as a toast.
+    bridge.setProperty("phoneCallAudio", {"state": "ready", "muted": False,
+                                          "input": {"stream": True}})
+    _evaluate(qml_engine, "testBridge.callToastRequested('The call audio is not ready yet.')")
     QGuiApplication.processEvents()
-    assert mute.property("checked") is True and mute.property("text") == "Unmute"
+    assert mute.property("checked") is False and mute.property("text") == "Mute"
     # Held only: no connected call to mute.
     bridge.setProperty("activeCallId", "")
     QGuiApplication.processEvents()
@@ -4990,6 +5010,7 @@ def test_ringing_call_is_declined_with_a_saved_or_typed_message(qml_engine, sett
     QGuiApplication.processEvents()
     content = dialog.property("contentItem")
     field = _visual_find(content, "declineCustomField", qml_engine)
+    assert field.property("maximumLength") == 1000
     send = _visual_find(content, "declineCustomSend", qml_engine)
     assert field.property("placeholderText") == "Message to the caller"
     field.setProperty("text", "   ")
@@ -5065,7 +5086,18 @@ def test_saved_replies_are_listed_added_edited_and_removed(qml_engine, settings_
     QMetaObject.invokeMethod(add, "clicked")
     QGuiApplication.processEvents()
     assert _recorded(qml_engine)[-1] == {"method": "addQuickReply", "args": ["On my way"]}
+    assert add_field.property("maximumLength") == 160
+    # A refused save keeps the typed text and says why.
+    _evaluate(qml_engine, "testBridge.quickRepliesSaveFailed('could not save the quick replies')")
+    QGuiApplication.processEvents()
+    assert add_field.property("text") == "On my way"
+    assert _settings_object(window, "quickReplySaveError").property("text") == \
+        "could not save the quick replies"
+    QMetaObject.invokeMethod(add, "clicked")
+    _evaluate(qml_engine, "testBridge.quickRepliesSaved()")
+    QGuiApplication.processEvents()
     assert add_field.property("text") == ""
+    assert _settings_object(window, "quickReplySaveError").property("visible") is False
 
     QMetaObject.invokeMethod(_settings_object(window, "quickReplyEdit1"), "clicked")
     QGuiApplication.processEvents()
@@ -5084,6 +5116,10 @@ def test_saved_replies_are_listed_added_edited_and_removed(qml_engine, settings_
     QMetaObject.invokeMethod(save, "clicked")
     QGuiApplication.processEvents()
     assert _recorded(qml_engine)[-1] == {"method": "replaceQuickReply", "args": [1, "Busy, sorry"]}
+    assert edit.property("maximumLength") == 160
+    assert edit.property("visible") is True, "the editor stays open until the save succeeded"
+    _evaluate(qml_engine, "testBridge.quickRepliesSaved()")
+    QGuiApplication.processEvents()
     assert edit.property("visible") is False
 
     QMetaObject.invokeMethod(_settings_object(window, "quickReplyRemove0"), "clicked")

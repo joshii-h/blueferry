@@ -264,12 +264,14 @@ GridLayout {
                 }
             }
             // Mutes this computer's microphone for the running call only
-            // (call_audio_view.mute; Calls1.SetCallMuted).
+            // (call_audio_view.mute; Calls1.SetCallMuted). Offered once the
+            // call's microphone stream exists; the bridge shows the request
+            // until the next call list reports the real state.
             Controls.Button {
                 id: muteButton
                 objectName: "callMuteButton"
                 readonly property var mute: callAudio.view.mute || ({})
-                visible: muteButton.mute.supported === true && callsTab.activeCall !== ""
+                visible: muteButton.mute.available === true && callsTab.activeCall !== ""
                 checkable: true
                 checked: muteButton.mute.muted === true
                 text: muteButton.mute.label || ""
@@ -281,7 +283,7 @@ GridLayout {
                 Controls.ToolTip.visible: hovered && Controls.ToolTip.text !== ""
                 onToggled: {
                     callsTab.bridge.setCallMuted(checked)
-                    // Follow the daemon's state, not the click.
+                    // Follow the bridge (the request, then the daemon's state).
                     checked = Qt.binding(function() { return muteButton.mute.muted === true })
                 }
             }
