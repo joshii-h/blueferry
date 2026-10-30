@@ -14,6 +14,7 @@ from tests.gtk_broadway import run_scenario
     "scenario", [
         "categories", "features", "old-daemon", "doctor", "mirror-removals",
         "battery-warning", "reconnect", "notification-rules", "call-audio",
+        "quick-replies",
     ],
 )
 def test_gtk_settings(tmp_path, scenario):
@@ -87,6 +88,9 @@ class FakeClient:
 
     def set_call_audio_device_async(self, direction, name, on_ok, on_err):
         self.calls.append((("set_audio", direction, name), on_ok, on_err))
+
+    def set_call_quick_replies_async(self, replies, on_ok, on_err):
+        self.calls.append((("set_replies", tuple(replies)), on_ok, on_err))
 
     def run_doctor_async(self, on_ok, on_err, runner=None):
         self.calls.append(("doctor", on_ok, on_err))
@@ -563,9 +567,99 @@ def _exercise_call_audio():
     window.destroy()
 
 
+def _exercise_quick_replies():
+    from blueferry.models import BackendStatus
+
+    dialog, window, client = _settings()
+    editor = dialog.quick_replies
+    group = editor.group
+    toasts = []
+    editor._toast = toasts.append
+    assert group.get_ancestor(type(dialog.pages["calls"])) is dialog.pages["calls"]
+    dialog._apply_status(BackendStatus.from_dict({"daemon": True, "calls_enabled": True}))
+    assert not group.get_visible()  # an older daemon
+
+    def status(replies):
+        return BackendStatus.from_dict({
+            "daemon": True, "calls_enabled": True, "calls_quick_replies": replies,
+        })
+
+    dialog._apply_status(status([]))
+    assert group.get_visible() and group.get_title() == "Replies when declining a call"
+    assert editor.rows == [] and editor.empty_row.get_visible()
+    assert editor.empty_row.get_title().startswith("No saved replies")
+
+    # Add: validated as typed, saved, and the field cleared once accepted.
+    editor.add_row.set_text("   ")
+    assert not editor.add_button.get_sensitive()
+    editor.add_row.set_text("x" * 161)
+    assert editor.add_row.has_css_class("error")
+    assert editor.add_row.get_tooltip_text() == "A reply can have at most 160 characters."
+    assert not editor.add_button.get_sensitive()
+    editor.add_row.set_text("<b>Busy</b>")
+    assert not editor.add_row.has_css_class("error") and editor.add_button.get_sensitive()
+    client.status = status(["<b>Busy</b>"])
+    editor.add_button.emit("clicked")
+    assert not editor.add_row.get_sensitive(), "no second edit while one saves"
+    client.take(("set_replies", ("<b>Busy</b>",)))[1]({"calls_quick_replies": ["<b>Busy</b>"]})
+    assert editor.replies == ["<b>Busy</b>"] and editor.add_row.get_text() == ""
+    assert [row.get_text() for row in editor.rows] == ["<b>Busy</b>"]
+    assert editor.rows[0].get_use_markup() is False and not editor.empty_row.get_visible()
+
+    # A duplicate is refused before it is sent.
+    editor.add_row.set_text("<b>Busy</b>")
+    editor.add()
+    assert toasts == ["This reply already exists."]
+    assert not any(isinstance(call[0], tuple) and call[0][0] == "set_replies"
+                   for call in client.calls)
+    editor.add_row.set_text("Later")
+    editor.add_row.emit("entry-activated")
+    client.status = status(["<b>Busy</b>", "Later"])
+    client.take(("set_replies", ("<b>Busy</b>", "Later")))[1](
+        {"calls_quick_replies": ["<b>Busy</b>", "Later"]})
+
+    # A status refresh keeps what is being typed in a row.
+    editor.rows[1].set_text("Later today")
+    dialog._apply_status(status(["<b>Busy</b>", "Later"]))
+    assert editor.rows[1].get_text() == "Later today"
+    editor.rows[1].emit("apply")
+    client.status = status(["<b>Busy</b>", "Later today"])
+    client.take(("set_replies", ("<b>Busy</b>", "Later today")))[1](
+        {"calls_quick_replies": ["<b>Busy</b>", "Later today"]})
+    assert editor.replies == ["<b>Busy</b>", "Later today"]
+    # Editing into a duplicate of another reply is refused.
+    editor.rows[1].set_text("<b>Busy</b>")
+    assert editor.rows[1].has_css_class("error")
+    editor.rows[1].emit("apply")
+    assert toasts[-1] == "This reply already exists."
+
+    # A refused save: the toast, and the rows show what is saved.
+    editor.remove(0)
+    client.take(("set_replies", ("Later today",)))[2]("disk full")
+    assert toasts[-1] == "Could not save the replies: disk full"
+    assert [row.get_text() for row in editor.rows] == ["<b>Busy</b>", "Later today"]
+
+    # Five replies: no add row any more.
+    five = ["a", "b", "c", "d", "e"]
+    dialog._apply_status(status(five))
+    assert len(editor.rows) == 5 and not editor.add_row.get_visible()
+    editor.remove(4)
+    client.status = status(five[:4])
+    client.take(("set_replies", tuple(five[:4])))[1]({"calls_quick_replies": five[:4]})
+    assert editor.add_row.get_visible() and len(editor.rows) == 4
+
+    # Calls off or the daemon gone: hidden or read-only.
+    dialog._apply_status(BackendStatus.from_dict({"daemon": False}))
+    assert not group.get_visible()
+    dialog._apply_status(status(five[:4]))
+    assert editor.rows[0].get_sensitive()
+    window.destroy()
+
+
 if __name__ == "__main__":
     {
         "call-audio": _exercise_call_audio,
+        "quick-replies": _exercise_quick_replies,
         "notification-rules": _exercise_notification_rules,
         "reconnect": _exercise_reconnect,
         "battery-warning": _exercise_battery_warning,

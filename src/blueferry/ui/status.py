@@ -35,6 +35,7 @@ from blueferry.ui.call_audio import DeviceRow
 from blueferry.ui.doctor import DoctorSection
 from blueferry.ui.feature_switches import FeatureSwitches
 from blueferry.ui.notification_rules import NotificationRules
+from blueferry.ui.quick_replies import QuickRepliesEditor
 from blueferry.ui.saved_choice import SavedChoice
 from blueferry.ui.settings_presenter import categories, service_state
 from blueferry.ui.setup_runner import SetupRunner
@@ -602,6 +603,9 @@ class SettingsDialog(Adw.PreferencesDialog):
         }
         for row in self.call_audio_rows.values():
             self._call_audio_group.add(row.row)
+        # Replies offered when declining a call with a message; only for
+        # daemons that report calls_quick_replies (calls on).
+        self.quick_replies = QuickRepliesEditor(client, self._toast, on_saved=self._refresh)
 
         # Shown only for daemons that report the contact-photo opt-in.
         self._photos_group = Adw.PreferencesGroup(
@@ -706,7 +710,8 @@ class SettingsDialog(Adw.PreferencesDialog):
                 history_group,
             )),
             ("calls", (
-                self._calls_group, self._call_audio_group, self._call_history_group,
+                self._calls_group, self._call_audio_group, self.quick_replies.group,
+                self._call_history_group,
                 self._battery_group,
                 self._phone_audio_group, self._media_group,
             )),
@@ -1392,6 +1397,7 @@ class SettingsDialog(Adw.PreferencesDialog):
         )
         self._applying_calls_enabled = False
         self._apply_call_audio(values, reachable)
+        self.quick_replies.apply(values, reachable)
         self._apply_contact_photos(status, reachable=reachable)
         self._apply_otp_autocopy(status, reachable=reachable)
         self._applying_storage_policy = True
