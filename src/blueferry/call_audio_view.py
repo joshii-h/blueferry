@@ -58,15 +58,26 @@ def mute(value: CallAudio | Mapping[str, Any] | None) -> dict[str, Any]:
 
     ``supported`` is False for daemons that cannot mute a call; ``muted``
     is the current state, ``label`` names the action (Mute/Unmute) and
-    ``hint`` explains it (a tooltip or a status line).
+    ``hint`` explains it (a tooltip or a status line). ``available`` is
+    True once the call's microphone stream exists: the daemon refuses to
+    mute before that, so clients offer the button only then.
     """
     audio = value if isinstance(value, CallAudio) else CallAudio.from_dict(value)
     if audio is None or audio.muted is None:
-        return {"supported": False, "muted": False, "label": mute_label(False), "hint": ""}
+        return {
+            "supported": False, "available": False, "muted": False,
+            "label": mute_label(False), "hint": "",
+        }
     return {
-        "supported": True, "muted": audio.muted,
-        "label": mute_label(audio.muted), "hint": mute_hint(audio.muted),
+        "supported": True, "available": audio.state == "ready" and audio.input.stream,
+        "muted": audio.muted, "label": mute_label(audio.muted), "hint": mute_hint(audio.muted),
     }
+
+
+def mute_failure_text(error: object) -> str:
+    """A refused or failed mute; the daemon's text says why."""
+    detail = str(error).strip()
+    return detail or _("Could not change the microphone for this call.")
 
 
 def saved(status: Mapping[str, Any], direction: str) -> str:

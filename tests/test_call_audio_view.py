@@ -109,8 +109,14 @@ def test_mute_button_names_the_action_and_needs_a_new_daemon() -> None:
     unmuted = view.mute(CallAudio(state="waiting", muted=False))
 
     assert muted == {
-        "supported": True, "muted": True, "label": "Unmute",
+        "supported": True, "available": False, "muted": True, "label": "Unmute",
         "hint": "Your microphone is muted for this call.",
     }
     assert unmuted["label"] == "Mute" and not unmuted["muted"]
     assert "this call only" in unmuted["hint"]
+    assert unmuted["available"] is False  # no call audio yet
+    ready = view.mute({"state": "ready", "muted": False, "input": {"stream": True}})
+    assert ready["available"] is True
+    assert view.mute({"state": "ready", "muted": False, "input": {}})["available"] is False
+    assert view.mute_failure_text(" Call audio is not ready ") == "Call audio is not ready"
+    assert view.mute_failure_text("") == "Could not change the microphone for this call."
