@@ -563,7 +563,7 @@ def _exercise_muted_apps():
     # Muting: the switch waits for the daemon, then the list is read again.
     chat.set_active(True)
     assert not chat.get_sensitive() and chat.get_active()
-    _call, saved, failed = client.take(("mute", "com.example.Chat", True))
+    _call, _saved, failed = client.take(("mute", "com.example.Chat", True))
     failed("Access denied")
     assert not chat.get_active() and chat.get_sensitive()
     client.take("apps")[1](APPS)
