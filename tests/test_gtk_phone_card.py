@@ -14,7 +14,7 @@ from tests.gtk_broadway import run_scenario
 @pytest.mark.parametrize(
     "scenario", [
         "layout", "card", "quick-settings", "dial-pad", "running-calls", "call-tones",
-        "call-audio", "keypad-tones", "recent-calls",
+        "call-audio", "call-mute", "keypad-tones", "recent-calls",
         "notifications", "close",
     ],
 )
@@ -90,6 +90,9 @@ class FakeClient:
 
     def set_call_audio_device_for_call_async(self, direction, name, on_ok, on_err):
         self.calls.append((("call-audio", direction, name), on_ok, on_err))
+
+    def set_call_muted_async(self, muted, on_ok, on_err):
+        self.calls.append((("mute", muted), on_ok, on_err))
 
     def set_phone_audio_route_async(self, route, on_ok, on_err):
         self.calls.append((("route", route), on_ok, on_err))
@@ -612,6 +615,61 @@ def _exercise_keypad_tones():
     window.destroy()
 
 
+def _exercise_call_mute():
+    from blueferry.models import CallsSnapshot
+
+    window, client = _window()
+    running = window.calls.running
+    toasts = []
+    running._toast = toasts.append
+    client.answer_status(CALLS_READY)
+    active = {"call_id": "voicecall01", "state": "active", "number": "+41790000001"}
+    ready = {"state": "ready", "output": {"stream": True, "description": "Speaker"},
+             "input": {"stream": True, "description": "Webcam"}}
+    # A daemon without call mute: no button.
+    client.take("list-calls")[1](CallsSnapshot.from_dict({
+        "state": "ready", "calls": [active], "audio": ready,
+    }))
+    client.take("audio-devices")
+    button = running.mute_button
+    assert running.mute_row.get_parent() is running and not running.mute_row.get_visible()
+
+    client.emit("calls-changed")
+    client.take("list-calls")[1](CallsSnapshot.from_dict({
+        "state": "ready", "calls": [active], "audio": {**ready, "muted": False},
+    }))
+    client.take("audio-devices")
+    assert running.mute_row.get_visible()
+    assert button.get_tooltip_text() == "Mute" and not button.get_active()
+    assert running.mute_row.get_title() == "Mutes this computer's microphone for this call only."
+    button.set_active(True)
+    assert not running.mute_row.get_sensitive(), "busy while the mute is applied"
+    client.take(("mute", True))[1](None)
+    assert running.mute_row.get_sensitive()
+    client.take("list-calls")[1](CallsSnapshot.from_dict({
+        "state": "ready", "calls": [active], "audio": {**ready, "muted": True},
+    }))
+    client.take("audio-devices")
+    assert button.get_active() and button.get_tooltip_text() == "Unmute"
+    assert running.mute_row.get_title() == "Your microphone is muted for this call."
+    assert ("mute", True) not in client.names(), "showing the state sends nothing"
+
+    # A refused unmute: the toast, and the button shows the reported state again.
+    button.set_active(False)
+    client.take(("mute", False))[2]("No call microphone")
+    assert toasts == ["No call microphone"]
+    assert button.get_active() and running.mute_row.get_sensitive()
+    assert ("mute", True) not in client.names()
+    client.take("list-calls")[1](CallsSnapshot.from_dict({
+        "state": "ready", "calls": [active], "audio": {**ready, "muted": True},
+    }))
+    # The call ends: the row goes with it.
+    client.emit("calls-changed")
+    client.take("list-calls")[1](CallsSnapshot.from_dict({"state": "ready", "calls": []}))
+    assert running.mute_row.get_parent() is None
+    window.destroy()
+
+
 def _exercise_quick_settings():
     window, client = _window()
     card = window.phone_card
@@ -834,6 +892,7 @@ if __name__ == "__main__":
         "running-calls": _exercise_running_calls,
         "call-tones": _exercise_call_tones,
         "call-audio": _exercise_call_audio,
+        "call-mute": _exercise_call_mute,
 
 
         "keypad-tones": _exercise_keypad_tones,

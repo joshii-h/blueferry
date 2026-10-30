@@ -1,6 +1,7 @@
 """Running phone calls on the Calls tab: answer, hold or resume, hang up,
-keypad tones (DTMF) for the active call, and the call's speaker and
-microphone with a switch for this call only.
+keypad tones (DTMF) for the active call, the call's speaker and
+microphone with a switch for this call only, and a mute button for this
+computer's microphone.
 
 GTK counterpart of the call cards in the Qt client's ``CallsTab.qml``. The
 calls come from ``Calls1.ListCalls``, read again on ``CallsChanged``, when
@@ -15,7 +16,9 @@ is kept here and put back into the new row. The device rows follow
 ``call_audio_view.call_view``; the device lists are read again whenever the
 call's audio report changes: when a call starts, a choice is applied, or a
 plugged or unplugged device is the chosen or the used one. Other hot-plugs
-show up the next time the lists are read.
+show up the next time the lists are read. The mute button follows
+``call_audio_view.mute`` (ListCalls ``audio.muted``; absent on older
+daemons).
 """
 
 from __future__ import annotations
@@ -91,6 +94,12 @@ class RunningCalls(Gtk.ListBox):
             direction: DeviceRow(self.choose_device) for direction in call_audio_view.DIRECTIONS
         }
         self.audio_hint = Adw.ActionRow(use_markup=False, css_classes=["dim-label"])
+        # Mute this computer's microphone for the running call.
+        self.mute_button = Gtk.ToggleButton(valign=Gtk.Align.CENTER, css_classes=["flat"])
+        self.mute_button.connect("toggled", self._mute_toggled)
+        self.mute_row = Adw.ActionRow(use_markup=False, activatable_widget=self.mute_button)
+        self.mute_row.add_suffix(self.mute_button)
+        self._applying_mute = False
         client.connect("calls-changed", lambda _c: self._read.refresh())
 
     # ---- the page's side -----------------------------------------------
@@ -182,6 +191,17 @@ class RunningCalls(Gtk.ListBox):
         self._act(lambda done, failed: self._client.set_call_audio_device_for_call_async(
             direction, name, done, failed))
 
+    def set_muted(self, muted: bool) -> None:
+        """Mute or unmute this computer's microphone for the running call."""
+        def request(done, failed) -> None:
+            def refused(message: str) -> None:
+                self._render_mute()  # back to the reported state
+                failed(message)
+
+            self._client.set_call_muted_async(muted, done, refused)
+
+        self._act(request)
+
     @property
     def active_call_id(self) -> str:
         """The call keypad tones go to; "" while no call is connected."""
@@ -254,6 +274,7 @@ class RunningCalls(Gtk.ListBox):
             if self.audio is not None:
                 for row in self.audio_rows.values():
                     self.append(row.row)
+                self.append(self.mute_row)
                 self.append(self.audio_hint)
         self._render_audio()
         self.set_visible(bool(self.calls))
@@ -335,10 +356,36 @@ class RunningCalls(Gtk.ListBox):
             row.row.set_tooltip_text(view.get("call_hint") or None)
         self.audio_hint.set_title(view["hint"])
         self.audio_hint.set_visible(bool(view["hint"]))
+        self._render_mute()
+
+    def _render_mute(self) -> None:
+        view = call_audio_view.mute(self.audio)
+        self.mute_row.set_visible(self.audio is not None and view["supported"])
+        self.mute_row.set_title(view["hint"])
+        self.mute_button.set_icon_name(
+            "microphone-sensitivity-muted-symbolic" if view["muted"]
+            else "audio-input-microphone-symbolic"
+        )
+        self.mute_button.set_tooltip_text(view["label"])
+        self.mute_button.update_property([Gtk.AccessibleProperty.LABEL], [view["label"]])
+        self._applying_mute = True
+        try:
+            self.mute_button.set_active(view["muted"])
+        finally:
+            self._applying_mute = False
+
+    def _mute_toggled(self, button: Gtk.ToggleButton) -> None:
+        if self._applying_mute:
+            return
+        if self._busy:
+            self._render_mute()
+            return
+        self.set_muted(button.get_active())
 
     def _render_sensitivity(self) -> None:
         for row in self.audio_rows.values():
             row.row.set_sensitive(not self._busy)
+        self.mute_row.set_sensitive(not self._busy)
         for _row, _call, _avatar, buttons in self.rows:
             for button in buttons:
                 button.set_sensitive(not self._busy)
