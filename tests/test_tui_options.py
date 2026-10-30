@@ -438,6 +438,7 @@ def test_decline_replies_are_listed_added_edited_and_removed() -> None:
             save = screen.query_one("#options-reply-save", Button)
             field = screen.query_one("#options-reply-text", Input)
             assert not add.disabled and not save.display
+            assert field.max_length == 160
 
             # Add: validated first, then the whole list is saved.
             field.value = "Later"

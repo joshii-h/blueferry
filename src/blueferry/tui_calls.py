@@ -178,15 +178,16 @@ class DeclineMessageScreen(ModalScreen[str | None]):
         Binding("escape", "cancel", "Cancel", show=False),
     ]
 
-    def __init__(self, status: Mapping[str, Any], caller: str) -> None:
+    def __init__(self, status: Mapping[str, Any], call_id: str, caller: str) -> None:
         super().__init__()
-        self.call_id = ""
+        self.call_id = call_id
         self.caller = caller
-        self.choices = quick_reply_view.choices(status)
+        self.view = quick_reply_view.dialog_view(status)
+        self.choices: list[dict[str, str]] = self.view["choices"]
 
     def compose(self) -> ComposeResult:
         with Vertical(id="calls-reply-dialog", classes="dialog"):
-            yield Static(quick_reply_view.dialog_title(), classes="dialog-title")
+            yield Static(self.view["title"], classes="dialog-title")
             if self.caller:
                 yield Static(Text(_plain(self.caller)), classes="dialog-copy")
             yield OptionList(
@@ -194,8 +195,8 @@ class DeclineMessageScreen(ModalScreen[str | None]):
                 id="calls-reply-choices",
             )
             yield Input(
-                placeholder=quick_reply_view.custom_placeholder(), id="calls-reply-text",
-                max_length=quick_reply_view.MAX_REPLY_CHARS,
+                placeholder=self.view["placeholder"], id="calls-reply-text",
+                max_length=self.view["max_chars"],
             )
             yield Static("", id="calls-reply-error")
             with Horizontal(classes="dialog-actions"):
@@ -217,7 +218,7 @@ class DeclineMessageScreen(ModalScreen[str | None]):
         if not 0 <= event.option_index < len(self.choices):
             return
         value = self.choices[event.option_index]["value"]
-        if value == quick_reply_view.CUSTOM:
+        if value == self.view["custom"]:
             self.query_one("#calls-reply-text", Input).focus()
         else:
             self.dismiss(value)
@@ -664,8 +665,7 @@ class CallsScreen(ModalScreen[None]):
             return
         call_id = target.call_id
         caller = phone_link_view.call_card(target.to_dict(), self._clock())["title"]
-        screen = DeclineMessageScreen(self._status, str(caller or target.number))
-        screen.call_id = call_id
+        screen = DeclineMessageScreen(self._status, call_id, str(caller or target.number))
 
         def chosen(text: str | None) -> None:
             if self._reply_screen is screen:

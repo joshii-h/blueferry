@@ -583,7 +583,7 @@ class OptionsScreen(ModalScreen[None]):
             yield Static("", id="options-replies-empty", classes="options-caption")
             yield Input(
                 placeholder=quick_reply_view.custom_placeholder(), id="options-reply-text",
-                max_length=quick_reply_view.MAX_REPLY_CHARS,
+                max_length=quick_reply_view.settings_view({})["max_chars"],
             )
             yield Static("", id="options-reply-error", classes="options-caption")
             with Horizontal(id="options-reply-actions", classes="options-action"):

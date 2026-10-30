@@ -744,6 +744,7 @@ def test_own_text_is_checked_and_a_failed_send_says_the_call_was_declined() -> N
             assert not dialog.query_one("#calls-reply-choices").display
             field = dialog.query_one("#calls-reply-text", Input)
             assert dialog.focused is field
+            assert field.max_length == 1000  # quick_reply_view.MAX_CUSTOM_CHARS
             await pilot.press("enter")
             await pilot.pause(0.1)
             assert "Type a message first." in str(
