@@ -13,9 +13,15 @@ from gi.repository import GLib, GObject
 
 from blueferry.backend_lifecycle import ensure_backend_current, restart_backend
 from blueferry.bus import get_session_bus
-from blueferry.client import BackendClient, CompatibilityCache, TetherUnsupportedError
+from blueferry.client import (
+    BackendClient,
+    BackendError,
+    CompatibilityCache,
+    TetherUnsupportedError,
+)
 from blueferry.doctor_report import DoctorReport, run_doctor, terminate_running
 from blueferry.models import BackendStatus
+from blueferry.notification_pin_view import pin_error_text
 from blueferry.protocol import (
     BUS_NAME,
     EVENTS_IFACE,
@@ -49,6 +55,14 @@ def _plain(value):
     return value
 
 
+def _pin_error(error: BaseException) -> str:
+    """The shared pin wording for a failed SetNotificationPinned call."""
+    cause = error if isinstance(error, dbus.exceptions.DBusException) else error.__cause__
+    if isinstance(cause, dbus.exceptions.DBusException):
+        return pin_error_text(cause.get_dbus_name(), cause.get_dbus_message() or "")
+    return pin_error_text("", str(error))
+
+
 class DaemonClient(GObject.Object):
     """Live link to the daemon. Emits GObject signals as D-Bus signals arrive."""
 
@@ -63,6 +77,9 @@ class DaemonClient(GObject.Object):
         "now-playing-changed": (GObject.SignalFlags.RUN_FIRST, None, ()),
         "call-history-changed": (GObject.SignalFlags.RUN_FIRST, None, ()),
         "notifications-changed": (GObject.SignalFlags.RUN_FIRST, None, ()),
+        # The seen or muted iPhone apps changed; clients call
+        # ListNotificationApps again.
+        "notification-apps-changed": (GObject.SignalFlags.RUN_FIRST, None, ()),
         # Running phone calls changed (Calls1); clients call ListCalls.
         "calls-changed": (GObject.SignalFlags.RUN_FIRST, None, ()),
     }
@@ -139,6 +156,7 @@ class DaemonClient(GObject.Object):
             ("NowPlayingChanged", "now-playing-changed"),
             ("CallHistoryChanged", "call-history-changed"),
             ("NotificationsChanged", "notifications-changed"),
+            ("NotificationAppsChanged", "notification-apps-changed"),
             ("CallsChanged", "calls-changed"),
         ):
             self._matches.append(
@@ -773,6 +791,40 @@ class DaemonClient(GObject.Object):
     def notifications(self, limit: int) -> dict:
         """ListNotifications; blocking, so only for work passed to :meth:`submit`."""
         return self._call_backend(lambda backend: backend.notifications(limit))
+
+    def set_notification_pinned_async(
+        self, key: str, pinned: bool, on_ok, on_err
+    ) -> None:
+        """Messages1.SetNotificationPinned; ``on_err`` gets the shared pin text."""
+        def operation() -> bool:
+            try:
+                return self._call_backend(
+                    lambda backend: backend.set_notification_pinned(key, pinned)
+                )
+            except Exception as error:
+                raise BackendError(_pin_error(error)) from error
+
+        self._submit(operation, on_ok, on_err, mutation=True)
+
+    def notification_apps_async(self, on_ok, on_err=None) -> None:
+        """Messages1.ListNotificationApps: the seen iPhone apps, muted or not."""
+        self._submit(
+            lambda: self._call_backend(lambda backend: backend.notification_apps()),
+            on_ok,
+            on_err,
+        )
+
+    def set_notification_app_muted_async(
+        self, app_id: str, muted: bool, on_ok, on_err
+    ) -> None:
+        self._submit(
+            lambda: self._call_backend(
+                lambda backend: backend.set_notification_app_muted(app_id, muted)
+            ),
+            on_ok,
+            on_err,
+            mutation=True,
+        )
 
     # ---- settings: feature switches, service restart, doctor -------------
 

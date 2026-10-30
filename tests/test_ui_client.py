@@ -623,3 +623,73 @@ def test_running_calls_are_read_and_controlled_on_their_workers(monkeypatch) -> 
     assert results == [CallsSnapshot(state="ready"), None, None, None]
     assert actions == [("answer", "voicecall01"), ("swap",), ("hangup", "voicecall01")]
     assert submitted == ["read", "mutation", "mutation", "mutation"]
+
+
+def test_pins_and_muted_apps_use_their_workers_and_shared_texts(monkeypatch) -> None:
+    import dbus
+
+    from blueferry import notification_pin_view
+    from blueferry.client import BackendError
+
+    pinned, muted = [], []
+    refusals = iter([
+        dbus.exceptions.DBusException(
+            "at most 20 notifications can be pinned",
+            name="io.weirdware.BlueFerry.Error.InvalidArgs",
+        ),
+        dbus.exceptions.DBusException(
+            "no such method", name="org.freedesktop.DBus.Error.UnknownMethod",
+        ),
+    ])
+
+    class Backend:
+        def set_notification_pinned(self, key, state):
+            pinned.append((key, state))
+            if key == "refused":
+                error = next(refusals)
+                raise BackendError(str(error)) from error
+            return state
+
+        def notification_apps(self):
+            return {"apps": [], "mute_available": True}
+
+        def set_notification_app_muted(self, app_id, state):
+            muted.append((app_id, state))
+            return state
+
+    client, submitted = _recording_client(monkeypatch, Backend())
+    results, errors = [], []
+    try:
+        client.set_notification_pinned_async("k1", True, results.append, errors.append)
+        client.set_notification_pinned_async("refused", True, results.append, errors.append)
+        client.set_notification_pinned_async("refused", True, results.append, errors.append)
+        client.notification_apps_async(results.append)
+        client.set_notification_app_muted_async(
+            "com.example.Chat", True, results.append, errors.append)
+    finally:
+        client.stop()
+    assert results == [True, {"apps": [], "mute_available": True}, True]
+    assert errors == [notification_pin_view.FULL_TEXT, notification_pin_view.UNSUPPORTED_TEXT]
+    assert pinned == [("k1", True), ("refused", True), ("refused", True)]
+    assert muted == [("com.example.Chat", True)]
+    assert submitted == ["mutation", "mutation", "mutation", "read", "mutation"]
+
+
+def test_notification_apps_changed_is_forwarded_as_a_gobject_signal(monkeypatch) -> None:
+    receivers = {}
+
+    class Bus:
+        def add_signal_receiver(self, handler, **kwargs):
+            receivers[kwargs["signal_name"]] = handler
+            return _SignalMatch()
+
+    monkeypatch.setattr(client_module, "get_session_bus", Bus)
+    monkeypatch.setattr(client_module, "SetupClient", _UnconfiguredSetup)
+    client = client_module.DaemonClient()
+    seen = []
+    client.connect("notification-apps-changed", lambda _client: seen.append(True))
+    try:
+        receivers["NotificationAppsChanged"]()
+    finally:
+        client.stop()
+    assert seen == [True]
