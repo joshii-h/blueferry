@@ -14,7 +14,7 @@ from tests.gtk_broadway import run_scenario
 @pytest.mark.parametrize(
     "scenario", [
         "layout", "card", "quick-settings", "dial-pad", "running-calls", "call-tones",
-        "call-audio", "call-mute", "keypad-tones", "recent-calls",
+        "call-audio", "call-mute", "decline-message", "keypad-tones", "recent-calls",
         "notifications", "close",
     ],
 )
@@ -93,6 +93,9 @@ class FakeClient:
 
     def set_call_muted_async(self, muted, on_ok, on_err):
         self.calls.append((("mute", muted), on_ok, on_err))
+
+    def decline_call_with_message_async(self, call_id, text, on_ok, on_err):
+        self.calls.append((("decline-message", call_id, text), on_ok, on_err))
 
     def set_phone_audio_route_async(self, route, on_ok, on_err):
         self.calls.append((("route", route), on_ok, on_err))
@@ -670,6 +673,73 @@ def _exercise_call_mute():
     window.destroy()
 
 
+def _exercise_decline_message():
+    from blueferry.models import CallsSnapshot
+
+    window, client = _window()
+    running = window.calls.running
+    toasts = []
+    running._toast = toasts.append
+    ringing = {"call_id": "voicecall01", "state": "incoming", "number": "+41790000001"}
+    # Calls on, but a daemon without DeclineWithMessage: Answer and Decline only.
+    client.answer_status(CALLS_READY)
+    client.take("list-calls")[1](CallsSnapshot.from_dict({"state": "ready", "calls": [ringing]}))
+    assert [b.get_tooltip_text() for b in running.rows[0][3]] == ["Answer", "Decline"]
+    assert running.decline_menus == {}
+
+    client.answer_status({**CALLS_READY, "calls_quick_replies": ["<b>Busy</b>", "Later"]})
+    client.emit("calls-changed")
+    client.take("list-calls")[1](CallsSnapshot.from_dict({"state": "ready", "calls": [ringing]}))
+    buttons = running.rows[0][3]
+    assert [b.get_tooltip_text() for b in buttons] == [
+        "Answer", "Decline with message", "Decline",
+    ]
+    menu = running.decline_menus["voicecall01"]
+    assert [row.get_title() for row in menu.reply_rows] == ["<b>Busy</b>", "Later"]
+    assert all(row.get_use_markup() is False for row in menu.reply_rows)
+    assert menu.custom.get_title() == "Message to the caller"
+    # A saved reply declines and sends it.
+    menu.reply_rows[0].emit("activated")
+    assert not buttons[0].get_sensitive() and not buttons[1].get_sensitive()
+    client.take(("decline-message", "voicecall01", "<b>Busy</b>"))[1](None)
+    assert toasts == ["Call declined and message sent."]
+    client.take("list-calls")[1](CallsSnapshot.from_dict({"state": "ready", "calls": [ringing]}))
+
+    # An own text: empty is refused, typing survives a re-render.
+    menu = running.decline_menus["voicecall01"]
+    assert not menu.send_button.get_sensitive()
+    menu.send_custom()
+    assert menu.error.get_visible() and menu.error.get_label() == "Type a message first."
+    assert not any(isinstance(n, tuple) and n[0] == "decline-message" for n in client.names())
+    menu.custom.set_text("On a train ")
+    assert menu.send_button.get_sensitive() and not menu.error.get_visible()
+    client.emit("calls-changed")
+    client.take("list-calls")[1](CallsSnapshot.from_dict({"state": "ready", "calls": [ringing]}))
+    menu = running.decline_menus["voicecall01"]
+    assert menu.custom.get_text() == "On a train "
+    menu.custom.emit("entry-activated")
+    # Declined, but the message failed: the daemon's text is shown.
+    client.take(("decline-message", "voicecall01", "On a train"))[2](
+        "The call was declined, but the message could not be sent")
+    assert toasts[-1] == "The call was declined, but the message could not be sent"
+    client.take("list-calls")[1](CallsSnapshot.from_dict({"state": "ready", "calls": [
+        {**ringing, "state": "active"}]}))
+    assert running.decline_menus == {} and running._reply_draft == ""
+    # No saved replies: only the own text.
+    client.answer_status({**CALLS_READY, "calls_quick_replies": []})
+    client.emit("calls-changed")
+    client.take("list-calls")[1](CallsSnapshot.from_dict({"state": "ready", "calls": [
+        {**ringing, "call_id": "voicecall02"}]}))
+    menu = running.decline_menus["voicecall02"]
+    assert menu.reply_rows == [] and menu.custom.get_text() == ""
+    # A caller without a number cannot get a message.
+    client.emit("calls-changed")
+    client.take("list-calls")[1](CallsSnapshot.from_dict({"state": "ready", "calls": [
+        {**ringing, "number": ""}]}))
+    assert running.decline_menus == {}
+    window.destroy()
+
+
 def _exercise_quick_settings():
     window, client = _window()
     card = window.phone_card
@@ -893,6 +963,7 @@ if __name__ == "__main__":
         "call-tones": _exercise_call_tones,
         "call-audio": _exercise_call_audio,
         "call-mute": _exercise_call_mute,
+        "decline-message": _exercise_decline_message,
 
 
         "keypad-tones": _exercise_keypad_tones,

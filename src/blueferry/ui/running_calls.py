@@ -1,7 +1,7 @@
 """Running phone calls on the Calls tab: answer, hold or resume, hang up,
 keypad tones (DTMF) for the active call, the call's speaker and
-microphone with a switch for this call only, and a mute button for this
-computer's microphone.
+microphone with a switch for this call only, a mute button for this
+computer's microphone and, on a ringing call, declining with a message.
 
 GTK counterpart of the call cards in the Qt client's ``CallsTab.qml``. The
 calls come from ``Calls1.ListCalls``, read again on ``CallsChanged``, when
@@ -18,7 +18,8 @@ call's audio report changes: when a call starts, a choice is applied, or a
 plugged or unplugged device is the chosen or the used one. Other hot-plugs
 show up the next time the lists are read. The mute button follows
 ``call_audio_view.mute`` (ListCalls ``audio.muted``; absent on older
-daemons).
+daemons); declining with a message follows ``quick_reply_view`` and the
+status key ``calls_quick_replies``.
 """
 
 from __future__ import annotations
@@ -28,11 +29,12 @@ from collections.abc import Callable
 
 from gi.repository import Adw, Gtk
 
-from blueferry import call_audio_view, phone_link_view
+from blueferry import call_audio_view, phone_link_view, quick_reply_view
 from blueferry.client_tasks import TimerFactory
 from blueferry.models import CallsSnapshot
 from blueferry.ui.avatars import AvatarCache
 from blueferry.ui.call_audio import DeviceRow
+from blueferry.ui.quick_replies import DeclineMessageMenu
 from blueferry.ui.quick_switches import PhoneAudioSwitch, sound_row
 from blueferry.ui.reads import CoalescedRead
 from blueferry.ui.util import glib_timer
@@ -100,6 +102,11 @@ class RunningCalls(Gtk.ListBox):
         self.mute_row = Adw.ActionRow(use_markup=False, activatable_widget=self.mute_button)
         self.mute_row.add_suffix(self.mute_button)
         self._applying_mute = False
+        # Decline with message: the menu of each ringing call and the own
+        # text typed so far (kept across re-renders, like the tones).
+        self.decline_menus: dict[str, DeclineMessageMenu] = {}
+        self._reply_call = ""
+        self._reply_draft = ""
         client.connect("calls-changed", lambda _c: self._read.refresh())
 
     # ---- the page's side -----------------------------------------------
@@ -202,6 +209,22 @@ class RunningCalls(Gtk.ListBox):
 
         self._act(request)
 
+    def decline_with_message(self, call_id: str, text: str) -> None:
+        """Decline a ringing call and send ``text`` to the caller."""
+        def request(done, failed) -> None:
+            def sent(value: object) -> None:
+                if call_id == self._reply_call:
+                    self._reply_draft = ""
+                self._toast(quick_reply_view.sent_text())
+                done(value)
+
+            self._client.decline_call_with_message_async(
+                call_id, text, sent,
+                lambda message: failed(quick_reply_view.failure_text(message)),
+            )
+
+        self._act(request)
+
     @property
     def active_call_id(self) -> str:
         """The call keypad tones go to; "" while no call is connected."""
@@ -252,6 +275,7 @@ class RunningCalls(Gtk.ListBox):
         cursor = self.tones.get_position() if typing and self.tones is not None else -1
         self.remove_all()
         self.rows = []
+        self.decline_menus = {}
         self.tones = self.tones_button = None
         self._tones_call = ""
         now = self._clock()
@@ -276,6 +300,8 @@ class RunningCalls(Gtk.ListBox):
                     self.append(row.row)
                 self.append(self.mute_row)
                 self.append(self.audio_hint)
+        if self._reply_call not in self.decline_menus:
+            self._reply_call = self._reply_draft = ""  # that call stopped ringing
         self._render_audio()
         self.set_visible(bool(self.calls))
         self._refresh_avatars()
@@ -293,6 +319,8 @@ class RunningCalls(Gtk.ListBox):
                 "call-start-symbolic", card["answer"], "suggested-action",
                 lambda: self.answer(call_id),
             ))
+            if quick_reply_view.can_decline_with_message(self._status, call):
+                buttons.append(self._decline_menu(call_id))
         else:
             buttons.append(self._button(
                 "media-playback-start-symbolic" if card["held"]
@@ -307,6 +335,20 @@ class RunningCalls(Gtk.ListBox):
             row.add_suffix(button)
         self.rows.append((row, call, avatar, buttons))
         return row
+
+    def _decline_menu(self, call_id: str) -> Gtk.MenuButton:
+        draft = self._reply_draft if call_id == self._reply_call else ""
+
+        def typed(text: str) -> None:
+            self._reply_call, self._reply_draft = call_id, text
+
+        menu = DeclineMessageMenu(
+            quick_reply_view.choices(self._status),
+            lambda text: self.decline_with_message(call_id, text),
+            draft=draft, on_draft=typed,
+        )
+        self.decline_menus[call_id] = menu
+        return menu.button
 
     def _tones_row(self, card: dict) -> Adw.EntryRow:
         # Adw.EntryRow:max-length is libadwaita 1.6; dial_tones caps the text.
