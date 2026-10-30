@@ -429,7 +429,7 @@ def apply_writes(run: Run, writes: list[MetadataWrite]) -> tuple[int, int]:
             run(write.argv, timeout=timeout)
         except CommandError as error:
             failed += 1
-            log.debug("could not write a call stream target: %s", error)
+            log.debug("could not write a call stream (%s): %s", write.argv[0], error)
         else:
             applied += 1
     return applied, failed
@@ -507,6 +507,9 @@ class CallAudioRouter:
         self._muted = False
         # object.serial of the stream whose mute state is settled this call.
         self._mute_settled: int | None = None
+        # What PipeWire last showed for the call microphone stream (after
+        # BlueFerry's own write); None without such a stream.
+        self._stream_muted: bool | None = None
 
     # ---- status ---------------------------------------------------------
 
@@ -530,7 +533,8 @@ class CallAudioRouter:
 
     def call_audio(self) -> dict[str, Any]:
         """The ``audio`` part of ListCalls."""
-        audio: dict[str, Any] = {"state": self._state, "muted": self._muted}
+        # The state PipeWire shows, not the request: False without a stream.
+        audio: dict[str, Any] = {"state": self._state, "muted": bool(self._stream_muted)}
         choices = self.choices()
         for direction in DIRECTIONS:
             entry = dict(self._report.get(direction) or {})
@@ -569,6 +573,10 @@ class CallAudioRouter:
             raise InvalidArgumentsError("muted must be a boolean")
         if not self._in_call:
             raise NotReadyError("no call is in progress")
+        if self._state == STATE_UNAVAILABLE:
+            raise NotReadyError("PipeWire cannot be read (are pw-dump and pw-cli installed?)")
+        if self._stream_muted is None:
+            raise NotReadyError("the call audio is not there yet")
         if muted == self._muted:
             return
         self._muted = muted
@@ -622,12 +630,14 @@ class CallAudioRouter:
         # The caller announces the call change itself (CallsChanged), so the
         # state moves here without another notification.
         self._report = {}
+        self._stream_muted = None
         self._failures = 0
         if not in_call:
             # A choice made during a call ends with the call.
             self._overrides.clear()
             self._state = STATE_IDLE
             was_muted, self._muted, self._mute_settled = self._muted, False, None
+            self._stream_muted = None
             if was_muted:
                 self._lift_mute()
             return
@@ -674,14 +684,21 @@ class CallAudioRouter:
         choices, mac, run = self.choices(), self._mac, self._run
         muted, settled = self._muted, self._mute_settled
 
-        def job() -> tuple[dict[str, dict[str, Any]], int, int, bool, int | None]:
+        def job() -> tuple[dict[str, dict[str, Any]], int, int, bool, int | None, Any]:
             graph = read_graph(run)
             writes, report = plan(graph, mac, choices)
-            mute, serial = mute_write(graph, mac, muted, settled)
-            if mute is not None:
-                writes.append(mute)
             applied, failed = apply_writes(run, writes)
-            return report, applied, failed, muted, serial
+            mute, serial = mute_write(graph, mac, muted, settled)
+            stream = call_stream(graph, mac, INPUT)
+            actual = None if stream is None else bool(stream.muted)
+            mute_failed = False
+            if mute is not None:
+                done, broken = apply_writes(run, [mute])
+                applied, failed = applied + done, failed + broken
+                mute_failed = bool(broken)
+                if done:
+                    actual = muted
+            return report, applied, failed, muted, serial, (actual, mute_failed)
 
         try:
             self._submit(
@@ -699,10 +716,19 @@ class CallAudioRouter:
             return
         self._busy = False
         self._failures = 0
-        report, applied, failed, muted, serial = (
-            value if isinstance(value, tuple) else ({}, 0, 0, self._muted, None)
+        report, applied, failed, muted, serial, (actual, mute_failed) = (
+            value if isinstance(value, tuple) else ({}, 0, 0, self._muted, None, (None, False))
         )
-        if not failed and muted == self._muted:
+        mute_changed = actual != self._stream_muted
+        self._stream_muted = actual
+        if mute_failed and muted == self._muted and actual is not None:
+            # The stream kept its state: report it and stop asking for the
+            # other one, so the call view shows what really happens.
+            log.warning("could not %s the call microphone", "mute" if muted else "unmute")
+            self._muted = actual
+            self._mute_settled = serial
+            mute_changed = True
+        elif not failed and muted == self._muted:
             # A toggle while this check ran leaves the stream unsettled.
             self._mute_settled = serial
         found = any(entry.get("stream") for entry in report.values())
@@ -721,7 +747,7 @@ class CallAudioRouter:
         state = STATE_READY if found else STATE_WAITING
         if state != self._state:
             self._set_state(state)
-        elif changed:
+        elif changed or mute_changed:
             self._notify()
         self._continue()
 
@@ -742,6 +768,7 @@ class CallAudioRouter:
         if self._state != STATE_UNAVAILABLE:
             log.warning("could not route the call audio: %s", error)
         self._report = {}
+        self._stream_muted = None
         self._set_state(STATE_UNAVAILABLE)
         self._continue()
 
