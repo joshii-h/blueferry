@@ -239,15 +239,20 @@ def test_an_unconfirmed_send_says_to_check_messages() -> None:
     assert errors[0].outcome_unknown and "Check Messages" in str(errors[0])
 
 
-def test_without_map_the_call_is_declined_and_the_reply_reported() -> None:
+def test_without_map_or_obex_worker_the_call_keeps_ringing() -> None:
     sessions = _Sessions()
     sessions.map = None
     calls = FakeCalls()
 
-    _results, errors = _decline(_operations(calls=calls, sessions=sessions))
+    with pytest.raises(NotReadyError, match="MAP"):
+        _decline(_operations(calls=calls, sessions=sessions))
+    no_worker = BackendOperations(_Sessions(), BackendDependencies(
+        calls=calls, quick_replies=FakeReplies(),
+    ))
+    with pytest.raises(NotReadyError, match="OBEX"):
+        _decline(no_worker)
 
-    assert calls.requests == [("hangup", "voicecall01")]
-    assert isinstance(errors[0], DeclinedNotSentError) and "MAP" in str(errors[0])
+    assert calls.requests == []
 
 
 def test_declining_with_a_message_needs_calls_and_the_capability() -> None:
@@ -350,3 +355,10 @@ def test_popup_replies_are_empty_while_calls_are_off(make_daemon) -> None:
     instance = make_daemon()
 
     assert instance._notification_quick_replies() == []
+def test_lengths_are_capped_in_one_place() -> None:
+    assert view.custom_text_error("x" * view.MAX_CUSTOM_CHARS) == ""
+    assert "1000" in view.custom_text_error("x" * (view.MAX_CUSTOM_CHARS + 1))
+    dialog = view.dialog_view({"calls_quick_replies": ["Later"]})
+    assert dialog["max_chars"] == view.MAX_CUSTOM_CHARS and dialog["custom"] == view.CUSTOM
+    section = view.settings_view({"calls_quick_replies": []})
+    assert section["max_chars"] == MAX_REPLY_CHARS and section["max_replies"] == MAX_REPLIES

@@ -1631,8 +1631,9 @@ class BackendOperations:
         """Decline a ringing call over HFP, then text the caller over MAP.
 
         Everything that can be checked is checked before the call is
-        declined. A send that fails afterwards is reported as
-        ``DeclinedNotSentError``; the call stays declined.
+        declined, including an open MAP session and the OBEX worker. A
+        send that fails afterwards is reported as ``DeclinedNotSentError``;
+        the call stays declined.
         """
         self._quick_replies()
         calls = self._call_control()
@@ -1650,10 +1651,15 @@ class BackendOperations:
             )
             failure(DeclinedNotSentError(getattr(error, "cause", None) or error))
 
+        # MAP and the OBEX worker are checked before declining, so a reply
+        # that cannot even be queued leaves the call ringing.
+        self._require_map()
+        if self.dependencies.submit_obex is None:
+            raise NotReadyError("OBEX worker is unavailable")
+
         def declined(_result: object = None) -> None:
             log.info("declined a call with a %d-character reply", len(body))
             try:
-                self._require_map()
                 self._queue_send(recipient, body, success, not_sent)
             except Exception as error:
                 not_sent(error)
