@@ -814,13 +814,13 @@ class _TetherPage:
 
 
 def _borrow():
-    from blueferry.ui.status import IPhonePage
+    from blueferry.ui.status import SettingsDialog
 
     for name in (
         "_tether_request", "_tether_enable_changed",
         "_tether_connect_changed", "_tether_auto_changed",
     ):
-        setattr(_TetherPage, name, getattr(IPhonePage, name))
+        setattr(_TetherPage, name, getattr(SettingsDialog, name))
 
 
 def test_gtk_enable_switch_saves_the_opt_in_and_keeps_automatic_choice():
