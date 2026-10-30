@@ -64,6 +64,11 @@ GridLayout {
         running: callsTab.phoneCalls.length > 0 && callsTab.visible
         onTriggered: callsTab.now = Date.now()
     }
+    DeclineMessageDialog {
+        id: declineDialog
+        bridge: callsTab.bridge
+    }
+
     columns: width > Kirigami.Units.gridUnit * 36 ? 2 : 1
     columnSpacing: 0
     rowSpacing: 0
@@ -85,6 +90,10 @@ GridLayout {
                 // Wording from phone_link_view.call_card; "now" ticks the duration.
                 readonly property var card: callsTab.bridge.callCard(
                     activeCall.modelData, callsTab.now) || ({})
+                // "Decline with message" (quick_reply_view): ringing calls
+                // from a number, while the daemon offers it.
+                readonly property var declineView: callsTab.bridge.declineMessageView(
+                    callsTab.bridge.status || ({}), activeCall.modelData) || ({})
                 objectName: "activeCallCard"
                 Layout.fillWidth: true
                 title: activeCall.card.title || ""
@@ -103,6 +112,16 @@ GridLayout {
                         icon.name: "call-start"
                         enabled: !callsTab.bridge.busy
                         onClicked: callsTab.bridge.answerCall(activeCall.modelData.call_id)
+                    },
+                    Controls.Button {
+                        objectName: "activeCallDeclineMessage"
+                        visible: activeCall.card.ringing === true
+                            && activeCall.declineView.available === true
+                        text: activeCall.declineView.label || ""
+                        icon.name: "mail-reply-sender"
+                        enabled: !callsTab.bridge.busy
+                        onClicked: declineDialog.present(
+                            activeCall.modelData.call_id, activeCall.declineView)
                     },
                     Controls.Button {
                         visible: activeCall.card.ringing !== true
@@ -244,6 +263,28 @@ GridLayout {
                     }
                 }
             }
+            // Mutes this computer's microphone for the running call only
+            // (call_audio_view.mute; Calls1.SetCallMuted).
+            Controls.Button {
+                id: muteButton
+                objectName: "callMuteButton"
+                readonly property var mute: callAudio.view.mute || ({})
+                visible: muteButton.mute.supported === true && callsTab.activeCall !== ""
+                checkable: true
+                checked: muteButton.mute.muted === true
+                text: muteButton.mute.label || ""
+                icon.name: muteButton.mute.muted === true
+                    ? "microphone-sensitivity-muted" : "microphone-sensitivity-high"
+                enabled: !callsTab.bridge.busy
+                Accessible.description: muteButton.mute.hint || ""
+                Controls.ToolTip.text: muteButton.mute.hint || ""
+                Controls.ToolTip.visible: hovered && Controls.ToolTip.text !== ""
+                onToggled: {
+                    callsTab.bridge.setCallMuted(checked)
+                    // Follow the daemon's state, not the click.
+                    checked = Qt.binding(function() { return muteButton.mute.muted === true })
+                }
+            }
             Controls.Label {
                 objectName: "callAudioHint"
                 Layout.fillWidth: true
@@ -252,6 +293,27 @@ GridLayout {
                 textFormat: Text.PlainText
                 wrapMode: Text.WordWrap
                 font: Kirigami.Theme.smallFont
+            }
+        }
+
+        // The outcome of "Decline with message"; a failed send says
+        // whether the call was declined anyway.
+        Notice {
+            id: callNotice
+            objectName: "callNotice"
+            readonly property var notice: callsTab.bridge.callNotice || ({})
+            type: callNotice.notice.error === true
+                ? Kirigami.MessageType.Error : Kirigami.MessageType.Positive
+            plainText: callNotice.notice.text || ""
+            showCloseButton: true
+            // The close button sets visible = false; clear the notice and
+            // restore the binding so the next one shows again.
+            onVisibleChanged: {
+                if (visible || !callsTab.visible)
+                    return
+                if (callNotice.plainText !== "")
+                    callsTab.bridge.clearCallNotice()
+                visible = Qt.binding(function() { return callNotice.plainText !== "" })
             }
         }
 

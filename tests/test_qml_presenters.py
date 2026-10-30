@@ -872,7 +872,8 @@ def settings_window(qml_engine):
                         hint: "Used only for phone calls.", rows: rows};
             }
             function callAudioView(audio, devices) {
-                if (audio.state === undefined) return {supported: false, rows: [], hint: ""};
+                if (audio.state === undefined) return {supported: false, rows: [], hint: "",
+                    mute: {supported: false, muted: false, label: "Mute", hint: ""}};
                 const rows = ["output", "input"].map(direction => {
                     const route = audio[direction] || {};
                     const options = [{value: "", label: "Same as system"}].concat(
@@ -882,8 +883,33 @@ def settings_window(qml_engine):
                             options: options,
                             index: Math.max(0, options.findIndex(o => o.value === (route.selected || "")))};
                 });
+                const muted = audio.muted === true;
                 return {supported: true, rows: rows, call_hint: "Applies to this call only.",
-                        hint: audio.state === "waiting" ? "Waiting for the call audio\\u2026" : ""};
+                        hint: audio.state === "waiting" ? "Waiting for the call audio\\u2026" : "",
+                        mute: {supported: audio.muted !== undefined, muted: muted,
+                               label: muted ? "Unmute" : "Mute",
+                               hint: muted ? "Your microphone is muted for this call." : ""}};
+            }
+            function setCallMuted(muted) { record("setCallMuted", [muted]); }
+            // Simplified stand-ins for quick_reply_view (tested in test_quick_replies).
+            property var callNotice: ({})
+            function clearCallNotice() { record("clearCallNotice", []); callNotice = {}; }
+            function declineMessageView(status, call) {
+                const replies = status.calls_quick_replies;
+                return {
+                    available: replies !== undefined && replies !== null && (call.state === "incoming"
+                        || call.state === "waiting") && String(call.number || "") !== "",
+                    label: "Decline with message", title: "Decline with message",
+                    placeholder: "Message to the caller", custom: "custom",
+                    choices: (replies || []).map(r => ({value: r, label: r}))
+                        .concat([{value: "custom", label: "Own text\\u2026"}]),
+                };
+            }
+            function declineMessageError(text) {
+                return String(text || "").trim() === "" ? "Type a message first." : "";
+            }
+            function declineCallWithMessage(callId, text) {
+                record("declineCallWithMessage", [callId, text]);
             }
             function loadCallAudioDevices() { record("loadCallAudioDevices", []); }
             function setCallAudioDevice(direction, name) { record("setCallAudioDevice", [direction, name]); }
@@ -4860,6 +4886,123 @@ def test_running_call_shows_and_switches_its_audio_devices(qml_engine, settings_
     bridge.setProperty("phoneCalls", [])
     QGuiApplication.processEvents()
     assert rows.property("visible") is False
+
+
+def test_running_call_mutes_this_computers_microphone(qml_engine, settings_window):
+    window, bridge = settings_window
+    _evaluate(qml_engine, "testWindow.currentTab = testWindow.callsTab")
+    bridge.setProperty("status", {"calls_enabled": True, "calls_audio_output": ""})
+    bridge.setProperty("callsState", "ready")
+    active = {"call_id": "voicecall01", "state": "active", "ringing": False,
+              "display_peer": "Alice", "number": "+41790000001", "first_seen": ""}
+    bridge.setProperty("phoneCalls", [active])
+    bridge.setProperty("activeCallId", "voicecall01")
+    bridge.setProperty("phoneCallAudio", {"state": "ready"})  # an older daemon
+    QGuiApplication.processEvents()
+    mute = _visual_find(window.contentItem(), "callMuteButton", qml_engine)
+    assert mute.property("visible") is False
+
+    bridge.setProperty("phoneCallAudio", {"state": "ready", "muted": False})
+    QGuiApplication.processEvents()
+    assert mute.property("visible") is True
+    assert mute.property("text") == "Mute" and mute.property("checked") is False
+    mute.toggle()
+    QMetaObject.invokeMethod(mute, "toggled")
+    QGuiApplication.processEvents()
+    assert _recorded(qml_engine)[-1] == {"method": "setCallMuted", "args": [True]}
+    assert mute.property("checked") is False  # until the daemon reports it
+
+    bridge.setProperty("phoneCallAudio", {"state": "ready", "muted": True})
+    QGuiApplication.processEvents()
+    assert mute.property("checked") is True and mute.property("text") == "Unmute"
+    # Held only: no connected call to mute.
+    bridge.setProperty("activeCallId", "")
+    QGuiApplication.processEvents()
+    assert mute.property("visible") is False
+    bridge.setProperty("phoneCalls", [])
+    QGuiApplication.processEvents()
+
+
+def test_ringing_call_is_declined_with_a_saved_or_typed_message(qml_engine, settings_window):
+    window, bridge = settings_window
+    _evaluate(qml_engine, "testWindow.currentTab = testWindow.callsTab")
+    bridge.setProperty("status", {"calls_enabled": True})
+    bridge.setProperty("callsState", "ready")
+    ringing = {"call_id": "voicecall01", "state": "incoming", "ringing": True,
+               "display_peer": "Alice", "number": "+41790000001", "first_seen": ""}
+    bridge.setProperty("phoneCalls", [ringing])
+    QGuiApplication.processEvents()
+    card = _visual_find(window.contentItem(), "activeCallCard", qml_engine)
+    button = _visual_find(card, "activeCallDeclineMessage")
+    assert button.property("visible") is False  # the daemon does not offer it
+
+    bridge.setProperty("status", {"calls_enabled": True,
+                                  "calls_quick_replies": ["<b>Later</b>", "In a meeting"]})
+    QGuiApplication.processEvents()
+    card = _visual_find(window.contentItem(), "activeCallCard", qml_engine)
+    button = _visual_find(card, "activeCallDeclineMessage")
+    assert button.property("visible") is True
+    assert button.property("text") == "Decline with message"
+    QMetaObject.invokeMethod(button, "clicked")
+    QGuiApplication.processEvents()
+    dialog = window.findChild(QObject, "declineMessageDialog")
+    assert dialog is not None and dialog.property("visible") is True
+    assert dialog.property("title") == "Decline with message"
+    first = _visual_find(dialog.property("contentItem"), "declineReply0", qml_engine)
+    assert first.property("contentItem").property("text") == "<b>Later</b>"
+    qml_engine.globalObject().setProperty(
+        "declineReplyLabel", qml_engine.newQObject(first.property("contentItem")))
+    assert _evaluate(qml_engine, "Number(declineReplyLabel.textFormat)") == 0  # PlainText
+    QMetaObject.invokeMethod(first, "clicked")
+    QGuiApplication.processEvents()
+    assert _recorded(qml_engine)[-1] == {
+        "method": "declineCallWithMessage", "args": ["voicecall01", "<b>Later</b>"],
+    }
+
+    # Own text: the send button waits for a non-blank message.
+    _evaluate(qml_engine, "testBridge.calls = []")
+    QMetaObject.invokeMethod(button, "clicked")
+    QGuiApplication.processEvents()
+    content = dialog.property("contentItem")
+    field = _visual_find(content, "declineCustomField", qml_engine)
+    send = _visual_find(content, "declineCustomSend", qml_engine)
+    assert field.property("placeholderText") == "Message to the caller"
+    field.setProperty("text", "   ")
+    QGuiApplication.processEvents()
+    assert send.property("enabled") is False
+    field.setProperty("text", "Driving, call you soon")
+    QGuiApplication.processEvents()
+    assert send.property("enabled") is True
+    QMetaObject.invokeMethod(send, "clicked")
+    QGuiApplication.processEvents()
+    assert _recorded(qml_engine) == [{
+        "method": "declineCallWithMessage", "args": ["voicecall01", "Driving, call you soon"],
+    }]
+
+    # The call stops ringing: an open dialog closes without sending.
+    QMetaObject.invokeMethod(button, "clicked")
+    QGuiApplication.processEvents()
+    bridge.setProperty("phoneCalls", [{**ringing, "state": "active", "ringing": False}])
+    QGuiApplication.processEvents()
+    QTest.qWait(300)
+    assert dialog.property("visible") is False
+
+    # The outcome shows as plain text and can be closed.
+    _evaluate(qml_engine, """testBridge.callNotice = {
+        text: "The call was declined, but <i>the message</i> was not sent.", error: true}""")
+    QGuiApplication.processEvents()
+    notice = _visual_find(window.contentItem(), "callNotice", qml_engine)
+    assert notice.property("visible") is True
+    assert "&lt;i&gt;" in notice.property("text")
+    notice.setProperty("visible", False)  # what the close button does
+    QGuiApplication.processEvents()
+    assert {"method": "clearCallNotice", "args": []} in _recorded(qml_engine)
+    assert notice.property("visible") is False
+    _evaluate(qml_engine, "testBridge.callNotice = {text: 'Call declined and message sent.'}")
+    QGuiApplication.processEvents()
+    assert notice.property("visible") is True, "the next notice shows again"
+    bridge.setProperty("phoneCalls", [])
+    QGuiApplication.processEvents()
 
 
 def _recorded_calls(engine):
