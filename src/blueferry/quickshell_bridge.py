@@ -196,6 +196,10 @@ class QuickshellBridge:
         # until a status shows the outcome. Workers run in parallel.
         self._manual_reconnect = ManualReconnect()
         self._reconnect_lock = threading.Lock()
+        # SetCallQuickReplies replaces the whole list and has no version,
+        # so the workers edit it one at a time: each read-modify-write
+        # reads GetStatus right before it writes.
+        self._quick_replies_lock = threading.Lock()
 
     def host_info(self) -> dict[str, str]:
         """Return daemon-independent facts sent to the shell at startup."""
@@ -257,6 +261,10 @@ class QuickshellBridge:
         reason in the user's language next to the unchanged list, and
         ``saved`` tells the page whether to close its editor.
         """
+        with self._quick_replies_lock:
+            return self._save_quick_reply_locked(text, index)
+
+    def _save_quick_reply_locked(self, text: str, index: int) -> dict[str, Any]:
         current = self._current_quick_replies()
         if index < -1 or index >= len(current):
             raise RequestError("index is out of range")
@@ -270,10 +278,11 @@ class QuickshellBridge:
         return self._saved_quick_replies(quick_reply_view.with_replaced(current, editing, text))
 
     def _remove_quick_reply(self, index: int) -> dict[str, Any]:
-        current = self._current_quick_replies()
-        if not 0 <= index < len(current):
-            raise RequestError("index is out of range")
-        return self._saved_quick_replies(quick_reply_view.with_removed(current, index))
+        with self._quick_replies_lock:
+            current = self._current_quick_replies()
+            if not 0 <= index < len(current):
+                raise RequestError("index is out of range")
+            return self._saved_quick_replies(quick_reply_view.with_removed(current, index))
 
     def emit(self, payload: Mapping[str, Any]) -> None:
         line = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))

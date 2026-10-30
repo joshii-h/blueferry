@@ -1074,6 +1074,7 @@ def test_bridge_returns_the_saved_replies_with_their_wording() -> None:
     assert view["label"] == "Replies when declining a call"
     assert view["add_label"] == "Add reply"
     assert view["can_add"] is True
+    assert view["max_chars"] == 160 and view["max_replies"] == 5
 
 
 def test_bridge_adds_replaces_and_removes_a_reply() -> None:
@@ -1135,3 +1136,46 @@ def test_bridge_rejects_malformed_reply_requests(method, args) -> None:
     with pytest.raises(RequestError):
         bridge.dispatch(method, args)
     assert client.calls == []
+
+
+def test_bridge_edits_the_replies_one_request_at_a_time() -> None:
+    """Parallel workers must not lose an edit: each write starts from the
+    list the previous one saved, read from GetStatus right before."""
+    saved = ["A"]
+    writing = threading.Event()
+    release = threading.Event()
+    client = FakeClient()
+    client.status = lambda: SimpleNamespace(to_dict=lambda: {
+        "daemon": True, "calls_quick_replies": list(saved),
+    })
+
+    def set_call_quick_replies(replies):
+        client.calls.append(("set_call_quick_replies", replies))
+        if len(client.calls) == 1:
+            writing.set()
+            release.wait(5)
+        saved[:] = replies
+        return {"calls_quick_replies": list(replies)}
+
+    client.set_call_quick_replies = set_call_quick_replies
+    bridge = QuickshellBridge(client)  # type: ignore[arg-type]
+    first = threading.Thread(
+        target=bridge.dispatch, args=("save_quick_reply", {"text": "B", "index": -1}),
+    )
+    first.start()
+    assert writing.wait(5)
+    second = threading.Thread(
+        target=bridge.dispatch, args=("save_quick_reply", {"text": "C", "index": -1}),
+    )
+    second.start()
+    second.join(0.2)
+    # The second edit waits for the first instead of reading the old list.
+    assert second.is_alive()
+    release.set()
+    first.join(5)
+    second.join(5)
+    assert saved == ["A", "B", "C"]
+    assert client.calls == [
+        ("set_call_quick_replies", ["A", "B"]),
+        ("set_call_quick_replies", ["A", "B", "C"]),
+    ]
