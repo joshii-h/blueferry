@@ -292,6 +292,25 @@ def test_locked_storage_neither_loads_nor_overwrites_pins(tmp_path) -> None:
     assert locked.snapshot(1)[0]["pinned"] is True
 
 
+def test_unlocking_storage_loads_pins_and_tells_open_clients(tmp_path) -> None:
+    path = tmp_path / "settings.json"
+    _, store = store_for(path)
+    log = make_log(pins=store)
+    log.handle_ancs(event(1))
+    log.set_pinned("k1", True)
+
+    storage, store = store_for(path, initialize=False)
+    changes: list[str] = []
+    locked = make_log(pins=store, on_changed=lambda: changes.append("changed"))
+    locked.storage_changed()  # still locked: nothing to load, but list again
+    assert changes == ["changed"]
+    storage.refresh(allow_prompt=False)
+    changes.clear()
+    locked.storage_changed()
+    assert changes  # without waiting for the next ANCS event or list call
+    assert locked.snapshot(1)[0]["pinned"] is True
+
+
 @pytest.mark.parametrize("policy", ["none", "plaintext"])
 def test_pins_follow_the_storage_policy(tmp_path, policy) -> None:
     path = tmp_path / "settings.json"
@@ -374,6 +393,21 @@ def test_daemon_deletes_stored_pins_while_the_list_is_off(make_daemon, monkeypat
     instance = make_daemon()
     assert SettingsStore(config.SETTINGS_JSON).read().get(SETTINGS_KEY) is None
     assert instance._status()["notification_pins_max"] == 20
+
+
+def test_daemon_passes_storage_changes_to_the_notification_list(
+    make_daemon, monkeypatch,
+) -> None:
+    from blueferry import daemon as daemon_mod
+
+    monkeypatch.setattr(daemon_mod.config, "NOTIFICATION_HISTORY", True)
+    instance = make_daemon()
+    calls: list[str] = []
+    monkeypatch.setattr(
+        instance.notification_log, "storage_changed", lambda: calls.append("log"),
+    )
+    instance._on_storage_changed()
+    assert calls == ["log"]
 
 
 def test_daemon_marks_removals_and_detaches_on_session_reset(make_daemon, monkeypatch) -> None:

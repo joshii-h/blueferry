@@ -1241,6 +1241,8 @@ class Daemon:
         self.contact_sync.storage_changed()
         if self.call_history is not None:
             self.call_history.storage_changed()
+        if self.notification_log is not None:
+            self.notification_log.storage_changed()
         self._emit_status()
 
     def _initialize(self) -> bool:
