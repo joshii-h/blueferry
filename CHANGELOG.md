@@ -14,6 +14,12 @@
   `Events1.NotificationAppsChanged` invalidates the list. CLI:
   `blueferry notifications apps|mute|unmute`. The environment allowlist and
   blocklist stay a hard filter in front of it.
+- Quickshell: volume down/up buttons with the iPhone's level in the
+  now-playing strip, **Pin** / **Unpin** in the recent notification list
+  (removed entries and entries of muted apps greyed out, the pin limit
+  shown), and **Muted apps** under iPhone settings › Notifications. The
+  bridge gains `set_notification_pinned`, `notification_apps` and
+  `toggle_notification_app` and forwards `NotificationAppsChanged`.
 
 ## [0.9.0](https://github.com/erikwb/blueferry/releases/tag/v0.9.0) - 2026-10-27
 

@@ -163,7 +163,7 @@ erscheint nur, wenn der laufende Hintergrunddienst sie anbietet.
 | Kategorie | Was du dort findest |
 |---|---|
 | Phone | Kopplung, Verbindungszustand mit **Reconnect**, automatisches Zurücksetzen einer hängenden Verbindung, **Run Diagnostics**, Kontaktabgleich (**Sync Contacts**), Kontaktfotos |
-| Notifications | Welche Ereignisse Popups erzeugen, nur Kontakte, Mitteilungsinhalt, Aktionsknöpfe, Mitteilungen mit dem iPhone abgleichen, beim Wegklicken als gelesen markieren, letzte Mitteilungen behalten und die Liste dieser Mitteilungen |
+| Notifications | Welche Ereignisse Popups erzeugen, nur Kontakte, stummgeschaltete Apps, Mitteilungsinhalt, Aktionsknöpfe, Mitteilungen mit dem iPhone abgleichen, beim Wegklicken als gelesen markieren, letzte Mitteilungen behalten und die Liste dieser Mitteilungen mit **Pin** / **Unpin** |
 | Calls & Audio | Telefonanrufe, Anrufliste und Popups für verpasste Anrufe, Akku-Warnung, iPhone-Ton auf diesem Computer, Mediensteuerung und MPRIS |
 | Security | Einmalcodes, Abwesenheitssperre, die lokale Speicherung |
 | About | Der Hintergrunddienst, seine Version und **Restart Service** |
@@ -178,7 +178,36 @@ stattdessen in `local.env` setzt.
 erlaubt, Titel und Text. Die Liste wird nur gelesen, solange sie sichtbar
 ist, folgt neuen Mitteilungen und wird vergessen, sobald du sie
 ausblendest oder die Seite verlässt. Ist sie aus, leer oder nicht
-verfügbar, sagt sie, warum.
+verfügbar, sagt sie, warum. **Pin** / **Unpin** an einem Eintrag behält ihn
+in der Liste, auch über Neustarts hinweg; angeheftete Einträge stehen oben
+und sind mit **Pinned** markiert. Auf dem iPhone entfernte Einträge sind mit
+**Removed on iPhone** gekennzeichnet; sie und Einträge stummgeschalteter
+Apps erscheinen ausgegraut. Bei 20 angehefteten Einträgen bleibt nur
+**Unpin** verfügbar, und die Liste sagt das.
+
+**Muted apps** (unter Notifications, mit einem Hintergrunddienst,
+der Apps stummschalten kann) listet die iPhone-Apps, die sich seit dem Start
+des Dienstes gemeldet haben, jede mit **Mute** / **Unmute**. Eine
+stummgeschaltete App zeigt kein Desktop-Popup; auf dem iPhone ändert sich
+nichts. Die Liste folgt Änderungen von anderswo, etwa mit
+`blueferry notifications mute`.
+
+Während etwas läuft, hat der Wiedergabestreifen unter der Kopfzeile auch
+Knöpfe für leiser und lauter sowie die Lautstärke, die das iPhone zuletzt
+gemeldet hat. Jeder Druck verstellt die iPhone-Lautstärke um eine Stufe; die
+Knöpfe sind ausgegraut, wenn die spielende App keine Lautstärkeregelung
+anbietet.
+
+| | Qt | GTK | TUI | Quickshell | CLI |
+|---|---|---|---|---|---|
+| iPhone-Lautstärkeknöpfe und Pegel | ✓ | ✓ | ✓ | ✓ Wiedergabestreifen | ✓ `blueferry media volume up\|down` |
+| Mitteilungen anheften/lösen | ✓ | ✓ | ✓ | ✓ Show Recent Notifications | ✓ `blueferry notifications pin\|unpin KEY` |
+| Apps stummschalten | ✓ | ✓ | ✓ | ✓ iPhone settings › Notifications | ✓ `blueferry notifications apps\|mute\|unmute` |
+
+Die Mitteilungsliste des Panels hat keine weiteren Aktionen pro Eintrag (sie
+öffnet und beantwortet keine Mitteilungen), daher sieht eine Mitteilung, auf
+die das iPhone nicht mehr reagieren kann, dort bis auf **Removed on
+iPhone** gleich aus.
 
 ### Was das Panel weglässt
 
@@ -195,8 +224,9 @@ anderen Clients:
 
 Das Panel lädt keinen Übersetzungskatalog, seine eigenen Beschriftungen
 sind deshalb englisch. Texte aus dem gemeinsamen BlueFerry-Code, etwa der
-Hinweis zum Wiederverbinden, der Neustart-Hinweis oder der Platzhalter der
-Mitteilungsliste, folgen deiner Sprache.
+Hinweis zum Wiederverbinden, der Neustart-Hinweis, der Platzhalter der
+Mitteilungsliste, die Texte zum Anheften und Stummschalten oder die
+Lautstärke, folgen deiner Sprache.
 
 ## Terminal (TUI)
 

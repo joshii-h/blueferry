@@ -155,7 +155,7 @@ background service offers it.
 | Category | What you find there |
 |---|---|
 | Phone | Pairing, connection health with **Reconnect**, resetting a stuck connection automatically, **Run Diagnostics**, **Sync Contacts**, contact photos |
-| Notifications | Which events create popups, contacts only, notification content, action buttons, sync notifications with iPhone, mark read on dismiss, keeping recent iPhone notifications, and the recent notifications themselves |
+| Notifications | Which events create popups, contacts only, muted apps, notification content, action buttons, sync notifications with iPhone, mark read on dismiss, keeping recent iPhone notifications, and the recent notifications themselves with **Pin** / **Unpin** |
 | Calls & Audio | Phone calls, call history and missed-call popups, battery warning, iPhone sound on this computer, media control and MPRIS |
 | Security | One-time codes, away lock, the local storage setting |
 | About | The background service, its version and **Restart Service** |
@@ -168,7 +168,32 @@ switch greyed out with the `local.env` variable to set instead.
 recent iPhone notifications** keeps: the app, the time and, if allowed,
 title and text. The list is read only while it is shown, follows new
 notifications, and is forgotten when you hide it or leave the page. When it
-is off, empty or unavailable, it says why.
+is off, empty or unavailable, it says why. **Pin** / **Unpin** on an entry
+keeps it in the list, also across restarts; pinned entries come first and
+are marked **Pinned**. Entries removed on the iPhone say **Removed on
+iPhone**; they and entries from muted apps are greyed out. At 20 pins only
+**Unpin** stays available and the list says so.
+
+**Muted apps** (under Notifications, with a background service that can mute
+apps) lists the iPhone apps seen since the service started, each with
+**Mute** / **Unmute**. A muted app shows no desktop popup; nothing changes on
+the iPhone. The list follows changes made elsewhere, for example with
+`blueferry notifications mute`.
+
+While something is playing, the now-playing strip under the header also has
+volume down and up buttons and the level the iPhone last reported. Each press
+moves the iPhone volume one step; the buttons are greyed out when the playing
+app does not offer volume control.
+
+| | Qt | GTK | TUI | Quickshell | CLI |
+|---|---|---|---|---|---|
+| iPhone volume buttons and level | ✓ | ✓ | ✓ | ✓ now-playing strip | ✓ `blueferry media volume up\|down` |
+| Pin / unpin notifications | ✓ | ✓ | ✓ | ✓ Show Recent Notifications | ✓ `blueferry notifications pin\|unpin KEY` |
+| Mute apps | ✓ | ✓ | ✓ | ✓ iPhone settings › Notifications | ✓ `blueferry notifications apps\|mute\|unmute` |
+
+The panel's notification list has no other row actions (it does not open or
+answer notifications), so a notification the iPhone can no longer act on
+looks the same there apart from **Removed on iPhone**.
 
 ### What the panel leaves out
 
@@ -184,7 +209,8 @@ Quickshell is a compact panel, so some parts stay with the other clients:
 
 The panel loads no translation catalog, so its own labels are English.
 Texts that come from the shared BlueFerry code, such as the reconnect hint,
-the restart notice or the notification placeholder, follow your language.
+the restart notice, the notification placeholder, the pin and mute texts or
+the volume level, follow your language.
 
 ## Terminal (TUI)
 
