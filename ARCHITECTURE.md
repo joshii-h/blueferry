@@ -178,6 +178,8 @@ All paths are relative to `src/blueferry/` unless noted.
 | `cli.py`, `__main__.py` | Typer CLI (`run`, `doctor`, sync, setup, and hidden `pairing-*` JSON helpers). |
 | `cli_messages.py` | CLI message listing, recipient selection, and send. |
 | `cli_contacts.py` | `contact-photos enable`/`disable`/`status`, `contacts-photo` export of one cached contact photo, and `contacts list`/`show` for contact cards. |
+| `global_search.py` | `Messages1.Search` matching over the in-memory conversation projection, contact cards and call history; no index on disk. |
+| `search_view.py`, `cli_search.py` | Toolkit-free result sections, rows, highlights and jump targets for the global search; `blueferry search`. |
 | `contacts_view.py` | Toolkit-free list rows, card sections, labels and hints for the contact view (`Messages1.ListContactCards`, `GetContact`). |
 | `cli_call_history.py` | Opt-in `call-history` listing, enable, and disable. |
 | `cli_common.py` | Small CLI presentation helpers. |

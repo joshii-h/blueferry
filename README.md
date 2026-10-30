@@ -500,6 +500,15 @@ job title; `--photo FILE` also saves the photo when
 kept only in the encrypted contact cache. See
 [Contacts](docs/en/user/contacts.md).
 
+### Search
+
+`blueferry search TEXT` looks through conversations, messages (the most
+recent 2,000 plus starred conversations), contacts and the retained call
+history at once and groups the hits; `--ids` prints what a client needs to
+open each one. Because local history is encrypted there is no search index
+on disk: the background service searches the data it already holds in
+memory, only when you search. See [Search](docs/en/user/search.md).
+
 ### Contact photos (optional)
 
 Contact photos are off by default. To show the iPhone's contact pictures as
@@ -1108,6 +1117,7 @@ blueferry contacts-sync
 blueferry contact-photos enable                     # opt in; disable / status
 blueferry contacts-photo Alice --output alice.jpg   # needs contact photos on
 blueferry contacts list -q Alice                    # cards with ids; show ID for details
+blueferry search lunch                              # messages, contacts and calls at once
 blueferry call-history --missed   # after `blueferry call-history enable`
 blueferry media status
 blueferry audio            # inspect the iPhone audio route

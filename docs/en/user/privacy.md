@@ -75,7 +75,8 @@ restarts. You choose how:
 
 Contact [card details](contacts.md) (number labels, postal addresses,
 company, job title) are kept only in encrypted contact records; with the
-unencrypted mode they are not kept at all.
+unencrypted mode they are not kept at all. [Search](search.md) keeps no
+index on disk; it runs over data the service already holds in memory.
 
 With the optional [contact photos](contact-photos.md), the contact cache
 also holds your contacts' pictures under the same storage mode, and the
