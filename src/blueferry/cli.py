@@ -24,6 +24,7 @@ from blueferry.cli_photos import photos_app
 from blueferry.cli_plugins import PLUGINS_CONTEXT, plugins
 from blueferry.cli_proximity import proximity_app
 from blueferry.cli_reconnect import reconnect
+from blueferry.cli_search import search
 from blueferry.cli_surfaces import cards as plugin_cards
 from blueferry.cli_surfaces import send as send_files
 from blueferry.cli_tether import tether
@@ -741,6 +742,7 @@ app.command("sms-list")(sms_list)
 app.command("sms-send")(sms_send)
 app.add_typer(contact_photos_app, name="contact-photos")
 app.add_typer(contacts_app, name="contacts")
+app.command("search")(search)
 app.add_typer(proximity_app, name="proximity-lock")
 # Earlier names of "otp status" and "otp check", kept for scripts.
 app.command("otp-status", hidden=True)(otp_status)

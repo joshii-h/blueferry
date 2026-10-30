@@ -1,4 +1,4 @@
-"""Global search: in-memory matching, the Search operation and presenter."""
+"""Global search: in-memory matching, the Search operation, CLI and presenter."""
 from __future__ import annotations
 
 import json
@@ -6,10 +6,12 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+from typer.testing import CliRunner
 
-from blueferry import config, search_view
+from blueferry import cli_search, config, search_view
 from blueferry.backend_operations import BackendDependencies, BackendOperations
 from blueferry.call_history import CallRecord
+from blueferry.cli import app
 from blueferry.contact_repository import ContactRepository
 from blueferry.contacts import ContactsResolver
 from blueferry.errors import InvalidArgumentsError
@@ -241,3 +243,28 @@ def test_presenter_hints_and_capability() -> None:
     [section] = search_view.sections(call)
     assert section["rows"][0]["subtitle"] == "Missed call · +1555"
     assert section["rows"][0]["target"] == {"kind": "call", "call_id": "k"}
+
+
+# ---- CLI ---------------------------------------------------------------------------
+
+def test_cli_prints_groups_snippets_and_ids(monkeypatch) -> None:
+    hostile = {**RESULT, "contacts": {"total": 1, "results": [
+        {"id": "c1", "name": "Lunch\x1b[31m Club"},
+    ]}}
+    monkeypatch.setattr(cli_search, "BackendClient", lambda: SimpleNamespace(
+        search=lambda query, limit: hostile,
+    ))
+    result = CliRunner().invoke(app, ["search", "lunch", "--ids"])
+    assert result.exit_code == 0, result.output
+    assert "Messages (3)" in result.output and "Sure, lunch at noon" in result.output
+    assert "thread_key=t handle=m1" in result.output and "contact_id=c1" in result.output
+    assert "2 more matches; raise --limit" in result.output
+    assert "\x1b[31m" not in result.output
+
+
+def test_cli_exits_one_without_results(monkeypatch) -> None:
+    monkeypatch.setattr(cli_search, "BackendClient", lambda: SimpleNamespace(
+        search=lambda query, limit: {"query": query},
+    ))
+    result = CliRunner().invoke(app, ["search", "zzz"])
+    assert result.exit_code == 1 and "Nothing matches" in result.output
