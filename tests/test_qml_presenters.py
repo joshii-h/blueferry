@@ -2835,7 +2835,7 @@ def test_quickshell_call_audio_rows_save_the_chosen_device(qml_engine, quickshel
 def _quick_replies_view(replies, **extra):
     return {"supported": True, "label": "Replies when declining a call", "hint": "Offered.",
             "replies": replies, "can_add": len(replies) < 5, "add_label": "Add reply",
-            "empty": "No saved replies.", **extra}
+            "empty": "No saved replies.", "max_chars": 160, "max_replies": 5, **extra}
 
 
 def test_quickshell_quick_replies_are_listed_added_edited_and_removed(
@@ -2861,6 +2861,7 @@ def test_quickshell_quick_replies_are_listed_added_edited_and_removed(
     add = page.findChild(QObject, "quickReplyAdd")
     assert editor.property("visible") is False
     assert add.property("visible") is True and add.property("text") == "Add reply"
+    assert field.property("maximumLength") == 160
 
     # Adding: the bridge checks the text; a rejected one keeps the editor
     # open with the reason, the saved list closes it.
@@ -2907,6 +2908,24 @@ def test_quickshell_quick_replies_are_listed_added_edited_and_removed(
         ("save_quick_reply", {"text": "Call you back", "index": 1}),
         ("remove_quick_reply", {"index": 0}),
     ]
+
+    # A list changed elsewhere (e.g. with the CLI) closes the editor for an
+    # existing entry, so the index never points at another reply; adding
+    # a new one stays open.
+    calls.clear()
+    QMetaObject.invokeMethod(_visual_find(page, "quickReplyEdit_1"), "clicked")
+    QGuiApplication.processEvents()
+    assert editor.property("visible") is True
+    page.setProperty("quickReplies", _quick_replies_view(["Later", "Driving"]))
+    QGuiApplication.processEvents()
+    assert editor.property("visible") is False
+    assert page.property("quickReplyEditing") == -2
+    QMetaObject.invokeMethod(add, "clicked")
+    page.setProperty("quickReplies", _quick_replies_view(["Driving"]))
+    QGuiApplication.processEvents()
+    assert editor.property("visible") is True
+    QMetaObject.invokeMethod(page.findChild(QObject, "quickReplyCancel"), "clicked")
+    assert calls == []
 
     # A full list cannot grow; an empty one says what declining offers.
     page.setProperty("quickReplies", _quick_replies_view(["1", "2", "3", "4", "5"]))
@@ -5800,6 +5819,12 @@ Item {
         backendBridge.response("save_quick_reply", 18, {saved: true, error: "", supported: true, replies: ["b", "c"]})
         check(!root.quickRepliesBusy, "reply save stays busy")
         check(phoneSettingsPage.quickReplies.replies.length === 2, "saved list ignored")
+        // The saved list goes into the status: no second status round, and
+        // the status that follows does not reread the replies.
+        check(backendBridge.take("status") === 0, "save asked for the status again")
+        check(root.backendStatus.calls_quick_replies.length === 2, "status keeps the old list")
+        backendBridge.response("status", 20, {daemon: true, calls_enabled: true, calls_quick_replies: ["b", "c"]})
+        check(backendBridge.take("latest:quick_replies") === 0, "saved replies read twice")
         phoneSettingsPage.operationRequested("remove_quick_reply", {index: 0})
         backendBridge.failure("remove_quick_reply", 19, "gone")
         check(!root.quickRepliesBusy && root.errorText === "gone", "reply failure lost")

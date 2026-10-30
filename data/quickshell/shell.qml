@@ -531,9 +531,14 @@ ShellRoot {
         root.quickReplies = typeof result === "object" && result !== null ? result : ({})
       } else if (method === "save_quick_reply" || method === "remove_quick_reply") {
         // The reply is the new list, or the unchanged one with the reason.
+        // A saved list goes into the status too, so the next status round
+        // does not read the replies a second time.
         root.quickRepliesBusy = false
         root.quickReplies = typeof result === "object" && result !== null ? result : ({})
-        if (root.quickReplies.saved === true) root.reload()
+        if (root.quickReplies.saved === true && Array.isArray(root.quickReplies.replies))
+          root.backendStatus = Object.assign({}, root.backendStatus, {
+            calls_quick_replies: root.quickReplies.replies
+          })
       } else if (method === "features") {
         root.applyFeatures(result)
       } else if (method === "set_feature") {

@@ -28,9 +28,17 @@ Rectangle {
   readonly property var quickReplyList: root.quickRepliesShown ? (root.quickReplies.replies || []) : []
   property int quickReplyEditing: -2
   property string quickReplyError: ""
+  // The list the open editor's index refers to. A list changed elsewhere
+  // (e.g. with the command line) closes an editor for an existing entry,
+  // so it never saves over the wrong one; a new reply can still be added.
+  property string quickReplySignature: ""
   onQuickRepliesChanged: {
+    const signature = JSON.stringify(root.quickReplies.replies || [])
+    const changedElsewhere = signature !== root.quickReplySignature
+      && root.quickReplies.saved !== true && root.quickReplyEditing >= 0
+    root.quickReplySignature = signature
     root.quickReplyError = String(root.quickReplies.error || "")
-    if (root.quickReplies.saved === true) root.closeQuickReplyEditor()
+    if (root.quickReplies.saved === true || changedElsewhere) root.closeQuickReplyEditor()
   }
   onQuickRepliesShownChanged: if (!root.quickRepliesShown) root.closeQuickReplyEditor()
   property var notificationList: ({})
@@ -844,6 +852,9 @@ Rectangle {
             objectName: "quickReplyField"
             ferryTheme: root.theme
             Layout.fillWidth: true
+            // The presenter's limit (quick_reply_view.MAX_REPLY_CHARS) from
+            // the bridge; until it is known, TextInput's own default.
+            maximumLength: root.quickReplies.max_chars > 0 ? root.quickReplies.max_chars : 32767
             placeholderText: root.quickReplyEditing === -1 ? (root.quickReplies.add_label || "") : ""
             Accessible.name: root.quickReplies.label || ""
             enabled: !root.busy.quickReplies
