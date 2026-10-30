@@ -654,13 +654,27 @@ def test_bridge_reduces_now_playing_to_booleans_and_verbatim_text() -> None:
     bridge = QuickshellBridge(SimpleNamespace(now_playing=lambda: snapshot))  # type: ignore[arg-type]
 
     result = bridge.dispatch("now_playing", {})
+    volume = result.pop("volume")
     assert result == {
         "visible": True, "playing": True, "title": "<b>Song</b>", "artist": "Band",
         "idle": False, "previous": False, "toggle": True, "next": True,
     }
+    # This player offers no volume step: shown, but disabled with the reason.
+    assert volume["visible"] is True
+    assert not volume["up_enabled"] and not volume["down_enabled"]
+    assert "does not offer volume control" in volume["up_tooltip"]
+    result["volume"] = volume
     # No arrays reach QML, whatever the Qt version does with them.
     assert not any(isinstance(value, list | tuple) for value in result.values())
+    assert not any(isinstance(value, list | tuple) for value in volume.values())
     assert json.loads(json.dumps(result)) == result
+
+
+HIDDEN_VOLUME = {
+    "visible": False, "up_enabled": False, "down_enabled": False, "level": None,
+    "level_text": "", "up_tooltip": "", "down_tooltip": "",
+    "up_command": "volume-up", "down_command": "volume-down",
+}
 
 
 @pytest.mark.parametrize("snapshot", [
@@ -672,7 +686,7 @@ def test_bridge_hides_now_playing_until_the_media_service_is_available(snapshot)
 
     assert bridge.dispatch("now_playing", {}) == {
         "visible": False, "playing": False, "title": "", "artist": "", "idle": False,
-        "previous": False, "toggle": False, "next": False,
+        "previous": False, "toggle": False, "next": False, "volume": HIDDEN_VOLUME,
     }
 
 
@@ -694,7 +708,7 @@ def test_bridge_hides_empty_inactive_media_after_reconnect(state, track) -> None
 
     assert bridge.dispatch("now_playing", {}) == {
         "visible": False, "playing": False, "title": "", "artist": "", "idle": False,
-        "previous": False, "toggle": False, "next": False,
+        "previous": False, "toggle": False, "next": False, "volume": HIDDEN_VOLUME,
     }
 
 
@@ -727,20 +741,42 @@ def test_bridge_keeps_named_media_visible_without_active_playback(track, state) 
     assert view["artist"] == track.get("artist", "")
 
 
-def test_bridge_sends_only_the_transport_media_commands() -> None:
+def test_bridge_shows_the_shared_volume_buttons_inside_the_strip() -> None:
+    snapshot = {
+        "enabled": True, "available": True,
+        "player": {"state": "playing", "volume": 0.4},
+        "track": {"title": "Song"},
+        "supported_commands": ["pause", "volume-up", "volume-down"],
+        "supported_commands_known": True,
+    }
+    bridge = QuickshellBridge(SimpleNamespace(now_playing=lambda: snapshot))  # type: ignore[arg-type]
+
+    volume = bridge.dispatch("now_playing", {})["volume"]
+    assert volume == {
+        "visible": True, "up_enabled": True, "down_enabled": True, "level": 40,
+        "level_text": "Volume 40%",
+        "up_tooltip": "Turn the iPhone volume up",
+        "down_tooltip": "Turn the iPhone volume down",
+        "up_command": "volume-up", "down_command": "volume-down",
+    }
+
+
+def test_bridge_sends_the_transport_and_volume_media_commands() -> None:
     sent: list[str] = []
     bridge = QuickshellBridge(SimpleNamespace(send_media_command=sent.append))  # type: ignore[arg-type]
 
     assert bridge.dispatch("media_command", {"command": "next"}) is None
+    assert bridge.dispatch("media_command", {"command": "volume-up"}) is None
+    assert bridge.dispatch("media_command", {"command": "volume-down"}) is None
     for args, message in (
         ({}, "command must be a string"),
         ({"command": 1}, "command must be a string"),
-        ({"command": "volume-up"}, "unsupported media command"),
+        ({"command": "volume"}, "unsupported media command"),
         ({"command": "like"}, "unsupported media command"),
     ):
         with pytest.raises(ValueError, match=message):
             bridge.dispatch("media_command", args)
-    assert sent == ["next"]
+    assert sent == ["next", "volume-up", "volume-down"]
 
 
 def test_bridge_saves_the_contact_photo_opt_in() -> None:
@@ -985,8 +1021,13 @@ def test_bridge_lists_the_newest_notifications_and_caps_them() -> None:
     assert client.calls[-1] == ("notifications", 30)
     assert len(reply["rows"]) == 30
     # Verbatim, never markup: the shell shows it as plain text.
-    assert reply["rows"][0] == {"app": "<b>Mail</b>", "time": "", "summary": "T0 · S",
-                              "body": "line\nnext"}
+    first = reply["rows"][0]
+    assert {key: first[key] for key in ("app", "time", "summary", "body")} == {
+        "app": "<b>Mail</b>", "time": "", "summary": "T0 · S", "body": "line\nnext",
+    }
+    # An older daemon without keys: no pin control, nothing dimmed.
+    assert first["can_pin"] is False and first["dimmed"] is False
+    assert reply["pin_limit_reached"] is False and reply["pin_limit_text"] == ""
     assert reply["off"] is False and reply["failed"] is False
     assert "Only app names and times" in reply["content_hint"]
 
@@ -1092,3 +1133,303 @@ def test_bridge_stops_diagnostics_when_quickshell_terminates_it(monkeypatch, num
         os.close(write_end)
     assert timed_out == []
     assert stopped == [True]
+
+
+# ---- Welle B: pinned notifications and muted apps -----------------------------
+
+
+class NotificationAppsClient(SettingsClient):
+    def __init__(self, status: dict | None = None) -> None:
+        super().__init__({
+            "notification_history_enabled": True,
+            "notification_muted_app_count": 1,
+            **(status or {}),
+        })
+        self.apps: object = {
+            "apps": [
+                {"app_id": "com.example.chat", "app_name": "Chat", "muted": True,
+                 "seen": True, "last_seen": 1},
+                {"app_id": "com.example.mail", "app_name": "Mail", "muted": False,
+                 "seen": False, "last_seen": None},
+            ],
+            "max_muted": 100, "mute_available": True, "all_notifications": True,
+            "env_allowlist": False, "env_blocklist": False,
+        }
+        self.pin_error: Exception | None = None
+        self.mute_error: Exception | None = None
+        self.before_mute = None
+
+    def notification_apps(self):
+        self.calls.append(("notification_apps",))
+        if isinstance(self.apps, Exception):
+            raise self.apps
+        return json.loads(json.dumps(self.apps))
+
+    def set_notification_app_muted(self, app_id, muted):
+        self.calls.append(("set_notification_app_muted", app_id, muted))
+        if self.mute_error is not None:
+            raise self.mute_error
+        return muted
+
+    def set_notification_pinned(self, key, pinned):
+        self.calls.append(("set_notification_pinned", key, pinned))
+        if self.pin_error is not None:
+            raise self.pin_error
+        return pinned
+
+
+def _backend_error(name: str, message: str):
+    from blueferry.client import BackendError
+
+    class Cause(Exception):
+        def get_dbus_name(self):
+            return name
+
+        def get_dbus_message(self):
+            return message
+
+    error = BackendError(message)
+    error.__cause__ = Cause(message)
+    return error
+
+
+def _record(key, app_id, **flags):
+    return {"key": key, "id": 1, "app_id": app_id, "app_name": app_id.rsplit(".", 1)[-1],
+            "time": "", "title": "T", "pinned": False, "removed": False,
+            "actionable": True, **flags}
+
+
+def test_bridge_rows_carry_the_shared_pin_fields_and_dim_muted_and_removed_apps() -> None:
+    client = NotificationAppsClient()
+    client.notification_snapshot = {
+        "enabled": True, "content": True, "pins_max": 20,
+        "notifications": [
+            _record("k1", "com.example.mail", pinned=True),
+            _record("k2", "com.example.chat"),
+            _record("k3", "com.example.mail", removed=True, actionable=False),
+            "not a record",
+        ],
+    }
+    reply = QuickshellBridge(client).dispatch("notifications", {})  # type: ignore[arg-type]
+    pinned, muted, removed = reply["rows"]
+    assert len(reply["rows"]) == 3
+    assert (pinned["key"], pinned["pinned"], pinned["pin_label"]) == ("k1", True, "Unpin")
+    assert pinned["pinned_text"] == "Pinned" and pinned["dimmed"] is False
+    assert muted["muted"] is True and muted["dimmed"] is True and muted["pin_label"] == "Pin"
+    assert removed["removed_text"] == "Removed on iPhone" and removed["dimmed"] is True
+    assert removed["muted"] is False and removed["actionable"] is False
+    assert reply["pin_limit_reached"] is False
+    assert json.loads(json.dumps(reply)) == reply
+
+
+def test_bridge_reports_the_pin_limit_once_the_list_is_full() -> None:
+    client = NotificationAppsClient()
+    client.notification_snapshot = {
+        "enabled": True, "content": True, "pins_max": 2,
+        "notifications": [
+            _record("a", "com.example.mail", pinned=True),
+            _record("b", "com.example.mail", pinned=True),
+            _record("c", "com.example.mail"),
+        ],
+    }
+    reply = QuickshellBridge(client).dispatch("notifications", {})  # type: ignore[arg-type]
+    assert reply["pin_limit_reached"] is True
+    assert reply["pin_limit_text"] == "At most 2 notifications can be pinned; unpin one first."
+
+
+def test_bridge_does_not_read_muted_apps_from_a_daemon_without_muting() -> None:
+    client = NotificationAppsClient()
+    del client.status_value["notification_muted_app_count"]
+    client.notification_snapshot = {
+        "enabled": True, "content": True,
+        "notifications": [_record("k", "com.example.chat")],
+    }
+    reply = QuickshellBridge(client).dispatch("notifications", {})  # type: ignore[arg-type]
+    assert reply["rows"][0]["muted"] is False
+    assert ("notification_apps",) not in client.calls
+
+
+def test_bridge_keeps_the_list_when_the_muted_apps_cannot_be_read() -> None:
+    from blueferry.client import BackendError
+
+    client = NotificationAppsClient()
+    client.apps = BackendError("locked")
+    client.notification_snapshot = {
+        "enabled": True, "content": True,
+        "notifications": [_record("k", "com.example.chat")],
+    }
+    reply = QuickshellBridge(client).dispatch("notifications", {})  # type: ignore[arg-type]
+    assert reply["failed"] is False and reply["rows"][0]["dimmed"] is False
+
+
+def test_bridge_pins_a_notification_by_key() -> None:
+    client = NotificationAppsClient()
+    bridge = QuickshellBridge(client)  # type: ignore[arg-type]
+    assert bridge.dispatch("set_notification_pinned", {"key": "k1", "pinned": True}) == {
+        "saved": True, "pinned": True, "error": "",
+    }
+    assert client.calls[-1] == ("set_notification_pinned", "k1", True)
+    for args, message in (
+        ({"pinned": True}, "key must be a string"),
+        ({"key": "k1", "pinned": "yes"}, "pinned must be a boolean"),
+    ):
+        with pytest.raises(RequestError, match=message):
+            bridge.dispatch("set_notification_pinned", args)
+    assert len([call for call in client.calls if call[0] == "set_notification_pinned"]) == 1
+
+
+@pytest.mark.parametrize(("name", "message", "text"), [
+    ("io.weirdware.BlueFerry.Error.InvalidArgs", "at most 20 notifications can be pinned",
+     "The pinned list is full; unpin a notification first."),
+    ("io.weirdware.BlueFerry.Error.InvalidArgs", "unknown notification key",
+     "This notification is no longer in the list."),
+    ("io.weirdware.BlueFerry.Error.NotReady", "storage is locked",
+     "Local data is locked. Unlock it to pin notifications."),
+    ("org.freedesktop.DBus.Error.UnknownMethod", "no such method",
+     "The running BlueFerry service cannot pin notifications; restart it."),
+])
+def test_bridge_words_a_refused_pin_with_the_shared_texts(name, message, text) -> None:
+    client = NotificationAppsClient()
+    client.pin_error = _backend_error(name, message)
+    reply = QuickshellBridge(client).dispatch(  # type: ignore[arg-type]
+        "set_notification_pinned", {"key": "k1", "pinned": True}
+    )
+    assert reply == {"saved": False, "pinned": False, "error": text}
+
+
+def test_bridge_lists_the_notification_apps_with_the_shared_wording() -> None:
+    client = NotificationAppsClient()
+    reply = QuickshellBridge(client).dispatch("notification_apps", {})  # type: ignore[arg-type]
+    assert reply["supported"] is True and reply["saved"] is False and reply["error"] == ""
+    assert reply["label"] == "Muted apps" and reply["available"] is True
+    assert [row["name"] for row in reply["rows"]] == ["Chat", "Mail"]
+    assert [row["toggle_label"] for row in reply["rows"]] == ["Unmute", "Mute"]
+    assert reply["count"] == 2 and reply["muted_count"] == 1
+    assert json.loads(json.dumps(reply)) == reply
+
+
+def test_bridge_hides_the_muted_apps_for_a_daemon_without_muting() -> None:
+    client = NotificationAppsClient()
+    del client.status_value["notification_muted_app_count"]
+    reply = QuickshellBridge(client).dispatch("notification_apps", {})  # type: ignore[arg-type]
+    assert reply["supported"] is False and reply["rows"] == []
+    assert ("notification_apps",) not in client.calls
+
+
+def test_bridge_explains_unreadable_notification_apps() -> None:
+    from blueferry.client import BackendError
+
+    client = NotificationAppsClient()
+    client.apps = BackendError("storage is locked")
+    reply = QuickshellBridge(client).dispatch("notification_apps", {})  # type: ignore[arg-type]
+    assert reply["supported"] is True and reply["rows"] == []
+    assert reply["error"] == "storage is locked"
+
+
+def test_bridge_toggles_the_app_at_the_index_after_rereading_the_list() -> None:
+    client = NotificationAppsClient()
+    bridge = QuickshellBridge(client)  # type: ignore[arg-type]
+    reply = bridge.dispatch(
+        "toggle_notification_app", {"index": 1, "app_id": "com.example.mail"}
+    )
+    assert client.calls[-2:] == [
+        ("notification_apps",), ("set_notification_app_muted", "com.example.mail", True),
+    ]
+    assert reply["saved"] is True and reply["error"] == ""
+    assert [row["muted"] for row in reply["rows"]] == [True, True]
+    assert reply["muted_count"] == 2
+
+
+def test_bridge_does_not_toggle_when_the_list_changed_underneath() -> None:
+    client = NotificationAppsClient()
+    # Another app appeared at index 0 since the page read the list.
+    client.apps["apps"].insert(0, {  # type: ignore[index]
+        "app_id": "com.example.alpha", "app_name": "Alpha", "muted": False, "seen": True,
+    })
+    reply = QuickshellBridge(client).dispatch(  # type: ignore[arg-type]
+        "toggle_notification_app", {"index": 1, "app_id": "com.example.mail"}
+    )
+    assert reply["saved"] is False and "changed" in reply["error"]
+    assert [row["name"] for row in reply["rows"]] == ["Alpha", "Chat", "Mail"]
+    assert not any(call[0] == "set_notification_app_muted" for call in client.calls)
+
+
+def test_bridge_does_not_mute_a_disabled_row_and_reports_refusals() -> None:
+    from blueferry.client import BackendError
+
+    client = NotificationAppsClient()
+    client.apps["mute_available"] = False  # type: ignore[index]
+    bridge = QuickshellBridge(client)  # type: ignore[arg-type]
+    blocked = bridge.dispatch("toggle_notification_app", {"index": 1, "app_id": "com.example.mail"})
+    assert blocked["saved"] is False and blocked["error"] == "Could not change the muted apps."
+    assert not any(call[0] == "set_notification_app_muted" for call in client.calls)
+
+    client.apps["mute_available"] = True  # type: ignore[index]
+    client.mute_error = BackendError("at most 100 apps can be muted")
+    refused = bridge.dispatch("toggle_notification_app", {"index": 1, "app_id": "com.example.mail"})
+    assert refused["saved"] is False and refused["error"] == "at most 100 apps can be muted"
+    assert [row["muted"] for row in refused["rows"]] == [True, False]
+
+
+@pytest.mark.parametrize(("args", "message"), [
+    ({"app_id": "com.example.mail"}, "index must be an integer"),
+    ({"index": True, "app_id": "com.example.mail"}, "index must be an integer"),
+    ({"index": 0}, "app_id must be a string"),
+])
+def test_bridge_rejects_malformed_toggle_requests(args, message) -> None:
+    client = NotificationAppsClient()
+    with pytest.raises(RequestError, match=message):
+        QuickshellBridge(client).dispatch("toggle_notification_app", args)  # type: ignore[arg-type]
+    assert client.calls == []
+
+
+def test_concurrent_toggles_reread_the_list_one_at_a_time() -> None:
+    client = NotificationAppsClient()
+    active = 0
+    overlap = []
+    lock = threading.Lock()
+    original = client.notification_apps
+
+    def slow_apps():
+        nonlocal active
+        with lock:
+            active += 1
+            overlap.append(active)
+        time.sleep(0.02)
+        try:
+            return original()
+        finally:
+            with lock:
+                active -= 1
+
+    client.notification_apps = slow_apps  # type: ignore[method-assign]
+    bridge = QuickshellBridge(client)  # type: ignore[arg-type]
+    threads = [
+        threading.Thread(target=bridge.dispatch, args=(
+            "toggle_notification_app", {"index": 1, "app_id": "com.example.mail"},
+        ))
+        for _ in range(3)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(5)
+    assert max(overlap) == 1
+
+
+def test_bridge_forwards_the_content_free_notification_apps_signal(monkeypatch) -> None:
+    from blueferry import quickshell_bridge
+
+    receivers = {}
+
+    class Bus:
+        def add_signal_receiver(self, handler, signal_name, **_kwargs):
+            receivers[signal_name] = handler
+            return SimpleNamespace(remove=lambda: None)
+
+    monkeypatch.setattr(quickshell_bridge, "get_session_bus", lambda: Bus())
+    output = io.StringIO()
+    bridge = QuickshellBridge(FakeClient(), output)  # type: ignore[arg-type]
+    quickshell_bridge._install_signal_receivers(bridge)
+    receivers["NotificationAppsChanged"]()
+    assert json.loads(output.getvalue()) == {"event": "notification-apps-changed", "data": None}

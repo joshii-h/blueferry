@@ -17,7 +17,15 @@ from collections.abc import Callable, Mapping
 from dataclasses import asdict
 from typing import Any, TextIO
 
-from blueferry import doctor_report, features_view, phone_link_view, phone_overview
+from blueferry import (
+    doctor_report,
+    features_view,
+    media_volume_view,
+    notification_apps_view,
+    notification_pin_view,
+    phone_link_view,
+    phone_overview,
+)
 from blueferry.backend_lifecycle import restart_backend
 from blueferry.bus import get_session_bus
 from blueferry.client import BackendClient, BackendError, TetherUnsupportedError
@@ -38,6 +46,15 @@ REQUEST_WORKERS = 4
 NOTIFICATION_LIMIT = 30
 _FEATURE_NAME = re.compile(r"[a-z][a-z0-9_]{0,63}")
 _FEATURE_VARIABLES = {name: variable for name, variable, _default in FEATURE_SWITCHES}
+
+
+# Transport buttons plus one AMS volume step each way (media_volume_view).
+_MEDIA_COMMANDS = frozenset((
+    *phone_overview.MEDIA_BUTTONS,
+    media_volume_view.VOLUME_UP,
+    media_volume_view.VOLUME_DOWN,
+))
+_ROW_KEYS = ("app", "time", "summary", "body")
 
 
 _TETHER_METHODS = frozenset({
@@ -79,6 +96,27 @@ def _tether_payload(status: TetherStatus) -> dict[str, object]:
     }
 
 
+def _index(args: Mapping[str, Any], name: str) -> int:
+    value = args.get(name)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise RequestError(f"{name} must be an integer")
+    return value
+
+
+def _dbus_error(error: BackendError) -> tuple[str, str]:
+    """The D-Bus error name and message behind a ``BackendError``.
+
+    ``BackendClient`` raises it ``from`` the ``DBusException``; the shared
+    pin wording tells the daemon's cases apart by name and message.
+    """
+    cause = error.__cause__
+    get_name = getattr(cause, "get_dbus_name", None)
+    get_message = getattr(cause, "get_dbus_message", None)
+    name = str(get_name() or "") if callable(get_name) else ""
+    message = str(get_message() or "") if callable(get_message) else ""
+    return name, message or str(error)
+
+
 def _boolean(args: Mapping[str, Any], name: str) -> bool:
     value = args.get(name)
     if not isinstance(value, bool):
@@ -118,12 +156,21 @@ def features_reply(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def notifications_reply(snapshot: object, opt_in_hint: str, error: str = "") -> dict[str, Any]:
+def notifications_reply(
+    snapshot: object,
+    opt_in_hint: str,
+    error: str = "",
+    muted: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
     """The Notifications list as the panel shows it.
 
     ``snapshot`` is ``ListNotifications``; the placeholder and the content
     notice come from ``phone_link_view.notifications_view`` like in the
-    other clients. Rows are plain text taken verbatim from the iPhone.
+    other clients. Rows are plain text taken verbatim from the iPhone plus
+    the shared pin fields (``notification_pin_view.pin_row_extras``) and
+    ``muted`` for apps in ``muted`` (``notification_apps_view.muted_ids``);
+    ``dimmed`` greys removed and muted rows. ``pin_limit_text`` is set while
+    no further row can be pinned.
     """
     value = snapshot if isinstance(snapshot, Mapping) else {}
     info = {
@@ -131,19 +178,52 @@ def notifications_reply(snapshot: object, opt_in_hint: str, error: str = "") -> 
         "content": value.get("content") is True,
         "error": error,
     }
-    rows = [] if error or opt_in_hint else phone_link_view.notification_rows(
-        value.get("notifications")
-    )[:NOTIFICATION_LIMIT]
+    raw = value.get("notifications")
+    records = [
+        record for record in (raw if isinstance(raw, list) else [])
+        if isinstance(record, Mapping)
+    ][:NOTIFICATION_LIMIT]
+    if error or opt_in_hint:
+        records = []
+    rows = []
+    for record, row in zip(records, phone_link_view.notification_rows(records), strict=True):
+        extras = notification_pin_view.pin_row_extras(record)
+        is_muted = record.get("app_id") in muted
+        rows.append({
+            **{key: row[key] for key in _ROW_KEYS},
+            **extras,
+            "muted": is_muted,
+            "dimmed": extras["removed"] is True or is_muted,
+        })
     view = phone_link_view.notifications_view(info, opt_in_hint)
+    limit_reached = bool(records) and notification_pin_view.pin_limit_reached(value)
     return {
         "off": bool(opt_in_hint),
         "failed": bool(error) and not opt_in_hint,
         "title": view["title"],
         "explanation": view["explanation"],
         "content_hint": view["contentHint"],
-        "rows": [
-            {key: row[key] for key in ("app", "time", "summary", "body")} for row in rows
-        ],
+        "pin_limit_reached": limit_reached,
+        "pin_limit_text": (
+            notification_pin_view.pin_limit_text(value.get("pins_max")) if limit_reached else ""
+        ),
+        "rows": rows,
+    }
+
+
+def notification_apps_reply(
+    payload: object, *, supported: bool = True, saved: bool = False, error: str = "",
+) -> dict[str, Any]:
+    """``notification_apps_view.list_view`` for the Settings page.
+
+    ``supported`` is False for a daemon without muting (the page hides the
+    section); ``saved`` and ``error`` answer ``toggle_notification_app``.
+    """
+    return {
+        **notification_apps_view.list_view(payload if supported else {}),
+        "supported": supported,
+        "saved": saved,
+        "error": error,
     }
 
 
@@ -175,6 +255,18 @@ def now_playing_view(snapshot: object) -> dict[str, Any]:
         "artist": artist if visible else "",
         "idle": visible and not title and not artist and not player.get("state"),
         **{name: visible and name in view.commands for name in phone_overview.MEDIA_BUTTONS},
+        # The shared volume buttons, shown inside the strip only.
+        "volume": _volume_controls(snapshot, visible),
+    }
+
+
+def _volume_controls(snapshot: object, visible: bool) -> dict[str, Any]:
+    controls = media_volume_view.volume_controls(snapshot)
+    if visible and controls["visible"] is True:
+        return controls
+    return {
+        **controls, "visible": False, "up_enabled": False, "down_enabled": False,
+        "level": None, "level_text": "", "up_tooltip": "", "down_tooltip": "",
     }
 
 
@@ -199,6 +291,10 @@ class QuickshellBridge:
         # until a status shows the outcome. Workers run in parallel.
         self._manual_reconnect = ManualReconnect()
         self._reconnect_lock = threading.Lock()
+        # SetNotificationAppMuted takes an app ID, the panel sends a row
+        # index: each toggle rereads the list right before it writes, one
+        # worker at a time, so a reordered list cannot hit the wrong app.
+        self._notification_apps_lock = threading.Lock()
 
     def host_info(self) -> dict[str, str]:
         """Return daemon-independent facts sent to the shell at startup."""
@@ -228,9 +324,8 @@ class QuickshellBridge:
         return features_view.loaded(features_view.initial(), value)
 
     def _notifications(self) -> dict[str, Any]:
-        hint = phone_link_view.feature_hints(self.client.status().to_dict()).get(
-            "notifications", ""
-        )
+        status = self.client.status().to_dict()
+        hint = phone_link_view.feature_hints(status).get("notifications", "")
         if hint:
             # Switched off: nothing private to read.
             return notifications_reply({}, hint)
@@ -238,7 +333,76 @@ class QuickshellBridge:
             snapshot = self.client.notifications(NOTIFICATION_LIMIT)
         except BackendError as error:
             return notifications_reply({}, "", str(error) or _("Notifications are unavailable"))
-        return notifications_reply(snapshot, "")
+        return notifications_reply(snapshot, "", muted=self._muted_apps(status))
+
+    def _muted_apps(self, status: Mapping[str, Any]) -> frozenset[str]:
+        """Muted bundle IDs to dim list rows; none when they cannot be read."""
+        if not notification_apps_view.supported(status):
+            return frozenset()
+        try:
+            return notification_apps_view.muted_ids(self.client.notification_apps())
+        except BackendError:
+            return frozenset()
+
+    def _set_notification_pinned(self, key: str, pinned: bool) -> dict[str, Any]:
+        """Pin or unpin one list row; a refusal comes back in shared wording."""
+        try:
+            state = self.client.set_notification_pinned(key, pinned)
+        except BackendError as error:
+            name, message = _dbus_error(error)
+            return {
+                "saved": False,
+                "pinned": not pinned,
+                "error": notification_pin_view.pin_error_text(name, message),
+            }
+        return {"saved": True, "pinned": state is True, "error": ""}
+
+    def _notification_apps(self) -> dict[str, Any]:
+        if not notification_apps_view.supported(self.client.status().to_dict()):
+            # An older daemon without muting: the page hides the section.
+            return notification_apps_reply({}, supported=False)
+        try:
+            payload = self.client.notification_apps()
+        except BackendError as error:
+            return notification_apps_reply(
+                {}, error=str(error) or _("Could not read the muted apps.")
+            )
+        return notification_apps_reply(payload)
+
+    def _toggle_notification_app(self, index: int, app_id: str) -> dict[str, Any]:
+        """Mute or unmute row ``index`` of the list the page shows.
+
+        ``app_id`` is that row's ID: when the reread list has another app at
+        ``index`` (one appeared or was forgotten meanwhile), nothing is
+        written and the page gets the current list to try again.
+        """
+        with self._notification_apps_lock:
+            try:
+                payload = notification_apps_view.normalize(self.client.notification_apps())
+            except BackendError as error:
+                return notification_apps_reply(
+                    {}, error=notification_apps_view.change_failed_text(error)
+                )
+            rows = notification_apps_view.app_rows(payload)
+            if not 0 <= index < len(rows) or rows[index]["app_id"] != app_id:
+                return notification_apps_reply(payload, error=_(
+                    "The app list changed meanwhile; check it and try again."
+                ))
+            target = notification_apps_view.toggle_at(payload, index)
+            if target is None:
+                return notification_apps_reply(
+                    payload, error=notification_apps_view.change_failed_text("")
+                )
+            try:
+                muted = self.client.set_notification_app_muted(*target)
+            except BackendError as error:
+                return notification_apps_reply(
+                    payload, error=notification_apps_view.change_failed_text(error)
+                )
+            for app in payload["apps"]:
+                if app["app_id"] == target[0]:
+                    app["muted"] = muted is True
+            return notification_apps_reply(payload, saved=True)
 
     def emit(self, payload: Mapping[str, Any]) -> None:
         line = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
@@ -328,7 +492,7 @@ class QuickshellBridge:
             return now_playing_view(self.client.now_playing())
         if method == "media_command":
             command = _text(args, "command")
-            if command not in phone_overview.MEDIA_BUTTONS:
+            if command not in _MEDIA_COMMANDS:
                 raise RequestError("unsupported media command")
             self.client.send_media_command(command)
             return None
@@ -404,6 +568,12 @@ class QuickshellBridge:
             )
         if method == "notifications":
             return self._notifications()
+        if method == "set_notification_pinned":
+            return self._set_notification_pinned(_text(args, "key"), _boolean(args, "pinned"))
+        if method == "notification_apps":
+            return self._notification_apps()
+        if method == "toggle_notification_app":
+            return self._toggle_notification_app(_index(args, "index"), _text(args, "app_id"))
         if method in _TETHER_METHODS:
             return self._tether(method, args)
         raise RequestError(f"unsupported method: {method}")
@@ -532,6 +702,12 @@ def _install_signal_receivers(bridge: QuickshellBridge) -> list[object]:
         bus.add_signal_receiver(
             lambda: bridge.emit_event("notifications-changed"),
             signal_name="NotificationsChanged",
+            **common,
+        ),
+        # Content-free; the shell rereads the muted apps while Settings shows.
+        bus.add_signal_receiver(
+            lambda: bridge.emit_event("notification-apps-changed"),
+            signal_name="NotificationAppsChanged",
             **common,
         ),
     ]
