@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import threading
 
+from rich.text import Text
 from textual.widgets import Button, Static, TabbedContent
 
 from blueferry.client import BackendError
@@ -89,8 +90,8 @@ def test_lists_notifications_as_plain_text_and_forgets_them_on_close() -> None:
         app = BlueFerryApp(TuiState(backend), monitor_factory=lambda: None)
         async with app.run_test(size=(120, 40)) as pilot:
             screen = await _open(app, pilot)
-            await _until(pilot, lambda: "Mail" in _text(screen, "#notifications-list"))
-            listing = _text(screen, "#notifications-list")
+            await _until(pilot, lambda: "Mail" in screen.body_text)
+            listing = screen.body_text
             assert "[@click=app.quit]Mail[/]" in listing
             assert "[b]Hi[/b] · Ana" in listing and "\x1b" not in listing
             # Only app names and times would be kept: say where to change it.
@@ -176,7 +177,7 @@ def test_switched_off_list_points_to_the_notification_options() -> None:
             # Switched on while open: the next status reloads the list.
             backend.extra["notification_history_enabled"] = True
             app._load_data()
-            await _until(pilot, lambda: "Mail" in _text(screen, "#notifications-list"))
+            await _until(pilot, lambda: "Mail" in screen.body_text)
             assert not screen.query_one("#notifications-refresh", Button).disabled
             backend.extra["notification_history_enabled"] = False
             app._load_data()
@@ -207,7 +208,7 @@ def test_a_failing_list_explains_itself_as_plain_text() -> None:
             assert "[@click=app.quit]boom[/]" in _text(screen, "#notifications-explanation")
             backend.error = None
             await pilot.press("r")
-            await _until(pilot, lambda: "Mail" in _text(screen, "#notifications-list"))
+            await _until(pilot, lambda: "Mail" in screen.body_text)
 
     _run_headless(scenario())
 
@@ -253,4 +254,205 @@ def test_event_monitor_subscribes_to_notifications_changed(monkeypatch) -> None:
     receivers["NotificationsChanged"]()
     assert monitor.take_notifications_changed()
     assert not monitor.take_notifications_changed()
+    monitor.close()
+
+
+# ---- pins and muted apps ------------------------------------------------------
+
+
+class _PinBackend(_NotificationsBackend):
+    def __init__(self, **extra) -> None:
+        super().__init__(**extra)
+        self.pins_max = 20
+        self.records = [
+            {"key": "k1", "app_id": "com.example.mail", "app_name": "Mail",
+             "title": "Pinned one", "time": "2026-10-27T09:00:00+01:00",
+             "pinned": True, "removed": True, "actionable": False},
+            {"key": "k2", "app_id": "com.example.chat", "app_name": "[b]Chat[/b]",
+             "title": "Hello", "time": "2026-10-27T10:00:00+01:00",
+             "pinned": False, "removed": False, "actionable": True},
+        ]
+        self.pinned: list[tuple[str, bool]] = []
+        self.pin_error: str | None = None
+        self.apps = {"apps": [{"app_id": "com.example.chat", "muted": True}],
+                     "mute_available": True}
+        self.app_loads = 0
+
+    def notifications(self, limit: int = 50) -> dict:
+        snapshot = super().notifications(limit)
+        snapshot["pins_max"] = self.pins_max
+        return snapshot
+
+    def set_notification_pinned(self, key: str, pinned: bool) -> bool:
+        self.pinned.append((key, pinned))
+        if self.pin_error:
+            raise BackendError(self.pin_error)
+        for record in self.records:
+            if record["key"] == key:
+                record["pinned"] = pinned
+        return pinned
+
+    def notification_apps(self) -> dict:
+        self.app_loads += 1
+        return self.apps
+
+
+def _items(screen) -> list:
+    from blueferry.tui_notifications import NotificationItem
+
+    return list(screen.query(NotificationItem))
+
+
+async def _highlight(pilot, screen, index: int) -> None:
+    from textual.widgets import ListView
+
+    screen.query_one("#notifications-list", ListView).index = index
+    await pilot.pause(0.05)
+
+
+def test_pin_marks_and_dims_rows_and_pins_the_highlighted_one() -> None:
+    backend = _PinBackend()
+
+    async def scenario() -> None:
+        app = BlueFerryApp(TuiState(backend), monitor_factory=lambda: None)
+        async with app.run_test(size=(120, 40)) as pilot:
+            screen = await _open(app, pilot)
+            await _until(pilot, lambda: len(_items(screen)) == 2)
+            first, second = _items(screen)
+            body = screen.body_text
+            assert "Pinned  ·  Mail" in body and "Removed on iPhone" in body
+            assert "[b]Chat[/b]" in body
+            # Removed on the iPhone: dimmed. Muting needs daemon support.
+            assert first.has_class("-dimmed") and not second.has_class("-dimmed")
+            assert backend.app_loads == 0
+            pin = screen.query_one("#notifications-pin", Button)
+            assert pin.display and str(pin.label) == "Unpin  P"
+            assert isinstance(pin.tooltip, Text)
+
+            await _highlight(pilot, screen, 1)
+            assert str(pin.label) == "Pin  P"
+            screen.query_one("#notifications-list").focus()
+            await pilot.press("P")
+            await _until(pilot, lambda: backend.pinned == [("k2", True)])
+            await _until(pilot, lambda: "Pinned  ·  [b]Chat[/b]" in screen.body_text)
+            # The highlight follows the notification across the reload.
+            await _until(pilot, lambda: str(pin.label) == "Unpin  P")
+
+    _run_headless(scenario())
+
+
+def test_pin_limit_disables_pin_but_not_unpin() -> None:
+    backend = _PinBackend()
+    backend.pins_max = 1
+
+    async def scenario() -> None:
+        app = BlueFerryApp(TuiState(backend), monitor_factory=lambda: None)
+        async with app.run_test(size=(120, 40)) as pilot:
+            screen = await _open(app, pilot)
+            await _until(pilot, lambda: len(_items(screen)) == 2)
+            pin = screen.query_one("#notifications-pin", Button)
+            assert not pin.disabled  # the pinned row can unpin
+            await _highlight(pilot, screen, 1)
+            assert pin.disabled
+            assert "At most 1 notifications" in _text(screen, "#notifications-pin-state")
+            screen.action_toggle_pin()
+            await pilot.pause(0.1)
+            assert backend.pinned == []
+
+    _run_headless(scenario())
+
+
+def test_a_failed_pin_explains_itself_as_plain_text() -> None:
+    from blueferry import notification_pin_view
+    from blueferry.tui_notifications import pin_error_text
+
+    assert pin_error_text("the notification list is off; turn it on") == (
+        notification_pin_view.OFF_TEXT
+    )
+    assert pin_error_text("local history is locked") == notification_pin_view.LOCKED_TEXT
+    assert pin_error_text(
+        "the running backend cannot pin notifications; restart it after upgrading"
+    ) == notification_pin_view.UNSUPPORTED_TEXT
+    assert pin_error_text("[b]odd[/b]") == notification_pin_view.GENERIC_ERROR_TEXT
+    backend = _PinBackend()
+    backend.pin_error = "at most 20 notifications can be pinned; unpin one first"
+
+    async def scenario() -> None:
+        app = BlueFerryApp(TuiState(backend), monitor_factory=lambda: None)
+        async with app.run_test(size=(120, 40)) as pilot:
+            screen = await _open(app, pilot)
+            await _until(pilot, lambda: len(_items(screen)) == 2)
+            await _highlight(pilot, screen, 1)
+            screen.action_toggle_pin()
+            await _until(
+                pilot, lambda: "pinned list is full" in _text(screen, "#notifications-pin-state"),
+            )
+
+    _run_headless(scenario())
+
+
+def test_rows_of_muted_apps_are_dimmed_and_follow_notification_apps_changed() -> None:
+    backend = _PinBackend(notification_muted_app_count=1)
+    monitor = _AppsMonitor()
+
+    async def scenario() -> None:
+        app = BlueFerryApp(TuiState(backend), monitor_factory=lambda: monitor)
+        async with app.run_test(size=(120, 40)) as pilot:
+            screen = await _open(app, pilot)
+            await _until(pilot, lambda: len(_items(screen)) == 2
+                         and _items(screen)[1].has_class("-dimmed"))
+            backend.apps = {"apps": [], "mute_available": True}
+            monitor.apps_changed = True
+            await _until(pilot, lambda: len(_items(screen)) == 2
+                         and not _items(screen)[1].has_class("-dimmed"))
+            assert backend.app_loads == 2
+
+    _run_headless(scenario())
+
+
+def test_without_pin_keys_the_pin_button_stays_hidden() -> None:
+    backend = _NotificationsBackend()  # an older daemon: no keys
+
+    async def scenario() -> None:
+        app = BlueFerryApp(TuiState(backend), monitor_factory=lambda: None)
+        async with app.run_test(size=(120, 40)) as pilot:
+            screen = await _open(app, pilot)
+            await _until(pilot, lambda: len(_items(screen)) == 1)
+            assert not screen.query_one("#notifications-pin", Button).display
+            screen.action_toggle_pin()  # nothing to pin, nothing happens
+            await pilot.pause(0.1)
+
+    _run_headless(scenario())
+
+
+class _AppsMonitor(_Monitor):
+    def __init__(self) -> None:
+        super().__init__()
+        self.apps_changed = False
+
+    def take_notification_apps_changed(self) -> bool:
+        changed, self.apps_changed = self.apps_changed, False
+        return changed
+
+
+def test_event_monitor_subscribes_to_notification_apps_changed(monkeypatch) -> None:
+    from blueferry import tui as tui_module
+
+    receivers: dict[str, object] = {}
+
+    class _Match:
+        def remove(self) -> None:
+            pass
+
+    class _Bus:
+        def add_signal_receiver(self, handler, *, signal_name, **_kwargs):
+            receivers[signal_name] = handler
+            return _Match()
+
+    monkeypatch.setattr(tui_module, "get_session_bus", lambda: _Bus())
+    monitor = tui_module._EventMonitor()
+    assert not monitor.take_notification_apps_changed()
+    receivers["NotificationAppsChanged"]()
+    assert monitor.take_notification_apps_changed()
+    assert not monitor.take_notification_apps_changed()
     monitor.close()

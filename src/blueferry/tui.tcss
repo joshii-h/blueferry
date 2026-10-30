@@ -835,3 +835,22 @@ ModalScreen {
     height: auto;
     color: #cbd5e1;
 }
+
+#notifications-list {
+    height: 1fr;
+    background: #0d1425;
+}
+
+.notifications-row {
+    height: auto;
+    padding-bottom: 1;
+}
+
+.notifications-row.-dimmed {
+    color: #64748b;
+}
+
+#notifications-pin-state {
+    height: auto;
+    color: #fde68a;
+}

@@ -170,7 +170,9 @@ class _Client(_TetherClient, Protocol):
 
     def send_media_command(self, command: str) -> None: ...
 
-    # Messages1 muted notification apps.
+    # Messages1 notification list pins and muted apps.
+    def set_notification_pinned(self, key: str, pinned: bool) -> bool: ...
+
     def notification_apps(self) -> dict: ...
 
     def set_notification_app_muted(self, app_id: str, muted: bool) -> bool: ...
@@ -731,6 +733,7 @@ class HelpScreen(ModalScreen[None]):
             "[bold #7dd3fc]Settings · diagnostics · restart service[/]  o\n"
             "[bold #7dd3fc]Notification click rules[/]  l\n"
             "[bold #7dd3fc]iPhone overview · iPhone notifications[/]  Ctrl+P\n"
+            "[bold #7dd3fc]Pin or unpin in iPhone notifications[/]  P\n"
             f"{audio_line}"
             "[bold #7dd3fc]Reconnect iPhone[/]  b\n"
             "[bold #7dd3fc]Automatic connection reset on/off[/]  B\n"
@@ -1074,7 +1077,7 @@ class BlueFerryApp(App[None]):
         take_apps = getattr(self._monitor, "take_notification_apps_changed", None)
         if take_apps is not None and take_apps():
             for screen in self.screen_stack:
-                if isinstance(screen, OptionsScreen):
+                if isinstance(screen, NotificationsScreen | OptionsScreen):
                     screen.apps_changed()
         if handle:
             self._pending_open_handle = handle
