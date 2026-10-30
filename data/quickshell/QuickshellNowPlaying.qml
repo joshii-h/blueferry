@@ -79,7 +79,7 @@ RowLayout {
     visible: root.volumeShown
     text: "🔉"
     enabled: root.volume.down_enabled === true
-    Accessible.name: "Volume down"
+    Accessible.name: String(root.volume.down_label || "")
     Accessible.description: String(root.volume.down_tooltip || "")
     ToolTip.visible: hovered && ToolTip.text !== ""
     ToolTip.text: String(root.volume.down_tooltip || "")
@@ -91,7 +91,7 @@ RowLayout {
     visible: root.volumeShown
     text: "🔊"
     enabled: root.volume.up_enabled === true
-    Accessible.name: "Volume up"
+    Accessible.name: String(root.volume.up_label || "")
     Accessible.description: String(root.volume.up_tooltip || "")
     ToolTip.visible: hovered && ToolTip.text !== ""
     ToolTip.text: String(root.volume.up_tooltip || "")

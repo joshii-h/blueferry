@@ -673,6 +673,7 @@ def test_bridge_reduces_now_playing_to_booleans_and_verbatim_text() -> None:
 HIDDEN_VOLUME = {
     "visible": False, "up_enabled": False, "down_enabled": False, "level": None,
     "level_text": "", "up_tooltip": "", "down_tooltip": "",
+    "up_label": "Volume Up", "down_label": "Volume Down",
     "up_command": "volume-up", "down_command": "volume-down",
 }
 
@@ -757,6 +758,7 @@ def test_bridge_shows_the_shared_volume_buttons_inside_the_strip() -> None:
         "level_text": "Volume 40%",
         "up_tooltip": "Turn the iPhone volume up",
         "down_tooltip": "Turn the iPhone volume down",
+        "up_label": "Volume Up", "down_label": "Volume Down",
         "up_command": "volume-up", "down_command": "volume-down",
     }
 
