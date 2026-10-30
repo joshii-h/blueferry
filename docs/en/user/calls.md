@@ -143,7 +143,8 @@ applies, delete those lines while WirePlumber is not running.
 
 ## Muting your microphone during a call
 
-**Mute** in the call view of the Qt, GTK and terminal clients (or
+**Mute** in the call view of the Qt, GTK and terminal clients (the
+terminal's calls panel also takes the `m` key, or
 `blueferry calls mute on|off`) mutes this computer's microphone for the
 running call only: the caller hears nothing, while other applications keep
 recording from the microphone. The mute ends with the call; the next call

@@ -153,7 +153,8 @@ WirePlumber nicht läuft.
 
 ## Mikrofon im Anruf stummschalten
 
-**Stumm** in der Anrufansicht des Qt-, GTK- und Terminal-Clients (oder
+**Stumm** in der Anrufansicht des Qt-, GTK- und Terminal-Clients (im
+Anruf-Panel des Terminals auch die Taste `m`, oder
 `blueferry calls mute on|off`) schaltet das Mikrofon dieses Computers nur für
 den laufenden Anruf stumm: Die Gegenseite hört nichts, andere Anwendungen
 nehmen weiter vom Mikrofon auf. Die Stummschaltung endet mit dem Anruf; der
