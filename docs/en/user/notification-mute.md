@@ -19,8 +19,10 @@ You can also mute an app before it ever sent a notification, by its bundle
 ID. BlueFerry fetches app notifications only while **All iPhone Notifications** is
 selected, so with another policy the list holds only muted apps.
 
-The graphical and terminal clients get the same list under *Settings →
-Notifications* in a separate change; until then use the command line.
+The terminal client has the same list under *Settings → Notifications →
+Muted apps*, with a checkbox per app, and dims the muted apps' entries in
+its notification list. The graphical clients get it in a separate change;
+until then use the command line or the terminal client.
 
 ## What muting does and doesn't do
 

@@ -45,7 +45,8 @@ Pin a notification to keep it: pinned notifications are listed first (the
 most recently pinned on top), stay until you unpin them, and survive a
 restart of the background service — also after the iPhone removed them or
 they dropped out of the last 200. In the clients, use **Pin** / **Unpin** on
-an entry. From a terminal, use the key shown at the end of each line:
+an entry (in the terminal client's **iPhone Notifications**, also `P`).
+From a terminal, use the key shown at the end of each line:
 
 ```bash
 blueferry notifications pin KEY

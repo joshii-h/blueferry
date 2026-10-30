@@ -179,7 +179,7 @@ Hintergrunddienst sie anbietet.
 | Kategorie | Inhalt |
 |---|---|
 | Phone | Zustand des Hintergrunddienstes, **Reconnect** (auch `b`), automatisches Zurücksetzen einer hängenden Verbindung (auch `B`), **Run Diagnostics**, Kontaktabgleich, Kontaktfotos |
-| Notifications | Welche Ereignisse Popups erzeugen, nur Kontakte, **Click Rules** (auch `l`), Mitteilungsinhalt, Aktionsknöpfe, Mitteilungen mit dem iPhone abgleichen, beim Wegklicken als gelesen markieren, letzte iPhone-Mitteilungen behalten |
+| Notifications | Welche Ereignisse Popups erzeugen, nur Kontakte, **Click Rules** (auch `l`), [stummgeschaltete Apps](notification-mute.md), Mitteilungsinhalt, Aktionsknöpfe, Mitteilungen mit dem iPhone abgleichen, beim Wegklicken als gelesen markieren, letzte iPhone-Mitteilungen behalten |
 | Calls & Audio | Telefonate, Anrufliste und Popups für verpasste Anrufe, Akkuwarnung, iPhone-Ton auf diesem Computer (auch `a`), Mediensteuerung und MPRIS |
 | Security | Einmalcodes, Sperre bei Abwesenheit, die Speichereinstellung (nur angezeigt; ändern mit `blueferry storage-policy-set`) |
 | About | Version, der Hintergrunddienst mit **Restart Service**, die Tastenbelegung |
@@ -203,8 +203,13 @@ Terminal-Client noch nicht.
 **iPhone Overview** in der Befehlspalette ist die Telefon-Karte des
 Terminals: der Name des iPhones, die Verbindung, Akku, Empfang und Netz, was
 gerade läuft, und für jede ausgeschaltete optionale Funktion der Schalter,
-der sie einschaltet, samt seiner Kategorie in Settings. Die Knöpfe öffnen die
-Mitteilungsliste, die letzten Anrufe, das Anruf-Panel und Settings.
+der sie einschaltet, samt seiner Kategorie in Settings. Unter der Wiedergabe
+steuern **Volume Down**, **Play/Pause** und **Volume Up** das iPhone, ohne
+die Übersicht zu schließen; außerhalb eines Textfelds ändern auch `-` und
+`+` die Lautstärke. Sie bewegt sich jeweils um eine iPhone-Stufe, und neben
+dem Titel steht der Wert, den das iPhone zuletzt gemeldet hat. Die übrigen
+Knöpfe öffnen die Mitteilungsliste, die letzten Anrufe, das Anruf-Panel und
+Settings.
 
 **iPhone Notifications** (in der Palette und in der Übersicht) listet die
 letzten Mitteilungen von iPhone-Apps, die **Keep recent iPhone
@@ -212,7 +217,12 @@ notifications** behält: App, Zeit und, wenn erlaubt, Titel und Text. Die
 Liste wird nur gelesen, solange sie offen ist, folgt neuen Mitteilungen und
 wird beim Schließen vergessen. Ist sie ausgeschaltet, leer oder nicht
 verfügbar, sagt sie warum; **Open Notification Settings** führt zu
-Settings › Notifications.
+Settings › Notifications. `P` (oder **Pin**) heftet die gewählte Mitteilung
+an oder löst sie; angeheftete stehen oben und sind mit **Pinned** markiert.
+Einträge, die das iPhone entfernt hat, zeigen **Removed on iPhone** und sind
+abgeblendet, ebenso die Einträge von Apps, die unter Settings › Notifications
+› **Muted apps** stummgeschaltet sind; dort hat jede App ihr eigenes
+Kästchen.
 
 Das Anruf-Panel (`c` oder **Phone Calls** in der Palette) beschreibt jeden
 Anruf wie Qt und GTK (eingehend, gehalten, die Dauer). Seine eine Knopfreihe

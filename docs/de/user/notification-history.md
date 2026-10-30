@@ -47,7 +47,8 @@ Heftest du eine Mitteilung an, bleibt sie erhalten: Angeheftete Mitteilungen
 stehen oben (die zuletzt angeheftete zuerst), bleiben, bis du sie wieder
 löst, und überstehen einen Neustart des Hintergrunddienstes – auch wenn das
 iPhone sie entfernt hat oder sie aus den letzten 200 herausgefallen sind. In
-den Clients dient **Pin** / **Unpin** am Eintrag dazu. Im Terminal mit dem
+den Clients dient **Pin** / **Unpin** am Eintrag dazu (in **iPhone
+Notifications** des Terminal-Clients auch `P`). Im Terminal mit dem
 Schlüssel, der am Ende jeder Zeile steht:
 
 ```bash

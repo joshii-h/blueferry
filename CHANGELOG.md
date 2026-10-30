@@ -14,6 +14,12 @@
   `Events1.NotificationAppsChanged` invalidates the list. CLI:
   `blueferry notifications apps|mute|unmute`. The environment allowlist and
   blocklist stay a hard filter in front of it.
+- Terminal client: `-` and `+` step the iPhone volume, the now-playing line
+  shows the reported level, and the iPhone overview has Volume Down,
+  Play/Pause and Volume Up buttons. `P` pins or unpins the selected entry of
+  iPhone Notifications, which marks pinned entries and dims removed ones and
+  those of muted apps. Settings › Notifications › Muted apps mutes single
+  apps with a checkbox each.
 
 ## [0.9.0](https://github.com/erikwb/blueferry/releases/tag/v0.9.0) - 2026-10-27
 

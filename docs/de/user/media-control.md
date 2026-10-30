@@ -83,7 +83,9 @@ Titel, Interpret und den Tasten Zurück/Wiedergabe-Pause/Weiter, solange etwas
 läuft. Der Quickshell-Client zeigt dieselbe Leiste unter seiner Kopfzeile,
 der GTK-Client auf der Telefon-Karte über seinen Reitern und der
 Terminal-Client in einer Zeile unter den Statusanzeigen; dort steuern `p`,
-`[` und `]` Wiedergabe/Pause, Zurück und Weiter. Ist die Option aus, zeigt
+`[` und `]` Wiedergabe/Pause, Zurück und Weiter, und `-` und `+` ändern die
+Lautstärke (seine iPhone-Übersicht hat die Knöpfe Volume Down, Play/Pause und
+Volume Up). Ist die Option aus, zeigt
 keiner davon etwas an und kein Client fragt das Backend.
 
 ```mermaid

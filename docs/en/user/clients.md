@@ -170,7 +170,7 @@ tabs. A setting appears only when the running background service offers it.
 | Category | What you find there |
 |---|---|
 | Phone | Background service state, **Reconnect** (also `b`), resetting a stuck connection automatically (also `B`), **Run Diagnostics**, contact sync, contact photos |
-| Notifications | Which events create popups, contacts only, **Click Rules** (also `l`), notification content, action buttons, sync notifications with iPhone, mark read on dismiss, keeping recent iPhone notifications |
+| Notifications | Which events create popups, contacts only, **Click Rules** (also `l`), [muted apps](notification-mute.md), notification content, action buttons, sync notifications with iPhone, mark read on dismiss, keeping recent iPhone notifications |
 | Calls & Audio | Phone calls, call history and missed-call popups, battery warning, iPhone sound on this computer (also `a`), media control and MPRIS |
 | Security | One-time codes, away lock, the local storage setting (shown; change it with `blueferry storage-policy-set`) |
 | About | Version, the background service with **Restart Service**, the keyboard map |
@@ -192,15 +192,23 @@ or a graphical client; the terminal client has no plugin settings yet.
 **iPhone Overview** in the command palette is the terminal's phone card:
 the iPhone's name, the connection, battery, signal and network, what is
 playing, and for each optional feature that is off the switch that turns it
-on and its Settings category. Its buttons open the notification list, the
-recent calls, the calls panel and Settings.
+on and its Settings category. Under now playing, **Volume Down**,
+**Play/Pause** and **Volume Up** control the iPhone without closing the
+overview; anywhere outside a text field, `-` and `+` step the volume too.
+The volume moves one iPhone step at a time, and the level the iPhone last
+reported is shown next to the title. Its other buttons open the
+notification list, the recent calls, the calls panel and Settings.
 
 **iPhone Notifications** (in the palette and the overview) lists the recent
 iPhone app notifications that **Keep recent iPhone notifications** keeps:
 the app, the time and, if allowed, title and text. It is read only while it
 is open, follows new notifications, and is forgotten when you close it.
 When the list is off, empty or unavailable, it says why; **Open
-Notification Settings** goes to Settings › Notifications.
+Notification Settings** goes to Settings › Notifications. `P` (or **Pin**)
+pins or unpins the selected notification; pinned ones are listed first and
+marked **Pinned**. Entries removed on the iPhone say **Removed on iPhone**
+and are dimmed, and so are the entries of apps muted under Settings ›
+Notifications › **Muted apps**, where each app has its own checkbox.
 
 The calls panel (`c`, or **Phone Calls** in the palette) words each call
 like Qt and GTK (incoming, on hold, the duration). Its one row of buttons
