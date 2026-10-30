@@ -79,8 +79,10 @@ from blueferry.history import (
     history_count,
     mark_event_handles_read,
 )
+from blueferry.limits import MAX_PINNED_NOTIFICATIONS
 from blueferry.media import MediaController, MediaControlSettings
 from blueferry.notification_log import NotificationLog
+from blueferry.notification_pins import PinnedNotificationsStore
 from blueferry.notification_policy import (
     ALL_NOTIFICATIONS,
     NotificationPolicyStore,
@@ -346,9 +348,15 @@ class Daemon:
             on_powered=self.profile_reset.hfp_powered,
         )
         # Opt-in, memory-only list of recent iPhone app notifications.
+        # Pinned records persist in settings.json under the storage policy.
+        # With the list off nothing is retained: stored pins are deleted.
+        pins = PinnedNotificationsStore(storage=self.storage)
+        if not config.NOTIFICATION_HISTORY:
+            pins.clear()
         self.notification_log: NotificationLog | None = (
             NotificationLog(
                 show_content=config.SHOW_NOTIFICATION_CONTENT, idle=GLib.idle_add,
+                pins=pins,
             )
             if config.NOTIFICATION_HISTORY else None
         )
@@ -1725,7 +1733,9 @@ class Daemon:
             removed(notification_id)
 
     def _ancs_removed_on_iphone(self, notification_id: int) -> None:
-        """Opt-in: close the popup of a notification removed on the iPhone."""
+        """Mark the listed record removed; opt-in: close its popup too."""
+        if self.notification_log is not None:
+            self.notification_log.mark_removed(notification_id)
         if not self.notification_policy.mirror_removals:
             return
         removed = getattr(self.events, "ancs_mirror_removed", None)
@@ -1734,7 +1744,10 @@ class Daemon:
 
     def _ancs_session_reset(self) -> None:
         # Always, even with the setting off: switching it on later must never
-        # match a UID of an ended session.
+        # match a UID of an ended session. The notification list detaches
+        # its records of the ended session for the same reason.
+        if self.notification_log is not None:
+            self.notification_log.session_reset()
         reset = getattr(self.events, "ancs_session_reset", None)
         if reset is not None:
             reset()
@@ -1883,6 +1896,7 @@ class Daemon:
             **self._media_status(),
             **self.phone_audio_route.snapshot(),
             "notification_history_enabled": self.notification_log is not None,
+            "notification_pins_max": MAX_PINNED_NOTIFICATIONS,
             **self.audio_preference.snapshot(),
             **self._controller_identity(),
             **self.connectivity.snapshot(),

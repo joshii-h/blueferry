@@ -55,6 +55,7 @@ from blueferry.limits import (
     MAX_EVENT_QUERY_LIMIT,
     MAX_GROUP_CONFIRMATION_TOKEN_CHARS,
     MAX_OUTGOING_BODY_BYTES,
+    MAX_PINNED_NOTIFICATIONS,
     MAX_RECENT_QUERY_LIMIT,
     MAX_THREAD_BODY_CHARS,
     MAX_THREAD_DELETE_COUNT,
@@ -62,6 +63,7 @@ from blueferry.limits import (
     MAX_THREAD_QUERY_LIMIT,
 )
 from blueferry.named_groups import stored_named_group_key
+from blueferry.notification_log import PinLimitError
 from blueferry.notification_open import MAX_ACTIVATION_TOKEN_CHARS, MAX_CLICK_ID_CHARS
 from blueferry.notification_open_map import open_map_entries
 from blueferry.obex.map_query import list_recent_messages
@@ -73,6 +75,7 @@ from blueferry.storage_security import (
     CorruptStorageError,
     StorageSecurity,
     StorageStatus,
+    StorageUnavailableError,
 )
 from blueferry.threads import (
     MESSAGE_KINDS,
@@ -242,6 +245,10 @@ class PhoneAudioControl(Protocol):
 
 class NotificationLog(Protocol):
     def snapshot(self, limit: int) -> list[dict[str, object]]: ...
+
+    def set_pinned(self, key: str, pinned: bool) -> bool: ...
+
+    def forget_pins(self) -> None: ...
 
     def clear(self) -> None: ...
 
@@ -1037,6 +1044,8 @@ class BackendOperations:
                 self.dependencies.starred_threads.clear()
             if self.dependencies.group_routes is not None:
                 self.dependencies.group_routes.clear()
+            if self.dependencies.notification_log is not None:
+                self.dependencies.notification_log.forget_pins()
             self._clear_confirmed_groups()
         return selected
 
@@ -1432,8 +1441,31 @@ class BackendOperations:
         return {
             "enabled": True,
             "content": self.dependencies.notification_content,
+            "pins_max": MAX_PINNED_NOTIFICATIONS,
             "notifications": log_.snapshot(bounded),
         }
+
+    def set_notification_pinned(self, key: str, pinned: bool) -> bool:
+        """Pin or unpin one listed notification by its opaque ``key``."""
+        log_ = self.dependencies.notification_log
+        if log_ is None:
+            raise NotReadyError(
+                "the notification list is off; turn it on with "
+                "'blueferry features on notification_history'"
+            )
+        storage = self.dependencies.storage
+        if storage is not None and not storage.status.can_read:
+            raise NotReadyError(storage.status.detail or "local history is locked")
+        try:
+            return log_.set_pinned(str(key), bool(pinned))
+        except KeyError:
+            raise InvalidArgumentsError(
+                "unknown notification key; refresh the notification list"
+            ) from None
+        except PinLimitError as error:
+            raise InvalidArgumentsError(str(error)) from error
+        except StorageUnavailableError as error:
+            raise NotReadyError(str(error) or "local history is locked") from error
 
     def get_features(self) -> dict[str, dict[str, Any]]:
         """The allowlisted local.env switches and where each value comes from."""
