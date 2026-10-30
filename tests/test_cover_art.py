@@ -249,7 +249,7 @@ def env(tmp_path):
     ("123456", None),
     ("12345678", None),
     ("12345a7", None),
-    ("１２３４５６７", None),  # non-ASCII digits
+    ("\uff11\uff12\uff13\uff14\uff15\uff16\uff17", None),  # fullwidth digits
     ("../../x", None),
     ("1234567\n", None),
     (1234567, None),
@@ -356,7 +356,7 @@ def test_opens_one_session_when_obex_port_known(env):
     art.start()
     assert len(env.obexd.connections) == 1
     conn = env.obexd.connections[0]
-    (_path, iface, method, (mac, options)) = conn.calls[0]
+    (_path, iface, method, (_mac, options)) = conn.calls[0]
     assert (iface, method) == ("org.bluez.obex.Client1", "CreateSession")
     assert options["PSM"].unpack() == 4105
     assert art.session_open
@@ -590,7 +590,7 @@ def test_status_signal_before_reply_is_kept(env):
         if method != "GetThumbnail":
             return original(bus_name, path, interface, method, signature, args,
                             reply_type, on_reply, on_error, timeout=timeout)
-        target, handle = args
+        target, _handle = args
         Path(target).write_bytes(jpeg())
         transfer = f"{conn.session}/transfer9"
         conn.receivers["PropertiesChanged:org.bluez.obex.Transfer1"](
