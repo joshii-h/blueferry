@@ -20,8 +20,9 @@ bottom in a narrow window:
 
 - **Messages**: conversations and the chat.
 - **Calls**: running [phone calls](calls.md) with answer, hold/resume,
-  hang up, keypad tones (0-9, `*`, `#`) for the active call and the sound
-  switch, a dial pad that also searches your
+  hang up, **Decline with message** for a ringing call (a saved reply or
+  your own text), keypad tones (0-9, `*`, `#`) and **Mute** for the active
+  call and the sound switch, a dial pad that also searches your
   contacts by name, and the [call history](call-history.md) grouped by day,
   with All and Missed, call back and message buttons, and **Refresh from
   iPhone**. Every call asks for confirmation first.
@@ -37,7 +38,7 @@ bottom in a narrow window, and the search button finds any setting:
 | --- | --- |
 | Phone | Pairing, connection health with **Reconnect**, **Run Diagnostics** (the same checks as `blueferry doctor`; the report opens in its own dialog with a copy button), pairing report, contact sync, contact photos |
 | Notifications | Which events create popups, contacts only, click rules, notification content, action buttons, sync notifications with iPhone, mark read on dismiss, keeping recent notifications |
-| Calls & Audio | Phone calls, call history, battery warning, [iPhone sound on this computer](phone-audio.md), media control |
+| Calls & Audio | Phone calls, the replies offered when declining a call (add, edit, remove; up to 5), call history, battery warning, [iPhone sound on this computer](phone-audio.md), media control |
 | Security | One-time codes, away lock, local storage and its encryption, Clear History |
 | About | Version, the background service, About BlueFerry, keyboard shortcuts, **Restart Service**, Quit |
 
