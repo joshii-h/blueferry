@@ -25,7 +25,9 @@ flowchart LR
 - Finds the iPhone's oFono modem, powers it up while the Bluetooth Classic
   link is connected, and brings it online (iOS does not do this by itself).
 - Shows a desktop popup for an incoming call with **Answer** and
-  **Decline**. It closes itself when the call stops ringing.
+  **Decline**, and for a caller with a number one more button to decline
+  with a text (see [Declining with a message](#declining-with-a-message)).
+  It closes itself when the call stops ringing.
 - While a call is in progress (answered here or on the iPhone, or an
   outgoing call once connected), a lasting notification shows **Call with**
   the caller, the start time ("since 15:14"), and **Hang up**. On hold it
@@ -147,10 +149,14 @@ like a message written in BlueFerry, and shows up in the conversation.
 
 - The Qt, GTK and terminal clients offer **Decline with message** in the
   call view while a call rings: pick a saved reply or type your own text.
+- The popup of a ringing call gets one extra button. Notification servers
+  that support typed replies (KDE Plasma) show **Reply…** for your own text;
+  others show the first saved reply.
 - Only calls with a number get the choice; withheld or unknown callers can
   only be declined.
 - If the text cannot be sent (for example while the Messages connection is
-  down), BlueFerry says so; the call stays declined.
+  down), BlueFerry says so; the call stays declined. Declined from a popup,
+  a short notification reports it.
 - Saved replies are edited under **Calls & Audio** in the settings: up to 5
   lines of at most 160 characters each. Until you change them, three English
   replies (translated where a translation exists) are offered; with an empty

@@ -28,7 +28,10 @@ flowchart LR
   Bluetooth-Classic-Verbindung steht, und bringt es online (iOS macht das
   nicht von selbst).
 - Zeigt bei einem eingehenden Anruf eine Desktop-Mitteilung mit **Answer**
-  und **Decline**. Sie schließt sich, sobald es nicht mehr klingelt.
+  und **Decline**, bei einem Anrufer mit Nummer zusätzlich einen Knopf zum
+  Ablehnen mit Nachricht (siehe
+  [Ablehnen mit Nachricht](#ablehnen-mit-nachricht)). Sie schließt sich,
+  sobald es nicht mehr klingelt.
 - Während eines Gesprächs (hier oder am iPhone angenommen, oder ein
   ausgehender Anruf, sobald er verbunden ist) bleibt eine Mitteilung
   stehen: **Call with** und der Anrufer, die Startzeit („since 15:14“) und
@@ -160,10 +163,14 @@ und erscheint in der Unterhaltung.
 - Der Qt-, GTK- und Terminal-Client bieten in der Anrufansicht beim Klingeln
   **Decline with message** an: eine gespeicherte Antwort wählen oder einen
   eigenen Text schreiben.
+- Die Mitteilung eines klingelnden Anrufs bekommt einen zusätzlichen Knopf.
+  Mitteilungsserver mit Antwortfeld (KDE Plasma) zeigen **Reply…** für einen
+  eigenen Text, andere die erste gespeicherte Antwort.
 - Nur Anrufe mit Nummer bekommen diese Wahl; unterdrückte oder unbekannte
   Anrufer lassen sich nur ablehnen.
 - Lässt sich der Text nicht senden (etwa ohne Nachrichten-Verbindung), meldet
-  BlueFerry das; der Anruf bleibt abgelehnt.
+  BlueFerry das; der Anruf bleibt abgelehnt. Kam die Ablehnung aus der
+  Mitteilung, meldet das eine kurze Mitteilung.
 - Die gespeicherten Antworten bearbeitest du in den Einstellungen unter
   **Calls & Audio**: bis zu 5 Zeilen mit je höchstens 160 Zeichen. Bis du sie
   änderst, stehen drei englische Antworten bereit (übersetzt, wo es eine

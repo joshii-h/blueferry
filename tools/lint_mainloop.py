@@ -183,6 +183,8 @@ KNOWN_DEBT: dict[tuple[str, str, str], str] = {
     ("blueferry.sinks.libnotify", "LibnotifySink._show_call", "sync-dbus"): _LIBNOTIFY,
     ("blueferry.sinks.libnotify", "LibnotifySink.handle_phone_battery_low", "sync-dbus"):
         _LIBNOTIFY,
+    ("blueferry.sinks.libnotify", "LibnotifySink.handle_call_reply_failed", "sync-dbus"):
+        _LIBNOTIFY,
     ("blueferry.sinks.libnotify", "_notification_hints", "sync-dbus"):
         "list_names per popup to pick the desktop-entry hint; track client names by signal",
 }

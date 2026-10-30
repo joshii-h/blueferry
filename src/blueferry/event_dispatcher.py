@@ -81,7 +81,8 @@ class EventDispatcher:
         contact_photo: Callable[[str | None], str | None] | None = None,
         perform_ancs_action=None,
         ancs_actions_enabled: Callable[[], bool] | None = None,
-        on_call_action: Callable[[str, str], None] | None = None,
+        on_call_action: Callable[..., None] | None = None,
+        quick_replies: Callable[[], list[str]] | None = None,
         plugin_action=None,
         notification_sink_factory: Callable[..., Sink] = LibnotifySink,
         otp_autocopy: Callable[[], bool] | None = None,
@@ -104,6 +105,8 @@ class EventDispatcher:
         self.perform_ancs_action = perform_ancs_action
         self.ancs_actions_enabled = ancs_actions_enabled
         self.on_call_action = on_call_action
+        # The texts a ringing-call popup may offer for declining with a message.
+        self.quick_replies = quick_replies
         # Click on a plugin popup's button (plugin_notify.PluginPopups.invoke).
         self.plugin_action = plugin_action
         self._notification_sink_factory = notification_sink_factory
@@ -253,6 +256,8 @@ class EventDispatcher:
             options["contact_photo"] = self.contact_photo
         if self.plugin_action is not None:
             options["on_plugin_action"] = self.plugin_action
+        if self.quick_replies is not None:
+            options["quick_replies"] = self.quick_replies
         try:
             sink = self._notification_sink_factory(
                 defer_mark_read=self.defer_mark_read,
@@ -360,6 +365,10 @@ class EventDispatcher:
                 handler(*args)
             except Exception:
                 log.exception("sink %s failed in %s", sink.name, method)
+
+    def call_reply_failed(self) -> None:
+        """A call declined from a popup kept its reply unsent; tell the user."""
+        self._fan_out("handle_call_reply_failed")
 
     def notification_policy_changed(self) -> None:
         """Let sinks apply a new notification policy to popups already open."""

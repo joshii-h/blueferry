@@ -677,8 +677,8 @@ What happens then:
   ```
 
 - A ringing call with a caller number can be declined with a text: a saved
-  reply or your own (**Decline with message** in the clients,
-  `blueferry calls decline-with-message`). Up to 5 replies are
+  reply or your own (**Decline with message** in the clients, an extra
+  popup button, `blueferry calls decline-with-message`). Up to 5 replies are
   saved under **Calls & Audio** (`blueferry calls replies`). If the text
   cannot be sent the call stays declined and BlueFerry says so; see
   [Declining with a message](docs/en/user/calls.md#declining-with-a-message).

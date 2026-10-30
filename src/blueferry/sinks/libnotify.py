@@ -164,11 +164,18 @@ _CALL_EXPIRE_MS = 0
 _PHASE_RINGING = "ringing"
 _PHASE_ACTIVE = "active"
 _PHASE_HELD = "held"
+# Declining a ringing call with a text: the first saved reply as a button, or
+# a typed reply on servers with the "inline-reply" capability (KDE Plasma).
+_DECLINE_MESSAGE_ACTION = "decline-message"
+_INLINE_REPLY_ACTION = "inline-reply"
+_REPLY_LABEL_CHARS = 32
+# A typed reply larger than this is ignored (the daemon checks the body too).
+_MAX_INLINE_REPLY_CHARS = 1000
 # Buttons a popup offers in each phase. A click is honored only while the
 # popup still shows that phase, so a late "decline" on a replaced ringing
 # popup cannot end the now-active call.
 _CALL_ACTIONS = {
-    _PHASE_RINGING: frozenset({"answer", "decline"}),
+    _PHASE_RINGING: frozenset({"answer", "decline", "decline-message"}),
     _PHASE_ACTIVE: frozenset({"hangup"}),
     _PHASE_HELD: frozenset({"hangup"}),
 }
@@ -249,11 +256,17 @@ class LibnotifySink:
         ancs_actions_enabled=None,
         on_call_action=None,
         on_plugin_action=None,
+        quick_replies: Callable[[], list[str]] | None = None,
     ) -> None:
         self._defer_mark_read = defer_mark_read
         self._contact_photo = contact_photo
-        # (call_id, "answer" | "decline" | "hangup") from a call popup button.
+        # (call_id, "answer" | "decline" | "hangup") from a call popup button,
+        # or (call_id, "decline-message", text) to decline with a text.
         self._on_call_action = on_call_action
+        # () -> saved replies a ringing popup may offer (none while calls are off).
+        self._quick_replies = quick_replies
+        # call_id -> the reply a ringing popup offers as its button.
+        self._call_reply_texts: dict[str, str] = {}
         # PluginPopup -> None: a click on a plugin popup's button.
         self._on_plugin_action = on_plugin_action
         # desktop notification id -> PluginPopup with an action button.
@@ -286,6 +299,7 @@ class LibnotifySink:
         # Buttons are offered only once the server confirmed the "actions"
         # capability; a server that draws no buttons gets the plain popup.
         self._server_actions = False
+        self._server_inline_reply = False
         self._notif = dbus.Interface(
             get_session_bus().get_object(
                 "org.freedesktop.Notifications",
@@ -330,12 +344,17 @@ class LibnotifySink:
         self._token_match = self._notif.connect_to_signal(
             "ActivationToken", self._on_activation_token,
         )
+        self._reply_match = self._notif.connect_to_signal(
+            "NotificationReplied", self._on_replied,
+        )
         self._query_capabilities()
         log.info("libnotify sink ready (expiring + bidirectional read-sync)")
 
     def _query_capabilities(self) -> None:
         def received(capabilities) -> None:
-            self._server_actions = "actions" in {str(item) for item in capabilities}
+            names = {str(item) for item in capabilities}
+            self._server_actions = "actions" in names
+            self._server_inline_reply = _INLINE_REPLY_ACTION in names
             log.debug(
                 "notification server %s action buttons",
                 "supports" if self._server_actions else "does not support",
@@ -352,7 +371,7 @@ class LibnotifySink:
 
     def close(self) -> None:
         """Release signal watches before a notification-daemon replacement."""
-        for attribute in ("_match", "_action_match", "_token_match"):
+        for attribute in ("_match", "_action_match", "_token_match", "_reply_match"):
             match = getattr(self, attribute, None)
             if match is not None:
                 try:
@@ -383,6 +402,7 @@ class LibnotifySink:
         getattr(self, "_call_popups", {}).clear()
         getattr(self, "_call_shown", {}).clear()
         getattr(self, "_call_starts", {}).clear()
+        getattr(self, "_call_reply_texts", {}).clear()
         getattr(self, "_plugin_popups", {}).clear()
 
     def _policy(self) -> str:
@@ -1068,6 +1088,8 @@ class LibnotifySink:
         notifications, popups = self._call_maps()
         shown, _starts = self._call_state()
         has_callback = getattr(self, "_on_call_action", None) is not None
+        replies = getattr(self, "_call_reply_texts", {})
+        replies.pop(record.call_id, None)
         if phase == _PHASE_RINGING:
             actions = ["answer", "Answer", "decline", "Decline"] if has_callback else []
             hints = {
@@ -1076,6 +1098,8 @@ class LibnotifySink:
                 # "incoming call" entries in the notification history.
                 "transient": dbus.Boolean(True),
             }
+            if has_callback:
+                actions += self._reply_action(record, hints)
         else:
             actions = ["hangup", "Hang up"] if has_callback else []
             hints = {
@@ -1114,6 +1138,71 @@ class LibnotifySink:
             del shown[dropped]
             self._close_call_popup(dropped)
 
+    def _reply_action(self, record: CallRecord, hints: dict) -> list[str]:
+        """The one extra button for declining with a text, if any.
+
+        Only for callers with a number. A server with inline replies gets
+        "Reply…" (the typed text is sent); otherwise the first saved reply
+        is the button. Without saved replies and inline replies: none.
+        """
+        provider = getattr(self, "_quick_replies", None)
+        if not record.number or provider is None:
+            return []
+        if getattr(self, "_server_inline_reply", False):
+            hints["x-kde-reply-placeholder-text"] = "Message to the caller"
+            return [_INLINE_REPLY_ACTION, "Reply…"]
+        try:
+            saved = [text for text in provider() if isinstance(text, str) and text.strip()]
+        except Exception:
+            log.exception("could not read the quick replies")
+            return []
+        if not saved:
+            return []
+        text = saved[0]
+        label = terminal_text(text).replace("\n", " ")
+        if len(label) > _REPLY_LABEL_CHARS:
+            label = label[: _REPLY_LABEL_CHARS - 1].rstrip() + "…"
+        self._call_reply_texts[record.call_id] = text
+        _trim_oldest(self._call_reply_texts, MAX_TRACKED_CALLS)
+        return [_DECLINE_MESSAGE_ACTION, label]
+
+    def _decline_with_message(self, call_id: str, text: str) -> None:
+        callback = getattr(self, "_on_call_action", None)
+        shown = getattr(self, "_call_shown", {}).get(call_id)
+        if callback is None or shown is None or shown.phase != _PHASE_RINGING:
+            return
+        callback(call_id, _DECLINE_MESSAGE_ACTION, text)
+
+    def _on_replied(self, nid, text) -> None:
+        """A typed reply on a ringing popup (servers with inline replies)."""
+        try:
+            nid_i = int(nid)
+        except (TypeError, ValueError):
+            return
+        call_id = getattr(self, "_call_notifications", {}).get(nid_i)
+        reply = str(text).strip() if isinstance(text, str) else ""
+        if call_id is None or not reply or len(reply) > _MAX_INLINE_REPLY_CHARS:
+            return
+        self._decline_with_message(call_id, reply)
+
+    def handle_call_reply_failed(self) -> None:
+        """A call declined from its popup kept the reply unsent."""
+        if self._policy() == NO_NOTIFICATIONS:
+            return
+        try:
+            self._notif.Notify(
+                _APP_NAME,
+                dbus.UInt32(0),
+                "dialog-warning",
+                "\U0001f4de Message not sent",
+                "The call was declined, but the message to the caller was not sent.",
+                dbus.Array([], signature="s"),
+                dbus.Dictionary({"urgency": dbus.Byte(1)}, signature="sv"),
+                dbus.Int32(config.NOTIFICATION_TIMEOUT_MS),
+            )
+        except dbus.exceptions.DBusException as error:
+            log.error("libnotify Notify (call reply) failed: %s", error.get_dbus_name())
+
     def _close_call_popup(self, call_id: str) -> None:
         notifications, popups = self._call_maps()
         nid = popups.pop(call_id, None)
@@ -1124,6 +1213,7 @@ class LibnotifySink:
 
     def _forget_call(self, call_id: str) -> None:
         self._close_call_popup(call_id)
+        getattr(self, "_call_reply_texts", {}).pop(call_id, None)
         shown, starts = self._call_state()
         shown.pop(call_id, None)
         starts.pop(call_id, None)
@@ -1153,6 +1243,7 @@ class LibnotifySink:
         shown, starts = self._call_state()
         shown.clear()
         starts.clear()
+        getattr(self, "_call_reply_texts", {}).clear()
         for nid in stale:
             self._close_async(nid)
 
@@ -1295,7 +1386,11 @@ class LibnotifySink:
             callback = getattr(self, "_on_call_action", None)
             shown = getattr(self, "_call_shown", {}).get(call_id)
             allowed = _CALL_ACTIONS.get(shown.phase, frozenset()) if shown else frozenset()
-            if str(action) in allowed and callback is not None:
+            if str(action) == _DECLINE_MESSAGE_ACTION:
+                text = getattr(self, "_call_reply_texts", {}).get(call_id)
+                if text:
+                    self._decline_with_message(call_id, text)
+            elif str(action) in allowed and callback is not None:
                 callback(call_id, str(action))
             return
         if str(action) == _PLUGIN_ACTION:

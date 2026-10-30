@@ -669,7 +669,10 @@ A change to these rules has to be made in both places.
   caller number, a valid recipient and body), then hangs up through oFono
   and only on success queues the text on the OBEX worker like `Send`, so it
   is recorded in the history. A send that fails afterwards is reported as
-  `DeclinedNotSent`; the call stays declined.
+  `DeclinedNotSent`; the call stays declined. The ringing popup offers one
+  extra action: `inline-reply` ("Reply…") on servers with that capability,
+  otherwise the first saved text; both are honored only while the popup
+  still shows the ringing phase.
 - `calls.controller` only observes and drives oFono on the system bus; BlueZ
   and PipeWire/WirePlumber own the HFP profile and SCO audio. oFono is an
   optional runtime service: `ServiceUnknown` means "unavailable", retried

@@ -323,3 +323,30 @@ def test_settings_view_explains_an_empty_list() -> None:
     assert section["supported"] and section["replies"] == [] and section["can_add"]
     assert "own text" in section["empty"]
     assert view.settings_view({})["supported"] is False
+
+
+# ---- the daemon's popup path ------------------------------------------------
+
+
+def test_popup_decline_with_message_uses_the_backend_and_reports_unsent(make_daemon) -> None:
+    instance = make_daemon()
+    calls: list[tuple] = []
+    announced: list[int] = []
+
+    class Operations:
+        def decline_with_message(self, call_id, text, _success, failure):
+            calls.append((call_id, text))
+            failure(DeclinedNotSentError(RuntimeError("timeout")))
+
+    instance._dbus_service = type("Service", (), {"operations": Operations()})()
+    instance.events.call_reply_failed = lambda: announced.append(1)
+
+    instance._notification_call_action("voicecall01", "decline-message", "Later")
+
+    assert calls == [("voicecall01", "Later")] and announced == [1]
+
+
+def test_popup_replies_are_empty_while_calls_are_off(make_daemon) -> None:
+    instance = make_daemon()
+
+    assert instance._notification_quick_replies() == []

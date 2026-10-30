@@ -13,6 +13,8 @@
   `Calls1.DeclineWithMessage`, `SetCallQuickReplies`,
   `blueferry calls decline-with-message` and `blueferry calls replies`.
   A text that cannot be sent is reported; the call stays declined.
+- The ringing-call popup can decline with a text: **Reply…** on notification
+  servers with inline replies, otherwise the first saved reply.
 
 ## [0.9.0](https://github.com/erikwb/blueferry/releases/tag/v0.9.0) - 2026-10-27
 
