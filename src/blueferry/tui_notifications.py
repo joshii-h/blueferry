@@ -245,9 +245,9 @@ class NotificationsScreen(ModalScreen[str | None]):
                 self._update_view()
 
         def failed(_message: str) -> None:
-            if not self._apps_again:
-                self.muted = frozenset()
-                self._update_view()
+            # Keep the rows dimmed as last known: an unreadable answer is
+            # no reason to show every app as unmuted.
+            pass
 
         def finished() -> None:
             self._apps_loading = False

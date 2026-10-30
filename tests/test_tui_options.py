@@ -790,9 +790,12 @@ class _MuteBackend(_OptionsBackend):
         ]
         self.app_loads = 0
         self.mute_error: str | None = None
+        self.apps_error: str | None = None
 
     def notification_apps(self) -> dict:
         self.app_loads += 1
+        if self.apps_error:
+            raise BackendError(self.apps_error)
         return {
             "apps": [dict(app) for app in self.apps], "max_muted": 100,
             "mute_available": True, "all_notifications": True,
@@ -891,5 +894,40 @@ def test_notification_apps_changed_reloads_the_open_list() -> None:
             monitor.changed = True
             await _until(pilot, lambda: len(_mute_boxes(screen)) == 3)
             assert backend.app_loads == loads + 1
+
+    asyncio.run(scenario())
+
+
+def test_a_failed_app_list_keeps_the_last_answer_and_only_shows_the_error() -> None:
+    from blueferry import notification_apps_view
+
+    locked = notification_apps_view.apps_hint({"mute_available": False})
+    assert "locked" in locked
+
+    async def scenario() -> None:
+        backend = _MuteBackend()
+        backend.apps_error = "first read failed"
+        app = _app(backend)
+        async with app.run_test(size=(120, 60)) as pilot:
+            screen = await _open(app, pilot, "notifications")
+            # The first read fails: no list, no "storage locked" hint, no retry loop.
+            await _until(pilot, lambda: "first read failed" in _plain(screen, "#options-error"))
+            await pilot.pause(0.2)
+            hint = screen.query_one("#options-muted-apps-hint")
+            assert screen.apps is None and not hint.display
+            assert locked not in _plain(screen, "#options-muted-apps-hint")
+            assert backend.app_loads == 1
+
+            backend.apps_error = None
+            screen.apps_changed()
+            await _until(pilot, lambda: len(_mute_boxes(screen)) == 2)
+
+            # A later failure keeps the list the user already sees.
+            backend.apps_error = "read failed again"
+            screen.apps_changed()
+            await _until(pilot, lambda: "read failed again" in _plain(screen, "#options-error"))
+            assert len(_mute_boxes(screen)) == 2
+            assert _mute_boxes(screen)["com.example.mail"].value is True
+            assert locked not in _plain(screen, "#options-muted-apps-hint")
 
     asyncio.run(scenario())

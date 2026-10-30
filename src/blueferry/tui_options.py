@@ -492,6 +492,9 @@ class OptionsScreen(ModalScreen[None]):
         self.muting: dict[str, bool] = {}
         self._apps_loading = False
         self._apps_again = False
+        # The last ListNotificationApps failed: keep the earlier answer (or
+        # none) and show only the error, never an empty "locked" list.
+        self._apps_failed = False
         self._apps_shown: tuple[str, ...] | None = None
         self._apps_tasks = TextualTaskRunner(self, group="options-apps")
         self._status_timer = TextualTimer(self, self.load_status)
@@ -746,10 +749,11 @@ class OptionsScreen(ModalScreen[None]):
         def loaded(value: object) -> None:
             if not self._apps_again:
                 self.apps = notification_apps_view.normalize(value)
+                self._apps_failed = False
 
         def failed(message: str) -> None:
             if not self._apps_again:
-                self.apps = notification_apps_view.normalize({})
+                self._apps_failed = True
                 self.error = _one_line(notification_apps_view.change_failed_text(message))
 
         def finished() -> None:
@@ -766,12 +770,15 @@ class OptionsScreen(ModalScreen[None]):
         group.display = supported = self._apps_supported()
         if not supported:
             return
-        if self.apps is None:
-            if not self._apps_loading:
-                self.load_apps()
-            self.query_one("#options-muted-apps-hint", Static).update(_("Loading…"))
-            return
         hint = self.query_one("#options-muted-apps-hint", Static)
+        if self.apps is None:
+            # After a failure the error says why; NotificationAppsChanged or
+            # reopening the options reads the list again.
+            if not self._apps_loading and not self._apps_failed:
+                self.load_apps()
+            hint.update(Text(_("Loading…")))
+            hint.display = not self._apps_failed
+            return
         text = notification_apps_view.apps_hint(self.apps)
         hint.update(Text(_one_line(text)))
         hint.display = bool(text)

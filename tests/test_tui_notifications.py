@@ -274,6 +274,7 @@ class _PinBackend(_NotificationsBackend):
         ]
         self.pinned: list[tuple[str, bool]] = []
         self.pin_error: str | None = None
+        self.apps_error: str | None = None
         self.apps = {"apps": [{"app_id": "com.example.chat", "muted": True}],
                      "mute_available": True}
         self.app_loads = 0
@@ -294,6 +295,8 @@ class _PinBackend(_NotificationsBackend):
 
     def notification_apps(self) -> dict:
         self.app_loads += 1
+        if self.apps_error:
+            raise BackendError(self.apps_error)
         return self.apps
 
 
@@ -387,6 +390,26 @@ def test_a_failed_pin_explains_itself_as_plain_text() -> None:
             await _until(
                 pilot, lambda: "pinned list is full" in _text(screen, "#notifications-pin-state"),
             )
+
+    _run_headless(scenario())
+
+
+def test_a_failed_app_list_keeps_muted_rows_dimmed() -> None:
+    backend = _PinBackend(notification_muted_app_count=1)
+    monitor = _AppsMonitor()
+
+    async def scenario() -> None:
+        app = BlueFerryApp(TuiState(backend), monitor_factory=lambda: monitor)
+        async with app.run_test(size=(120, 40)) as pilot:
+            screen = await _open(app, pilot)
+            await _until(pilot, lambda: len(_items(screen)) == 2
+                         and _items(screen)[1].has_class("-dimmed"))
+            backend.apps_error = "storage locked"
+            monitor.apps_changed = True
+            await _until(pilot, lambda: backend.app_loads == 2)
+            await pilot.pause(0.2)
+            assert screen.muted == frozenset({"com.example.chat"})
+            assert _items(screen)[1].has_class("-dimmed")
 
     _run_headless(scenario())
 
