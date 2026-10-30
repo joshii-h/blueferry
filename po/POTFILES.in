@@ -79,3 +79,4 @@ src/blueferry/tui_notifications.py
 src/blueferry/tui_phone.py
 src/blueferry/phone_audio_view.py
 src/blueferry/media_volume_view.py
+src/blueferry/notification_apps_view.py
