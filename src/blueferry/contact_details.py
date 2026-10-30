@@ -318,3 +318,81 @@ def parse_card_details(body: str) -> ContactDetails:
         tuple(phones), tuple(emails), tuple(addresses), organization, title,
     )
 
+
+# ---- D-Bus documents ----------------------------------------------------------
+
+def _phone_rows(record_phones: Iterable[str], details: ContactDetails) -> list[dict[str, str]]:
+    if details.phones:
+        return [
+            {"kind": item.kind, "label": item.label, "value": item.value, "number": item.number}
+            for item in details.phones
+        ]
+    # Cards cached without details (plaintext cache, or synced by an older
+    # version): the normalized numbers are all there is.
+    return [
+        {"kind": "other", "label": "", "value": phone, "number": phone}
+        for phone in record_phones
+    ]
+
+
+def _email_rows(record_emails: Iterable[str], details: ContactDetails) -> list[dict[str, str]]:
+    if details.emails:
+        return [
+            {"kind": item.kind, "label": item.label, "value": item.value}
+            for item in details.emails
+        ]
+    return [{"kind": "other", "label": "", "value": email} for email in record_emails]
+
+
+def card_summary(
+    card_id: str,
+    name: str | None,
+    phones: Iterable[str],
+    emails: Iterable[str],
+    details: ContactDetails,
+    *,
+    has_photo: bool,
+) -> dict[str, Any]:
+    """One ``ListContactCards`` row: enough for a list, no photo bytes."""
+    phone_rows = _phone_rows(phones, details)
+    email_rows = _email_rows(emails, details)
+    primary = phone_rows[0]["value"] if phone_rows else (
+        email_rows[0]["value"] if email_rows else ""
+    )
+    return {
+        "id": card_id,
+        "name": name or "",
+        "organization": details.organization,
+        "primary": primary,
+        "phone_count": len(phone_rows),
+        "email_count": len(email_rows),
+        "address_count": len(details.addresses),
+        "has_photo": has_photo,
+    }
+
+
+def card_document(
+    card_id: str,
+    name: str | None,
+    phones: Iterable[str],
+    emails: Iterable[str],
+    details: ContactDetails,
+    *,
+    has_photo: bool,
+    photo_retry: bool = False,
+) -> dict[str, Any]:
+    """The ``GetContact`` document; the photo travels separately as bytes."""
+    return {
+        "id": card_id,
+        "name": name or "",
+        "organization": details.organization,
+        "title": details.title,
+        "phones": _phone_rows(phones, details),
+        "emails": _email_rows(emails, details),
+        "addresses": [
+            {"kind": item.kind, "label": item.label, **item.fields()}
+            for item in details.addresses
+        ],
+        "has_photo": has_photo,
+        "photo_retry": photo_retry,
+    }

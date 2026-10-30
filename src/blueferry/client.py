@@ -88,6 +88,18 @@ def _open_map_error(error: Exception) -> BackendError:
     return BackendError(_dbus_message(error))
 
 
+def _contact_cards_error(error: Exception) -> BackendError:
+    if (
+        isinstance(error, dbus.exceptions.DBusException)
+        and error.get_dbus_name() == "org.freedesktop.DBus.Error.UnknownMethod"
+    ):
+        return BackendError(
+            "the running backend cannot show contact cards; "
+            "restart it after upgrading"
+        )
+    return BackendError(_dbus_message(error))
+
+
 class TetherUnsupportedError(BackendError):
     """The running daemon does not export the optional Tether1 interface."""
 
@@ -301,6 +313,35 @@ class BackendClient:
                 if isinstance(error, dbus.exceptions.DBusException)
                 else str(error)
             ) from error
+
+    def contact_cards(
+        self, offset: int = 0, limit: int = MAX_CONTACT_PAGE, query: str = "",
+    ) -> dict:
+        """``ListContactCards``: one page of cards with ids, optionally filtered.
+
+        Shape it with ``blueferry.contacts_view`` for display.
+        """
+        try:
+            return decode_mapping(self._iface(MESSAGES_IFACE).ListContactCards(
+                dbus.UInt32(max(0, offset)), dbus.UInt32(max(0, limit)), query,
+                timeout=CONTACT_CALL_TIMEOUT_SEC,
+            ))
+        except (dbus.exceptions.DBusException, ValueError) as error:
+            raise _contact_cards_error(error) from error
+
+    def contact(self, contact_id: str) -> tuple[dict, bytes]:
+        """``GetContact``: every detail of one card and its photo bytes.
+
+        The photo is checked like :meth:`contact_photo`; decode it only with a
+        hardened image loader.
+        """
+        try:
+            document, photo = self._iface(MESSAGES_IFACE).GetContact(
+                contact_id, timeout=CONTACT_CALL_TIMEOUT_SEC, byte_arrays=True,
+            )
+            return decode_mapping(document), valid_photo(bytes(photo)) or b""
+        except (dbus.exceptions.DBusException, ValueError) as error:
+            raise _contact_cards_error(error) from error
 
     def contact_photo(self, address: str) -> bytes:
         """Raw avatar bytes for one address, or ``b""`` when none is available.

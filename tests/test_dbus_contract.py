@@ -147,3 +147,13 @@ def test_call_errors_map_to_their_documented_names() -> None:
     failed = MessagesService._dbus_error(OperationFailedError("Call", RuntimeError("+4179 secret")))
     assert failed.get_dbus_name() == "io.weirdware.BlueFerry.Error.CallFailed"
     assert "+4179" not in failed.get_dbus_message()
+
+
+def test_contact_card_methods_page_and_return_the_photo_as_bytes() -> None:
+    methods = _exported(MESSAGES_IFACE, "_dbus_is_method")
+    assert methods["ListContactCards"]._dbus_in_signature == "uus"
+    assert methods["ListContactCards"]._dbus_out_signature == "s"
+    assert methods["GetContact"]._dbus_in_signature == "s"
+    assert methods["GetContact"]._dbus_out_signature == "say"
+    # The older address-grouped enumeration keeps its signature.
+    assert methods["ListContacts"]._dbus_in_signature == "uu"

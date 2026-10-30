@@ -244,6 +244,30 @@ class MessagesService(dbus.service.Object):
         ))
 
     @dbus.service.method(
+        IFACE, in_signature="uus", out_signature="s", sender_keyword="sender"
+    )
+    def ListContactCards(self, offset: int, limit: int, query: str, sender=None) -> str:
+        """One page of contact cards (ids, names, counts), optionally filtered."""
+        return self._sync(lambda: self._authorized(
+            sender, "read",
+            lambda: self._json_response(
+                self.operations.list_contact_cards(offset, limit, str(query))
+            ),
+        ))
+
+    @dbus.service.method(
+        IFACE, in_signature="s", out_signature="say", sender_keyword="sender"
+    )
+    def GetContact(self, contact_id: str, sender=None) -> tuple[str, dbus.ByteArray]:
+        """Every detail of one contact card as JSON, plus its photo bytes."""
+        def card() -> tuple[str, dbus.ByteArray]:
+            document, photo = self.operations.contact_card(str(contact_id))
+            return self._json_response(document), dbus.ByteArray(photo)
+
+        # Charged like GetContactPhoto: the reply can carry a decrypted photo.
+        return self._sync(lambda: self._authorized(sender, "contact-photo", card))
+
+    @dbus.service.method(
         IFACE, in_signature="s", out_signature="ay", sender_keyword="sender"
     )
     def GetContactPhoto(self, address: str, sender=None) -> dbus.ByteArray:

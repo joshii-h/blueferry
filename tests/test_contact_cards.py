@@ -1,4 +1,4 @@
-"""Contact cards: vCard details, sealed storage, ids and paging."""
+"""Contact cards: vCard details, sealed storage, ids, paging and operations."""
 from __future__ import annotations
 
 import json
@@ -8,6 +8,7 @@ from contextlib import closing
 import pytest
 
 from blueferry import config
+from blueferry.backend_operations import BackendDependencies, BackendOperations
 from blueferry.contact_details import (
     EMPTY,
     ContactDetails,
@@ -15,8 +16,9 @@ from blueferry.contact_details import (
     PostalAddress,
     parse_card_details,
 )
-from blueferry.contact_repository import ContactRepository
+from blueferry.contact_repository import ContactRepository, PhotoStoreBusy
 from blueferry.contacts import ContactsResolver, _parse_vcard_records
+from blueferry.errors import InvalidArgumentsError, NotFoundError, NotReadyError
 from blueferry.limits import (
     MAX_CONTACT_ADDRESSES_PER_CARD,
     MAX_CONTACT_DETAIL_CHARS,
@@ -223,3 +225,97 @@ def test_snapshot_keeps_cards() -> None:
     copy = resolver.snapshot()
     assert copy.cards(query="research")[0] == 1
     assert copy.card(resolver.cards()[1][0][0]) is not None
+
+
+# ---- operations ------------------------------------------------------------------
+
+class _Sessions:
+    map = object()
+    pbap = object()
+    map_path = "/session/map"
+
+    @staticmethod
+    def report_error(_error):
+        pass
+
+
+def _operations(storage, *, photos=False) -> BackendOperations:
+    resolver = ContactsResolver(storage=storage, photos=lambda: photos)
+    return BackendOperations(
+        _Sessions(), BackendDependencies(contacts=resolver, contact_photos=photos),
+    )
+
+
+def test_list_contact_cards_pages_without_photo_bytes(storage) -> None:
+    _store(storage, photos=[JPEG, None])
+    operations = _operations(storage, photos=True)
+    page = operations.list_contact_cards(0, 1, "")
+    assert page["total"] == 2 and page["offset"] == 0 and page["query"] == ""
+    [row] = page["contacts"]
+    assert row == {
+        "id": row["id"], "name": "Alice Example", "organization": "Example Corp, Research",
+        "primary": "+1 (555) 111-2222", "phone_count": 5, "email_count": 2,
+        "address_count": 2, "has_photo": True,
+    }
+    assert "photo" not in json.dumps(page).replace("has_photo", "")
+    assert operations.list_contact_cards(1, 10, "")["contacts"][0]["has_photo"] is False
+    assert operations.list_contact_cards(0, 10, " bob   other ")["query"] == "bob other"
+    assert operations.status()["contact_card_count"] == 2
+    with pytest.raises(InvalidArgumentsError):
+        operations.list_contact_cards(0, 10, "x" * 300)
+
+
+def test_get_contact_returns_details_and_photo(storage) -> None:
+    _store(storage, photos=[JPEG, None])
+    operations = _operations(storage, photos=True)
+    alice_id = operations.list_contact_cards(0, 1, "")["contacts"][0]["id"]
+    document, photo = operations.contact_card(alice_id)
+    assert photo == JPEG and document["has_photo"] is True and document["photo_retry"] is False
+    assert document["title"] == "Chief, Tester"
+    assert document["phones"][0] == {
+        "kind": "mobile", "label": "", "value": "+1 (555) 111-2222", "number": "+15551112222",
+    }
+    assert document["emails"][1] == {"kind": "home", "label": "", "value": "alice@home.example"}
+    assert document["addresses"][1]["label"] == "Cabin"
+    assert document["addresses"][0]["street"] == "1 Main St\nBack door"
+    with pytest.raises(NotFoundError):
+        operations.contact_card("0" * 18)
+    with pytest.raises(InvalidArgumentsError):
+        operations.contact_card(" ")
+    # Photos off: the same card, no bytes, no photo flag.
+    document, photo = _operations(storage).contact_card(alice_id)
+    assert photo == b"" and document["has_photo"] is False
+
+
+def test_get_contact_reports_a_busy_photo_store_as_retry(storage, monkeypatch) -> None:
+    _store(storage, photos=[JPEG, None])
+    operations = _operations(storage, photos=True)
+    alice_id = operations.list_contact_cards(0, 1, "")["contacts"][0]["id"]
+
+    def busy(_self, _ref):
+        raise PhotoStoreBusy("locked")
+
+    monkeypatch.setattr(ContactsResolver, "load_photo", busy)
+    document, photo = operations.contact_card(alice_id)
+    assert photo == b"" and document["photo_retry"] is True and document["has_photo"] is True
+
+
+def test_legacy_cards_fall_back_to_the_messaging_addresses(storage) -> None:
+    ContactRepository(storage).replace([("Old", ["15551112222"], ["old@example.com"])])
+    operations = _operations(storage)
+    old_id = operations.list_contact_cards(0, 5, "")["contacts"][0]["id"]
+    document, _photo = operations.contact_card(old_id)
+    assert document["phones"] == [
+        {"kind": "other", "label": "", "value": "15551112222", "number": "15551112222"},
+    ]
+    assert document["emails"] == [{"kind": "other", "label": "", "value": "old@example.com"}]
+    assert document["addresses"] == []
+
+
+def test_card_methods_need_a_contact_cache() -> None:
+    operations = BackendOperations(_Sessions())
+    with pytest.raises(NotReadyError):
+        operations.list_contact_cards(0, 5, "")
+    with pytest.raises(NotReadyError):
+        operations.contact_card("0" * 18)
+    assert "contact_card_count" not in operations.status()

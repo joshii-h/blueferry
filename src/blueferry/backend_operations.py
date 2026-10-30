@@ -16,6 +16,7 @@ from typing import Any, Protocol
 
 from blueferry.call_history import CallRecord, resolve_contact_name
 from blueferry.call_history_repository import clear_call_history
+from blueferry.contact_details import ContactDetails, card_document, card_summary
 from blueferry.contact_repository import PhotoStoreBusy
 from blueferry.contacts import clear_contact_cache
 from blueferry.errors import (
@@ -45,6 +46,7 @@ from blueferry.history import (
 from blueferry.limits import (
     MAX_CALL_HISTORY_QUERY_LIMIT,
     MAX_CONTACT_ADDRESS_CHARS,
+    MAX_CONTACT_ID_CHARS,
     MAX_CONTACT_PAGE,
     MAX_CONTACT_QUERY_CHARS,
     MAX_CONTACT_RESULTS,
@@ -121,6 +123,20 @@ class ContactIndex(Protocol):
     def photo(self, address: str | None) -> bytes | None: ...
 
     def refresh(self) -> int: ...
+
+    def card_count(self) -> int: ...
+
+    def cards(
+        self, offset: int = 0, limit: int | None = None, query: str = "",
+    ) -> tuple[int, list[tuple[str, tuple[str | None, list[str], list[str]],
+                               ContactDetails, int | None]]]: ...
+
+    def card(
+        self, card_id: str,
+    ) -> tuple[str, tuple[str | None, list[str], list[str]],
+               ContactDetails, int | None] | None: ...
+
+    def load_photo(self, ref: int) -> bytes | None: ...
 
 
 class NotificationPolicy(Protocol):
@@ -692,6 +708,63 @@ class BackendOperations:
             )
         ]
 
+    def list_contact_cards(self, offset: int, limit: int, query: str) -> dict[str, Any]:
+        """One page of contact cards with stable per-run ids, optionally filtered.
+
+        Rows carry no photo bytes; ``has_photo`` says whether ``GetContact``
+        will return one.
+        """
+        selected = " ".join(str(query).split())
+        if len(selected) > MAX_CONTACT_QUERY_CHARS:
+            raise InvalidArgumentsError("contact query is too long")
+        contacts = self.dependencies.contacts
+        if contacts is None:
+            raise NotReadyError("contact cache is unavailable")
+        start = max(0, int(offset))
+        total, page = contacts.cards(start, max(1, min(int(limit), MAX_CONTACT_PAGE)), selected)
+        photos = self._contact_photos_enabled()
+        return {
+            "contacts": [
+                card_summary(
+                    card_id, name, phones, emails, details,
+                    has_photo=photos and photo is not None,
+                )
+                for card_id, (name, phones, emails), details, photo in page
+            ],
+            "total": total,
+            "offset": start,
+            "query": selected,
+        }
+
+    def contact_card(self, contact_id: str) -> tuple[dict[str, Any], bytes]:
+        """Every detail of one card and its photo (empty bytes without one).
+
+        Unknown ids, including ids from before a sync that changed the card,
+        raise NotFound so a client reloads its list.
+        """
+        selected = str(contact_id).strip()
+        if not selected or len(selected) > MAX_CONTACT_ID_CHARS:
+            raise InvalidArgumentsError("contact id is empty or too long")
+        contacts = self.dependencies.contacts
+        if contacts is None:
+            raise NotReadyError("contact cache is unavailable")
+        found = contacts.card(selected)
+        if found is None:
+            raise NotFoundError("contact is no longer in the contact cache")
+        card_id, (name, phones, emails), details, ref = found
+        has_photo = self._contact_photos_enabled() and ref is not None
+        photo, retry = b"", False
+        if has_photo and ref is not None:
+            try:
+                photo = contacts.load_photo(ref) or b""
+            except PhotoStoreBusy:
+                # A sync holds the database; the details are still current.
+                retry = True
+        return card_document(
+            card_id, name, phones, emails, details,
+            has_photo=has_photo and (bool(photo) or retry), photo_retry=retry,
+        ), photo
+
     def contact_photo(self, address: str) -> bytes:
         """Return the validated photo of the one contact owning ``address``.
 
@@ -811,6 +884,10 @@ class BackendOperations:
             "mirror_iphone_removals": self.get_mirror_notification_removals(),
             "contact_photos": self._contact_photos_enabled(),
         }
+        card_count = getattr(self.dependencies.contacts, "card_count", None)
+        if callable(card_count):
+            # Also the capability marker for ListContactCards and GetContact.
+            status["contact_card_count"] = card_count()
         if self.dependencies.notification_policy is not None:
             # Also the capability marker: daemons without click rules lack it.
             status["notification_open_map_revision"] = self._open_map_revision

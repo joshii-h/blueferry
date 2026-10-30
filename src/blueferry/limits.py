@@ -67,6 +67,8 @@ MAX_CONTACT_RESULTS = 100
 # card with many long addresses runs to tens of kilobytes, so keep the page
 # small enough that a full page stays far inside the reply cap.
 MAX_CONTACT_PAGE = 150
+# Contact card ids are short hex digests (see contacts._card_id).
+MAX_CONTACT_ID_CHARS = 64
 MAX_DBUS_JSON_BYTES = 8 * 1024 * 1024
 
 # Long-lived daemon queues and subscriptions must remain bounded even if a
