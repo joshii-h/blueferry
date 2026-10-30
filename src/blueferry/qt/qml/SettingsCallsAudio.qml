@@ -5,8 +5,8 @@ import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
-// Settings > Calls & Audio: hands-free calls and their speaker and
-// microphone, call history, missed-call
+// Settings > Calls & Audio: hands-free calls, their speaker and
+// microphone and the replies for declining with a message, call history, missed-call
 // popups, where the iPhone's sound plays, media control.
 ColumnLayout {
     id: section
@@ -34,6 +34,17 @@ ColumnLayout {
         active: section.bridge.status.calls_audio_output !== undefined
         visible: active
         sourceComponent: CallAudioSettings {
+            bridge: section.bridge
+        }
+    }
+    // Replies for "Decline with message"; only while calls are on and the
+    // daemon reports the saved list.
+    Loader {
+        objectName: "quickReplyLoader"
+        Layout.fillWidth: true
+        active: section.bridge.status.calls_quick_replies !== undefined
+        visible: active
+        sourceComponent: QuickReplySettings {
             bridge: section.bridge
         }
     }

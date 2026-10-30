@@ -911,6 +911,31 @@ def settings_window(qml_engine):
             function declineCallWithMessage(callId, text) {
                 record("declineCallWithMessage", [callId, text]);
             }
+            function quickReplySettingsView(status) {
+                const replies = status.calls_quick_replies || [];
+                return {supported: status.calls_quick_replies !== undefined,
+                        label: "Replies when declining a call", hint: "Offered when you decline.",
+                        replies: replies, can_add: replies.length < 5, add_label: "Add reply",
+                        empty: "No saved replies: declining offers only your own text."};
+            }
+            function quickReplyError(text, editing) {
+                const value = String(text || "").trim();
+                const replies = status.calls_quick_replies || [];
+                if (value === "") return "A reply cannot be empty.";
+                if (replies.some((r, i) => i !== editing && r === value)) return "This reply already exists.";
+                return "";
+            }
+            function addQuickReply(text) {
+                const problem = quickReplyError(text, -1);
+                if (problem === "") record("addQuickReply", [text]);
+                return problem;
+            }
+            function replaceQuickReply(index, text) {
+                const problem = quickReplyError(text, index);
+                if (problem === "") record("replaceQuickReply", [index, text]);
+                return problem;
+            }
+            function removeQuickReply(index) { record("removeQuickReply", [index]); }
             function loadCallAudioDevices() { record("loadCallAudioDevices", []); }
             function setCallAudioDevice(direction, name) { record("setCallAudioDevice", [direction, name]); }
             function setCallAudioDeviceForCall(direction, name) {
@@ -5003,6 +5028,73 @@ def test_ringing_call_is_declined_with_a_saved_or_typed_message(qml_engine, sett
     assert notice.property("visible") is True, "the next notice shows again"
     bridge.setProperty("phoneCalls", [])
     QGuiApplication.processEvents()
+
+
+def test_saved_replies_are_listed_added_edited_and_removed(qml_engine, settings_window):
+    window, bridge = settings_window
+    bridge.setProperty("status", {"daemon": True, "calls_enabled": True})
+    _open_category(qml_engine, window, "calls")
+    assert _find(window, "quickReplySettings") is None  # older or calls-off daemon
+
+    bridge.setProperty("status", {"daemon": True, "calls_enabled": True,
+                                  "calls_quick_replies": []})
+    QGuiApplication.processEvents()
+    empty = _settings_object(window, "quickReplyEmpty")
+    assert empty.property("visible") is True
+    assert empty.property("text") == "No saved replies: declining offers only your own text."
+
+    bridge.setProperty("status", {"daemon": True, "calls_enabled": True,
+                                  "calls_quick_replies": ["<b>Later</b>", "Busy"]})
+    QGuiApplication.processEvents()
+    assert empty.property("visible") is False
+    first = _settings_object(window, "quickReplyText0")
+    assert first.property("text") == "<b>Later</b>"
+    qml_engine.globalObject().setProperty("quickReplyLabel", qml_engine.newQObject(first))
+    assert _evaluate(qml_engine, "Number(quickReplyLabel.textFormat)") == 0  # PlainText
+
+    add_field = _settings_object(window, "quickReplyAddField")
+    add = _settings_object(window, "quickReplyAdd")
+    add_field.setProperty("text", "Busy")
+    QGuiApplication.processEvents()
+    assert add.property("enabled") is False
+    assert _settings_object(window, "quickReplyAddError").property("text") == \
+        "This reply already exists."
+    add_field.setProperty("text", "On my way")
+    QGuiApplication.processEvents()
+    assert add.property("enabled") is True
+    QMetaObject.invokeMethod(add, "clicked")
+    QGuiApplication.processEvents()
+    assert _recorded(qml_engine)[-1] == {"method": "addQuickReply", "args": ["On my way"]}
+    assert add_field.property("text") == ""
+
+    QMetaObject.invokeMethod(_settings_object(window, "quickReplyEdit1"), "clicked")
+    QGuiApplication.processEvents()
+    edit = _settings_object(window, "quickReplyEditField1")
+    save = _settings_object(window, "quickReplySave1")
+    assert edit.property("visible") is True and edit.property("text") == "Busy"
+    edit.setProperty("text", "")
+    QMetaObject.invokeMethod(edit, "textEdited")
+    QGuiApplication.processEvents()
+    assert save.property("enabled") is False
+    assert _settings_object(window, "quickReplyEditError1").property("text") == \
+        "A reply cannot be empty."
+    edit.setProperty("text", "Busy, sorry")
+    QMetaObject.invokeMethod(edit, "textEdited")
+    QGuiApplication.processEvents()
+    QMetaObject.invokeMethod(save, "clicked")
+    QGuiApplication.processEvents()
+    assert _recorded(qml_engine)[-1] == {"method": "replaceQuickReply", "args": [1, "Busy, sorry"]}
+    assert edit.property("visible") is False
+
+    QMetaObject.invokeMethod(_settings_object(window, "quickReplyRemove0"), "clicked")
+    QGuiApplication.processEvents()
+    assert _recorded(qml_engine)[-1] == {"method": "removeQuickReply", "args": [0]}
+
+    bridge.setProperty("status", {"daemon": True, "calls_enabled": True,
+                                  "calls_quick_replies": ["1", "2", "3", "4", "5"]})
+    QGuiApplication.processEvents()
+    assert _settings_object(window, "quickReplyAdd").property("visible") is False
+    _evaluate(qml_engine, "testWindow.closePhoneSettings()")
 
 
 def _recorded_calls(engine):
