@@ -758,6 +758,14 @@ class BridgeController(QObject):
 
     def _set_now_playing(self, value: object) -> None:
         snapshot = dict(value) if isinstance(value, dict) else {}
+        # AVRCP cover art: an absolute path of an owner-only cache file.
+        # QML gets a proper file URL (spaces, non-ASCII home directories).
+        cover = snapshot.pop("cover", None)
+        if isinstance(cover, str) and cover.startswith("/") and "\0" not in cover:
+            from PySide6.QtCore import QUrl
+
+            snapshot["cover_url"] = QUrl.fromLocalFile(cover).toString(
+                QUrl.ComponentFormattingOption.FullyEncoded)
         if snapshot != self._now_playing:
             self._now_playing = snapshot
             self.nowPlayingChanged.emit()
