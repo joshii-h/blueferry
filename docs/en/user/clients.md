@@ -194,7 +194,8 @@ the iPhone's name, the connection, battery, signal and network, what is
 playing, and for each optional feature that is off the switch that turns it
 on and its Settings category. Under now playing, **Volume Down**,
 **Play/Pause** and **Volume Up** control the iPhone without closing the
-overview; anywhere outside a text field, `-` and `+` step the volume too.
+overview; anywhere outside a text field, `-` and `+` (or `=`, the same key
+without Shift) step the volume too.
 The volume moves one iPhone step at a time, and the level the iPhone last
 reported is shown next to the title. Its other buttons open the
 notification list, the recent calls, the calls panel and Settings.

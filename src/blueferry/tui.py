@@ -717,7 +717,7 @@ class HelpScreen(ModalScreen[None]):
         if self.media_control:
             calls_line += (
                 "[bold #7dd3fc]iPhone play/pause · previous · next · volume down/up[/]"
-                "  p \\[ ] - +\n"
+                "  p \\[ ] - + (or =)\n"
             )
         help_text = Text.from_markup(
             "[bold #7dd3fc]Move[/]  ↑ ↓ or j k\n"
