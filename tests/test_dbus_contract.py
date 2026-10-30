@@ -101,6 +101,7 @@ def test_every_documented_error_has_the_stable_namespace() -> None:
         "CallsUnavailable",
         "ConfirmationRequired",
         "ContactSyncFailed",
+        "DeclinedNotSent",
         "InvalidArgs",
         "MediaCommandFailed",
         "NotFound",

@@ -189,6 +189,8 @@ adds `calls_state` (`unavailable`, `searching`, `connecting`, `ready`,
 | `HangupAll` | | |
 | `SendTones` | `s call_id, s tones` | DTMF on the active call: `0-9`, `*`, `#` |
 | `SwapCalls` | | Swap active and held |
+| `DeclineWithMessage` | `s call_id, s text` | Decline a ringing call (like `Hangup`), then send `text` to the caller's number over MAP like `Send`. Refused before declining (`InvalidArgs`) when the call does not ring, the caller has no number, or the text is empty or too long. `DeclinedNotSent` means the call was declined but the text was not sent. Charged to "calls-control" and "send" |
+| `SetCallQuickReplies` | `as replies` → `s status_json` | Save up to 5 one-line texts of at most 160 characters offered when declining; `[]` leaves only typed text. Returns `calls_quick_replies`, the `GetStatus` key (a list, present while calls are on; built-in translated defaults until a list is saved). "settings" rate limit |
 | `HoldAndAnswer` | | Hold the active call and answer the waiting one. 10 per minute |
 
 ## Events1 signals
@@ -211,7 +213,7 @@ bounded messages:
 `NotReady`, `ConfirmationRequired`, `SendFailed`, `SendOutcomeUnknown`,
 `ResponseTooLarge`, `QueryFailed`, `ContactSyncFailed`, `CallHistorySyncFailed`,
 `MediaCommandFailed`, and for the optional calls `CallsDisabled`,
-`CallsUnavailable`, `CallFailed`
+`CallsUnavailable`, `CallFailed`, `DeclinedNotSent`
 
 The XML lists which errors each method can return. Unexpected exceptions and
 OBEX details stay in the backend log.

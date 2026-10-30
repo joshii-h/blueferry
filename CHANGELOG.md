@@ -8,6 +8,11 @@
   the caller, the start time, an **On hold** state, and a **Hang up** button.
   Closing it never ends the call
   ([#230](https://github.com/erikwb/blueferry/issues/230)).
+- Decline a ringing call with a text to the caller: saved replies (up to 5,
+  translated defaults) or your own text, through
+  `Calls1.DeclineWithMessage`, `SetCallQuickReplies`,
+  `blueferry calls decline-with-message` and `blueferry calls replies`.
+  A text that cannot be sent is reported; the call stays declined.
 
 ## [0.9.0](https://github.com/erikwb/blueferry/releases/tag/v0.9.0) - 2026-10-27
 
