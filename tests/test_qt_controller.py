@@ -2272,6 +2272,75 @@ def test_notification_rows_carry_pin_state_and_muted_apps(monkeypatch):
     assert controller.notifications[1]["muted"] is False
 
 
+def test_a_dropped_notification_reply_never_pairs_rows_with_other_keys(monkeypatch):
+    from blueferry.qt.controller import _NotificationRunner
+
+    backend = _PinBackend()
+    controller = BridgeController(backend=backend, setup=object(), subscribe=False, autostart=False)
+    pending = []
+    monkeypatch.setattr(
+        controller, "_run",
+        lambda operation, done=None, failed=None, *, busy=True: pending.append(
+            (operation, done, failed)),
+    )
+    controller.watchNotifications(True)
+    operation, done, _failed = pending.pop()
+    done(operation())
+    accepted = controller._notification_reply
+    assert [row["key"] for row in controller.notifications] == ["k1", "k2"]
+
+    # A reply the model drops (superseded, or the tab hid meanwhile) must not
+    # replace the answer the shown rows came from.
+    runner = _NotificationRunner(controller)
+    runner.submit(lambda: {"notifications": [{"key": "k9"}]}, lambda _value: None)
+    operation, done, _failed = pending.pop()
+    done(operation())
+    assert controller._notification_reply is accepted
+    runner.submit(lambda: {}, None, lambda _message: None)
+    operation, _done, failed = pending.pop()
+    failed("NoReply")
+    assert controller._notification_reply is accepted
+
+    controller.refreshNotifications()
+    controller.watchNotifications(False)
+    operation, done, _failed = pending.pop()
+    done(operation())  # answered after the tab was hidden
+    assert controller._notification_reply == {}
+    assert controller.notifications == []
+
+
+def test_hiding_notifications_forgets_the_raw_answer_with_one_change(monkeypatch):
+    backend = _PinBackend()
+    controller = _inline_controller(monkeypatch, backend)
+    assert {"pinLimitReached", "pinLimitText", "pinError"} <= set(
+        controller.notificationsInfo)
+    controller.watchNotifications(True)
+    assert controller._notification_reply["notifications"]
+    changes = []
+    controller.notificationsChanged.connect(lambda: changes.append(1))
+    controller.watchNotifications(False)
+    assert controller._notification_reply == {}
+    assert controller.notifications == [] and len(changes) == 1
+
+
+def test_muted_apps_are_chosen_on_the_gui_thread_before_the_read(monkeypatch):
+    backend = _PinBackend(muted={"com.example.mail"})
+    controller = BridgeController(backend=backend, setup=object(), subscribe=False, autostart=False)
+    pending = []
+    monkeypatch.setattr(
+        controller, "_run",
+        lambda operation, done=None, failed=None, *, busy=True: pending.append(
+            (operation, done, failed)),
+    )
+    controller._status = {"notification_muted_app_count": 1}
+    controller.watchNotifications(True)
+    controller._status = {}  # changed after the read was queued
+    operation, done, _failed = pending.pop()
+    done(operation())
+    assert backend.apps_calls == 1
+    assert controller.notifications[1]["muted"] is True
+
+
 def test_pinning_refreshes_the_list_and_explains_a_failure(monkeypatch):
     class DBusFailure(Exception):
         def get_dbus_name(self):

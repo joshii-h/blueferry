@@ -123,14 +123,21 @@ class _WorkerRunner:
 _MUTED_APPS_KEY = "_blueferry_muted_apps"
 
 
-class _CapturingRunner:
-    """A TaskRunner handing each successful answer to ``capture`` (on the
-    GUI thread) just before the shared model sees it, and ``None`` for a
-    failure."""
+class _NotificationRunner:
+    """The TaskRunner of the Notifications tab's shared model.
 
-    def __init__(self, runner: _WorkerRunner, capture: Callable[[object], None]) -> None:
-        self._runner = runner
-        self._capture = capture
+    On the GUI thread it decides, before the work is queued, whether the
+    muted apps are read too, and keeps each raw ListNotifications answer
+    beside the model's display rows: the answer is taken just before the
+    model sees it (the model re-renders from inside ``on_done``) and put
+    back to the previous one when the model drops the reply (tab hidden
+    meanwhile, or a newer read superseded it), so rows and pin keys always
+    come from the same answer.
+    """
+
+    def __init__(self, controller: BridgeController) -> None:
+        self._controller = controller
+        self._runner = _WorkerRunner(controller)
 
     def submit(
         self,
@@ -139,15 +146,26 @@ class _CapturingRunner:
         on_error: Callable[[str], None] | None = None,
         on_finished: Callable[[], None] | None = None,
     ) -> None:
+        controller = self._controller
+        # Read GetStatus here, never on the D-Bus worker.
+        controller._notifications_with_muted_apps = notification_apps_view.supported(
+            controller._status
+        )
+
+        def deliver(value: object, callback: Callable[[], None]) -> None:
+            history = controller._notification_history
+            rows = history.rows
+            previous = controller._notification_reply
+            controller._notification_reply = value if isinstance(value, dict) else {}
+            callback()
+            if history.rows is rows:
+                controller._notification_reply = previous
+
         def done(value: object) -> None:
-            self._capture(value)
-            if on_done is not None:
-                on_done(value)
+            deliver(value, lambda: on_done(value) if on_done is not None else None)
 
         def failed(message: str) -> None:
-            self._capture(None)
-            if on_error is not None:
-                on_error(message)
+            deliver(None, lambda: on_error(message) if on_error is not None else None)
 
         self._runner.submit(operation, done, failed, on_finished)
 
@@ -297,13 +315,14 @@ class BridgeController(QObject):
         self._notification_snapshot: dict = {}
         self._notification_rows: list[dict] = []
         self._pin_error = ""
+        self._notifications_with_muted_apps = False
         self._notification_history = NotificationHistory(
-            runner=_CapturingRunner(_WorkerRunner(self), self._notification_reply_arrived),
+            runner=_NotificationRunner(self),
             timer=qt_timers(self),
             fetch=self._fetch_notifications,
             on_change=self._notifications_updated,
         )
-        self._notifications_info: dict = dict(self._notification_history.info)
+        self._notifications_info: dict = self._compose_notifications_info()
         self.devicesChanged.connect(self.phoneIdentityChanged)
         self.configuredChanged.connect(self.phoneIdentityChanged)
         # The Photos tab (a plugin with the photos capability).
@@ -775,16 +794,13 @@ class BridgeController(QObject):
         """ListNotifications plus, on daemons that can mute, the muted apps
         (to dim their rows); runs on the D-Bus worker."""
         snapshot = self._backend.notifications(limit)
-        if not isinstance(snapshot, dict) or not notification_apps_view.supported(self._status):
+        if not isinstance(snapshot, dict) or not self._notifications_with_muted_apps:
             return snapshot
         try:
             muted = notification_apps_view.muted_ids(self._backend.notification_apps())
         except BackendError:
             muted = frozenset()
         return {**snapshot, _MUTED_APPS_KEY: muted}
-
-    def _notification_reply_arrived(self, value: object) -> None:
-        self._notification_reply = value if isinstance(value, dict) else {}
 
     def _notifications_updated(self) -> None:
         """The shared model changed: add the pin fields and the muted flag
@@ -811,14 +827,17 @@ class BridgeController(QObject):
         self._notification_snapshot = snapshot
         self._update_notifications_info()
 
-    def _update_notifications_info(self) -> None:
+    def _compose_notifications_info(self) -> dict:
         snapshot = self._notification_snapshot
-        self._notifications_info = {
+        return {
             **self._notification_history.info,
             "pinLimitReached": notification_pin_view.pin_limit_reached(snapshot),
             "pinLimitText": notification_pin_view.pin_limit_text(snapshot.get("pins_max")),
             "pinError": self._pin_error,
         }
+
+    def _update_notifications_info(self) -> None:
+        self._notifications_info = self._compose_notifications_info()
         self.notificationsChanged.emit()
 
     @Property("QVariantList", notify=notificationsChanged)
@@ -832,10 +851,16 @@ class BridgeController(QObject):
     @Slot(bool)
     def watchNotifications(self, watched: bool) -> None:
         """The Notifications tab became visible (load) or hidden (forget)."""
-        if not watched:
-            self._pin_error = ""
-        self._notification_history.watch(bool(watched))
-        if not watched:
+        if watched:
+            self._notification_history.watch(True)
+            return
+        # Titles and bodies of the raw answer go with the rows.
+        self._notification_reply = {}
+        self._pin_error = ""
+        rows = self._notification_history.rows
+        self._notification_history.watch(False)
+        if self._notification_history.rows is rows:
+            # The model had no rows to forget and so reported no change.
             self._notifications_updated()
 
     @Slot()
