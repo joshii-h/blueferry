@@ -779,6 +779,24 @@ def _exercise_pins():
     client.emit("notification-apps-changed")
     client.take("apps")[1]({"apps": [], "mute_available": True})
     assert not _rows(page.list)[1].has_css_class("dim-label")
+    # An answer the model drops keeps the pin keys of the rows on screen.
+    _check_dropped_answers()
+    page.refresh_button.emit("clicked")
+    _call, late, _failed = client.take("notifications")
+    window.show_tab("messages")
+    _settle()
+    late({"enabled": True, "content": True, "pins_max": 20, "notifications": [
+        {**record, "key": "late"} for record in _pin_records()
+    ]})
+    assert page._snapshot == {} and page.history.rows == []
+    window.show_tab("notifications")
+    _settle()
+    client.take("apps")[1]({"apps": [], "mute_available": True})
+    client.take("notifications")[1]({
+        "enabled": True, "content": True, "pins_max": 20, "notifications": _pin_records(),
+    })
+    _pin_buttons(_rows(page.list)[1])[0].emit("clicked")
+    client.take(("pin", "k2", True))[1](True)
     # Hidden: records and muted apps are forgotten, nothing is read.
     window.show_tab("messages")
     _settle()
@@ -786,6 +804,52 @@ def _exercise_pins():
     client.emit("notification-apps-changed")
     assert "apps" not in client.names()
     window.destroy()
+
+
+def _check_dropped_answers():
+    """The pin records follow only the answers the shared model takes."""
+    from blueferry import notification_pin_view as pins
+    from blueferry.ui.notifications import _SnapshotRunner
+
+    class Queue:
+        def submit(self, _operation, done, failed, _finished):
+            self.done, self.failed = done, failed
+
+    def records(prefix):
+        return {"notifications": [
+            {**record, "key": f"{prefix}-{record.get('key')}"} for record in _pin_records()
+        ]}
+
+    def keys():
+        return [pins.pin_row_extras(record)["key"] for record in state["snapshot"][
+            "notifications"]]
+
+    state = {"rows": ["on screen"], "snapshot": records("shown")}
+    queue = Queue()
+    runner = _SnapshotRunner(
+        queue, rows=lambda: state["rows"], get=lambda: state["snapshot"],
+        put=lambda value: state.__setitem__("snapshot", value),
+    )
+    seen = []
+
+    def accept(_value):
+        state["rows"] = ["new rows"]
+
+    # Superseded or unwatched: the model keeps its rows, so the old records stay.
+    runner.submit(None, lambda _value: seen.append(keys()))
+    queue.done(records("superseded"))
+    assert seen == [["superseded-k1", "superseded-k2", ""]], "visible while rendering"
+    assert keys() == ["shown-k1", "shown-k2", ""]
+    runner.submit(None, None, lambda _message: None)
+    queue.failed("Timed out")
+    assert keys() == ["shown-k1", "shown-k2", ""]
+    # Taken: the new records belong to the new rows.
+    runner.submit(None, accept)
+    queue.done(records("taken"))
+    assert keys() == ["taken-k1", "taken-k2", ""]
+    runner.submit(None, None, lambda _message: accept(None))
+    queue.failed("Timed out")
+    assert state["snapshot"] == {}
 
 
 if __name__ == "__main__":

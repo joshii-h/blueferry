@@ -29,29 +29,46 @@ from blueferry.ui.util import glib_timer
 
 
 class _SnapshotRunner:
-    """The client's TaskRunner, handing each ListNotifications answer to
-    ``capture`` on the GTK thread just before the shared model sees it.
+    """The client's TaskRunner, keeping each ListNotifications answer the
+    shared model accepts.
 
     The model keeps only display rows; the pin keys and flags stay with
-    the raw records, which arrive here in the same order.
+    the raw records, which arrive here in the same order. The model
+    re-renders (and so reads the records) while it takes an answer, so the
+    answer is stored before the model sees it; an answer the model drops
+    (the tab was hidden meanwhile, or a newer read superseded it) leaves its
+    rows untouched, and then the records it belongs to are dropped too.
+    Accepting an answer or an error always gives the model a new row list.
     """
 
-    def __init__(self, client, capture: Callable[[object], None]) -> None:
+    def __init__(
+        self,
+        client,
+        *,
+        rows: Callable[[], object],
+        get: Callable[[], dict[str, Any]],
+        put: Callable[[dict[str, Any]], None],
+    ) -> None:
         self._client = client
-        self._capture = capture
+        self._rows = rows
+        self._get = get
+        self._put = put
 
     def submit(self, operation, on_done=None, on_error=None, on_finished=None) -> None:
         def done(value: object) -> None:
-            self._capture(value)
-            if on_done is not None:
-                on_done(value)
+            self._settle(value, lambda: on_done(value) if on_done is not None else None)
 
         def failed(message: str) -> None:
-            self._capture(None)
-            if on_error is not None:
-                on_error(message)
+            self._settle(None, lambda: on_error(message) if on_error is not None else None)
 
         self._client.submit(operation, done, failed, on_finished)
+
+    def _settle(self, value: object, deliver: Callable[[], None]) -> None:
+        previous, rows = self._get(), self._rows()
+        self._put(value if isinstance(value, dict) else {})
+        deliver()
+        if self._rows() is rows:
+            self._put(previous)
 
 
 class NotificationsPage(Gtk.Box):
@@ -75,7 +92,11 @@ class NotificationsPage(Gtk.Box):
         self._muted: frozenset[str] = frozenset()
         self._apps_serial = 0
         self.history = NotificationHistory(
-            runner=_SnapshotRunner(client, self._captured), timer=timer or glib_timer,
+            runner=_SnapshotRunner(
+                client, rows=lambda: self.history.rows,
+                get=lambda: self._snapshot, put=self._captured,
+            ),
+            timer=timer or glib_timer,
             fetch=client.notifications, on_change=self._render,
         )
 
@@ -147,8 +168,8 @@ class NotificationsPage(Gtk.Box):
 
     # ---- loading --------------------------------------------------------
 
-    def _captured(self, value: object) -> None:
-        self._snapshot = value if isinstance(value, dict) and self.history.watched else {}
+    def _captured(self, value: dict[str, Any]) -> None:
+        self._snapshot = value if self.history.watched else {}
 
     def _load_apps(self) -> None:
         """Read the muted apps while the tab is shown; forget them otherwise."""
