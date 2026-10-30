@@ -55,6 +55,8 @@ src/blueferry/phone_link_view.py
 src/blueferry/notification_history.py
 src/blueferry/features_view.py
 src/blueferry/doctor_report.py
+src/blueferry/qt/qml/TetherSection.qml
+src/blueferry/tether_status.py
 src/blueferry/plugin_stopper.py
 src/blueferry/plugin_surfaces.py
 src/blueferry/photos_view.py
@@ -75,3 +77,5 @@ src/blueferry/tui_doctor.py
 src/blueferry/tui_calls.py
 src/blueferry/tui_notifications.py
 src/blueferry/tui_phone.py
+src/blueferry/phone_audio_view.py
+src/blueferry/media_volume_view.py
