@@ -1327,7 +1327,7 @@ class BlueFerryApp(App[None]):
             self.action_notifications,
         )
         yield SystemCommand(
-            _("Phone Calls"), _("Dial, answer, hold and hang up (c)"), self._open_calls,
+            _("Phone Calls"), _("Dial, answer, hold, mute (m) and hang up (c)"), self._open_calls,
         )
         yield SystemCommand(
             _("Recent Calls"), _("The iPhone's recent calls (h)"), self._open_recent_calls,

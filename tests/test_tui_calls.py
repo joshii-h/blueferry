@@ -82,6 +82,7 @@ class _Backend:
         self.snapshot = _snapshot(("voicecall01", "incoming", "Alice"))
         self.contacts: dict[str, list[tuple[str, str]]] = {}
         self.extra: dict = {}
+        self.mute_error = ""
 
     def status(self) -> BackendStatus:
         return BackendStatus(
@@ -129,6 +130,8 @@ class _Backend:
         self.requests.append(("call_audio", direction, name))
 
     def set_call_muted(self, muted: bool) -> None:
+        if self.mute_error:
+            raise BackendError(self.mute_error)
         self.requests.append(("mute", muted))
 
     def decline_call_with_message(self, call_id: str, text: str) -> None:
@@ -641,10 +644,51 @@ def test_mute_toggles_the_running_call_only_where_the_daemon_can() -> None:
             await pilot.press("m")
             await _until(pilot, lambda: ("mute", False) in backend.requests)
 
+            # The daemon refuses (NotReady): a notice, not an error.
+            notices = []
+            screen.notify = lambda message, **kw: notices.append((message, kw))
+            backend.mute_error = "the call audio is not there yet"
+            screen.toggle_mute()
+            await _until(pilot, lambda: bool(notices))
+            assert notices == [("the call audio is not there yet",
+                                {"severity": "warning", "markup": False})]
+
             backend.snapshot = _audio_snapshot({"state": "idle", "muted": False})
             screen.refresh_calls()
             await _until(pilot, lambda: not screen.query_one("#calls-audio").display)
             assert mute.disabled
+
+    _run(scenario())
+
+
+def test_mute_waits_for_an_active_call_with_its_microphone_stream() -> None:
+    async def scenario() -> None:
+        backend = _Backend()
+        waiting = {"state": "waiting", "muted": False,
+                   "output": {"stream": False}, "input": {"stream": False}}
+        ready = {"state": "ready", "muted": False,
+                 "output": {"stream": True, "description": "A50"},
+                 "input": {"stream": True, "description": "Webcam"}}
+        backend.snapshot = _audio_snapshot(ready, ("voicecall01", "incoming", "Alice"))
+        app = BlueFerryApp(TuiState(backend), monitor_factory=lambda: None)
+        async with app.run_test(size=(120, 50)) as pilot:
+            screen = await _open_calls(app, pilot)
+            row = screen.query_one("#calls-mute-row")
+            await pilot.pause(0.1)
+            assert not row.display  # still ringing
+            app.set_focus(None)
+            await pilot.press("m")
+
+            backend.snapshot = _audio_snapshot(waiting, ("voicecall01", "active", "Alice"))
+            screen.refresh_calls()
+            await pilot.pause(0.2)
+            assert not row.display  # answered, but no call audio yet
+            assert screen.query_one("#calls-mute", Button).disabled
+
+            backend.snapshot = _audio_snapshot(ready, ("voicecall01", "active", "Alice"))
+            screen.refresh_calls()
+            await _until(pilot, lambda: row.display)
+            assert not [r for r in backend.requests if r[0] == "mute"]
 
     _run(scenario())
 

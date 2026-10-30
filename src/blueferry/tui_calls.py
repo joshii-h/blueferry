@@ -33,6 +33,7 @@ from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical
+from textual.notifications import SeverityLevel
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, OptionList, Select, Static
 from textual.widgets.option_list import Option
@@ -475,8 +476,9 @@ class CallsScreen(ModalScreen[None]):
         )
         for row in view["rows"]:
             self.query_one(f"#calls-audio-{row['direction']}", DeviceSelect).show(row)
-        mute = view["mute"]
-        self.query_one("#calls-mute-row").display = mute["supported"] is True
+        offered = self._mute_view()
+        mute = offered or view["mute"]
+        self.query_one("#calls-mute-row").display = offered is not None
         # The key is part of the label, as in the recent calls' buttons.
         self.query_one("#calls-mute", Button).label = f"{mute['label']}  m"
         self.query_one("#calls-mute-hint", Static).update(Text(_plain(mute["hint"])))
@@ -558,6 +560,7 @@ class CallsScreen(ModalScreen[None]):
     def _act(
         self, operation: Callable[[], object], done: str,
         failure: Callable[[str], str] = lambda message: message,
+        severity: SeverityLevel = "error",
     ) -> None:
         if self.busy:
             return
@@ -568,7 +571,7 @@ class CallsScreen(ModalScreen[None]):
             self.notify(done, markup=False)
 
         def failed(message: str) -> None:
-            self.notify(_plain(failure(message)), severity="error", markup=False)
+            self.notify(_plain(failure(message)), severity=severity, markup=False)
 
         def finished() -> None:
             self.busy = False
@@ -627,10 +630,15 @@ class CallsScreen(ModalScreen[None]):
         self._act(lambda: self._client.hangup_call(call_id), _("Declined"))
 
     def _mute_view(self) -> dict[str, Any] | None:
-        """The mute button's view while a call runs and the daemon can mute."""
-        if not self.snapshot.calls:
+        """The mute button's view, offered only for an active call whose
+        microphone stream exists and only where the daemon can mute.
+
+        The daemon refuses mute (NotReady) before the call audio is there,
+        which also covers a call that is still ringing."""
+        audio = self.snapshot.audio
+        if active_call(self.snapshot) is None or audio is None or not audio.input.stream:
             return None
-        view = call_audio_view.mute(self.snapshot.audio)
+        view = call_audio_view.mute(audio)
         return view if view["supported"] is True else None
 
     @on(Button.Pressed, "#calls-mute")
@@ -639,9 +647,11 @@ class CallsScreen(ModalScreen[None]):
         if view is None:
             return
         muted = not view["muted"]
+        # A refusal (NotReady: the call audio went away, PipeWire cannot be
+        # read) is a notice, not an error: the next ListCalls shows the state.
         self._act(
             lambda: self._client.set_call_muted(muted),
-            call_audio_view.mute_hint(muted),
+            call_audio_view.mute_hint(muted), severity="warning",
         )
 
     def action_toggle_mute(self) -> None:
