@@ -731,3 +731,47 @@ def test_switching_calls_off_lifts_the_mute_too() -> None:
     router.release()
 
     assert ["pw-cli", "set-param", "104", "Props", "{ mute: false }"] in pipewire.commands
+
+
+def test_muting_needs_the_call_audio_and_working_tools() -> None:
+    router, pipewire, _loop, _changes = _router(pipewire=FakePipeWire(_dump(call=False)))
+    router.calls_changed(True)
+    with pytest.raises(NotReadyError, match="not there yet"):
+        router.set_muted(True)
+
+    broken, pipewire, _loop, _changes = _router(pipewire=FakePipeWire(_mic(False)))
+    pipewire.missing = True
+    broken.calls_changed(True)
+    with pytest.raises(NotReadyError, match="pw-cli"):
+        broken.set_muted(True)
+    assert _mute_commands(pipewire) == []
+
+
+def test_reported_mute_follows_pipewire_not_the_request() -> None:
+    pipewire = FakePipeWire(_mic(False))
+    router, pipewire, _loop, changes = _router(pipewire=pipewire)
+    router.calls_changed(True)
+    router.set_muted(True)
+    assert router.call_audio()["muted"] is True
+
+    # Unmuted by hand in a mixer: the call view says so.
+    pipewire.dump = _mic(False)
+    changes.clear()
+    router._recheck()
+    assert router.call_audio()["muted"] is False and changes
+
+
+def test_a_failed_mute_write_is_undone_and_announced() -> None:
+    pipewire = FakePipeWire(_mic(False))
+    router, pipewire, _loop, changes = _router(pipewire=pipewire)
+    router.calls_changed(True)
+    pipewire.metadata_error = True
+    changes.clear()
+
+    router.set_muted(True)
+
+    assert router.call_audio()["muted"] is False and router.muted is False
+    assert changes  # CallsChanged tells the clients
+    pipewire.metadata_error = False
+    router._recheck()
+    assert _mute_commands(pipewire) == []  # no retry loop
