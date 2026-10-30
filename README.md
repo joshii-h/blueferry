@@ -642,8 +642,8 @@ While a call is in progress (answered here or on the iPhone, or an outgoing
 call once connected), BlueFerry keeps a notification **Call with** the caller,
 with its start time and **Hang up**; on hold it says **On hold**. Closing that
 notification never ends the call, and it stays closed until the call is held
-or resumed. It follows the same content and **No notifications** rules as the
-ringing popup.
+or resumed. It follows the same content rule as the ringing popup, and
+switching to **No notifications** closes open call popups at once.
 
 Toggling rewrites the phone-audio fragment. BlueFerry restarts
 `wireplumber.service` only through systemd; on hosts where WirePlumber is not

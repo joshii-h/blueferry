@@ -506,3 +506,58 @@ def test_server_that_replaces_with_a_new_id_leaves_no_stale_mapping() -> None:
     assert sink._call_notifications == {52: "voicecall01"}
     sink._on_closed(51, 3)
     assert sink._call_popups == {"voicecall01": 52}
+
+
+def test_policy_none_retires_open_call_popups_at_once() -> None:
+    policy = ["messages"]
+    sink = _sink(on_call_action=lambda *_args: None)
+    sink._notification_policy = lambda: policy[0]
+    sink.handle_call(CallEvent("call_incoming", _record()))
+    sink.handle_call(CallEvent("call_changed", _record(
+        state="active", start_time=_START, call_id="voicecall02", path="/x/voicecall02",
+    )))
+    dispatcher = EventDispatcher(object(), defer_mark_read=lambda _path: None)
+    dispatcher.sinks = [sink]
+
+    dispatcher.notification_policy_changed()  # still "messages": nothing closes
+    assert not [call for call in sink._notif.calls if call[0] == "close"]
+
+    policy[0] = "none"
+    dispatcher.notification_policy_changed()
+    assert sorted(call for call in sink._notif.calls if call[0] == "close") == [
+        ("close", 41), ("close", 42),
+    ]
+    assert sink._call_popups == {} and sink._call_notifications == {}
+    assert sink._call_starts == {"voicecall02": _START}
+
+    # Relaxed again: the next event shows the call with its original start.
+    policy[0] = "messages"
+    sink.handle_call(CallEvent("call_changed", _record(
+        state="held", call_id="voicecall02", path="/x/voicecall02",
+    )))
+    assert sink._notif.calls[-1][4] == f"On hold · {_since()}"
+
+
+def test_daemon_policy_change_reaches_the_call_popups(make_daemon) -> None:
+    instance = make_daemon()
+    seen = []
+    instance.events.notification_policy_changed = lambda: seen.append(1)
+
+    instance._notification_policy_changed()
+
+    assert seen == [1]
+
+
+def test_trimmed_call_entry_takes_its_popup_along() -> None:
+    from blueferry.calls.model import MAX_TRACKED_CALLS
+
+    sink = _sink(on_call_action=lambda *_args: None)
+    for index in range(MAX_TRACKED_CALLS + 1):
+        sink.handle_call(CallEvent("call_changed", _record(
+            state="active", start_time=_START,
+            call_id=f"voicecall{index}", path=f"/x/voicecall{index}",
+        )))
+
+    assert ("close", 41) in sink._notif.calls
+    assert "voicecall0" not in sink._call_popups and 41 not in sink._call_notifications
+    assert len(sink._call_shown) == len(sink._call_popups) == MAX_TRACKED_CALLS

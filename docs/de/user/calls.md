@@ -36,7 +36,8 @@ flowchart LR
   schließt, beendet damit nie den Anruf; sie bleibt zu, bis der Anruf
   gehalten oder fortgesetzt wird. Endet der Anruf, verschwindet sie. Mit
   `BLUEFERRY_SHOW_NOTIFICATION_CONTENT=false` zeigt sie keinen Anrufer;
-  **No notifications** schaltet sie ab wie die Klingel-Mitteilung.
+  ein Wechsel auf **No notifications** schließt offene Anruf-Mitteilungen
+  sofort.
 - Der Qt-Client bekommt einen Dialog **Phone Calls**, der Terminal-Client
   ein Anruf-Panel (`c`) und die CLI die Befehlsgruppe `calls`:
 

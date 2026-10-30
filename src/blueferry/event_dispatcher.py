@@ -361,6 +361,10 @@ class EventDispatcher:
             except Exception:
                 log.exception("sink %s failed in %s", sink.name, method)
 
+    def notification_policy_changed(self) -> None:
+        """Let sinks apply a new notification policy to popups already open."""
+        self._fan_out("call_popups_reset")
+
     def ancs_actions_reset(self) -> None:
         """Retire every action popup after the ANCS session reset its UIDs."""
         for sink in self.sinks:

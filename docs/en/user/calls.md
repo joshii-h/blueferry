@@ -32,7 +32,7 @@ flowchart LR
   says **On hold**. Closing the notification never ends the call, and it
   stays closed until the call is put on hold or resumed. It goes away when
   the call ends. With `BLUEFERRY_SHOW_NOTIFICATION_CONTENT=false` it shows no
-  caller; **No notifications** silences it like the ringing popup.
+  caller; switching to **No notifications** closes open call popups at once.
 - The Qt client gets a **Phone Calls** dialog, the terminal client a calls
   panel (`c`), and the CLI a `calls` command group:
 

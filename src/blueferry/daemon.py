@@ -1748,6 +1748,8 @@ class Daemon:
         ancs = self.ancs
         if ancs is not None:
             ancs.notification_actions_changed()
+        # "No notifications" also retires open call popups right away.
+        self.events.notification_policy_changed()
         self._emit_status()
 
     def _perform_ancs_action(

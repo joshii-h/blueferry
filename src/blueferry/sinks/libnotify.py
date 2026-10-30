@@ -1108,7 +1108,11 @@ class LibnotifySink:
         notifications[nid] = record.call_id
         popups[record.call_id] = nid
         shown[record.call_id] = _ShownCall(phase, title, body)
-        _trim_oldest(shown, MAX_TRACKED_CALLS)
+        while len(shown) > MAX_TRACKED_CALLS:
+            # A dropped entry takes its popup along: no button may outlive it.
+            dropped = next(iter(shown))
+            del shown[dropped]
+            self._close_call_popup(dropped)
 
     def _close_call_popup(self, call_id: str) -> None:
         notifications, popups = self._call_maps()
@@ -1123,6 +1127,19 @@ class LibnotifySink:
         shown, starts = self._call_state()
         shown.pop(call_id, None)
         starts.pop(call_id, None)
+
+    def call_popups_reset(self) -> None:
+        """The notification policy changed: under "none", retire call popups.
+
+        Start times stay, so a popup shown after the policy is relaxed again
+        still names the right start.
+        """
+        if self._policy() != NO_NOTIFICATIONS:
+            return
+        shown, _starts = self._call_state()
+        for call_id in list(self._call_maps()[1]):
+            self._close_call_popup(call_id)
+        shown.clear()
 
     def close_all_call_notifications(self) -> None:
         """Retire every call popup while the notification server is still ours.
