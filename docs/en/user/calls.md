@@ -142,8 +142,10 @@ like a message written in BlueFerry, and shows up in the conversation.
   call view while a call rings: pick a saved reply or type your own text.
 - Only calls with a number get the choice; withheld or unknown callers can
   only be declined.
-- If the text cannot be sent (for example while the Messages connection is
-  down), BlueFerry says so; the call stays declined.
+- Without the Messages connection the call is not declined and BlueFerry
+  says why. If the text cannot be sent after the call was declined,
+  BlueFerry says so; the call stays declined. Your own text can have up to
+  1000 characters.
 - Saved replies are edited under **Calls & Audio** in the settings: up to 5
   lines of at most 160 characters each. Until you change them, three English
   replies (translated where a translation exists) are offered; with an empty
