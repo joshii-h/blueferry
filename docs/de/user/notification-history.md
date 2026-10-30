@@ -45,7 +45,13 @@ Heftest du eine Mitteilung an, bleibt sie erhalten: Angeheftete Mitteilungen
 stehen oben (die zuletzt angeheftete zuerst), bleiben, bis du sie wieder
 löst, und überstehen einen Neustart des Hintergrunddienstes – auch wenn das
 iPhone sie entfernt hat oder sie aus den letzten 200 herausgefallen sind. In
-den Clients dient **Pin** / **Unpin** am Eintrag dazu. Im Terminal mit dem
+den Clients dient **Pin** / **Unpin** am Eintrag dazu. Im KDE-Client
+erscheint die Anheft-Taste, wenn du auf einen Eintrag zeigst oder ihn mit der
+Tastatur auswählst; ein angehefteter Eintrag behält seine Taste **Unpin** und
+trägt eine Nadel am Symbol. Auf dem iPhone entfernte Einträge und Einträge
+[stummgeschalteter Apps](notification-mute.md) sind ausgegraut. Sind 20
+angeheftet, ist **Pin** gesperrt und der Reiter sagt das; schlägt das
+Anheften oder Lösen fehl, steht der Grund über der Liste. Im Terminal mit dem
 Schlüssel, der am Ende jeder Zeile steht:
 
 ```bash

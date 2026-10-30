@@ -40,7 +40,7 @@ System Settings:
 | Category | What's there |
 | --- | --- |
 | Phone | Pairing, connection health, **Run Diagnostics** (the same checks as `blueferry doctor`, shown in the window), contact sync, contact photos |
-| Notifications | Which events create popups, contacts only, click rules, notification content, action buttons, sync notifications with iPhone, mark read on dismiss |
+| Notifications | Which events create popups, contacts only, click rules, notification content, action buttons, sync notifications with iPhone, mark read on dismiss, muted apps |
 | Calls & Audio | Phone calls, call history, battery warning, [iPhone sound on this computer](phone-audio.md), media control |
 | Security | One-time codes, away lock, local storage and its encryption, Clear History |
 | About | Version, the background service, keyboard shortcuts, Quit |

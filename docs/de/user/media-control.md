@@ -78,6 +78,12 @@ das iPhone ihn meldet. Bietet die spielende App keine Lautstärkeregelung an,
 sagt BlueFerry das und sendet nichts. Die älteren Schreibweisen `volume-up`
 und `volume-down` funktionieren weiterhin.
 
+Im Kirigami-Client hat der Bereich **Now Playing** der Telefonkarte unter
+den Wiedergabetasten eine zweite Zeile: den zuletzt vom iPhone gemeldeten
+Stand („Volume 40%“) und die Tasten **Volume Down** / **Volume Up**, eine
+Stufe pro Klick. Bietet die spielende App keine Lautstärkeregelung an, sind
+sie ausgegraut und eine kurze Notiz sagt warum.
+
 Im Kirigami-Client erscheint über den Unterhaltungen eine kleine Leiste mit
 Titel, Interpret und den Tasten Zurück/Wiedergabe-Pause/Weiter, solange etwas
 läuft. Der Quickshell-Client zeigt dieselbe Leiste unter seiner Kopfzeile,

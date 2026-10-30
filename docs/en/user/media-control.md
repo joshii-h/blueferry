@@ -75,6 +75,12 @@ it. If the app that is playing does not offer volume control, BlueFerry says
 so and sends nothing. The older spellings `volume-up` and `volume-down` still
 work.
 
+In the Kirigami client the **Now Playing** part of the phone card has a
+second row under the transport buttons: the level the iPhone last reported
+("Volume 40%") and **Volume Down** / **Volume Up** buttons, one step per
+click. They are greyed out, with a short note, while the playing app offers
+no volume control.
+
 In the Kirigami client a small bar with title, artist and
 previous/play-pause/next buttons appears above the conversations while
 something is playing. The Quickshell client shows the same strip under its

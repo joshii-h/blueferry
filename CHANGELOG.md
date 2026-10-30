@@ -14,6 +14,12 @@
   `Events1.NotificationAppsChanged` invalidates the list. CLI:
   `blueferry notifications apps|mute|unmute`. The environment allowlist and
   blocklist stay a hard filter in front of it.
+- KDE client: volume down/up buttons and the reported level under the
+  now-playing transport buttons; **Pin**/**Unpin** on entries of the
+  Notifications tab, with a pin marker, greyed-out entries removed on the
+  iPhone or from muted apps, and the pin limit and errors shown above the
+  list; a **Muted apps** section in Settings › Notifications with a switch per
+  app, refreshed on `NotificationAppsChanged` while it is shown.
 
 ## [0.9.0](https://github.com/erikwb/blueferry/releases/tag/v0.9.0) - 2026-10-27
 
