@@ -1448,6 +1448,8 @@ class BackendOperations:
                 if contacts is not None else None
             )
             result.append({
+                # Opaque and stable across syncs; Search reports the same id.
+                "id": record.key,
                 "direction": record.direction,
                 "timestamp": record.occurred_at.isoformat(),
                 "address": record.address,

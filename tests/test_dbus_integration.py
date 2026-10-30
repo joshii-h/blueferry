@@ -950,6 +950,7 @@ def test_call_history_round_trip_and_content_free_signal(public_service) -> None
         connection.close()
 
     assert json.loads(str(listed["value"])) == [{
+        "id": record.key,
         "direction": "missed",
         "timestamp": moment.isoformat(),
         "address": "+15551230001",

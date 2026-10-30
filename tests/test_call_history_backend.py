@@ -128,6 +128,7 @@ def test_list_applies_contact_names_bounds_and_newest_first_order(storage) -> No
     assert len(listed) == 1
     assert [entry["direction"] for entry in full] == [MISSED, OUTGOING, INCOMING, INCOMING]
     assert full[0] == {
+        "id": f"{MISSED}|{(NOW - timedelta(minutes=1)).strftime('%Y%m%dT%H%M%SZ')}|15551230001",
         "direction": MISSED,
         "timestamp": (NOW - timedelta(minutes=1)).isoformat(),
         "address": "+15551230001",
