@@ -274,6 +274,7 @@ class _PinBackend(_NotificationsBackend):
         ]
         self.pinned: list[tuple[str, bool]] = []
         self.pin_error: str | None = None
+        self.pin_error_name = "org.blueferry.Error.InvalidArgs"
         self.apps_error: str | None = None
         self.apps = {"apps": [{"app_id": "com.example.chat", "muted": True}],
                      "mute_available": True}
@@ -287,7 +288,7 @@ class _PinBackend(_NotificationsBackend):
     def set_notification_pinned(self, key: str, pinned: bool) -> bool:
         self.pinned.append((key, pinned))
         if self.pin_error:
-            raise BackendError(self.pin_error)
+            raise BackendError(self.pin_error, dbus_name=self.pin_error_name)
         for record in self.records:
             if record["key"] == key:
                 record["pinned"] = pinned
@@ -365,18 +366,9 @@ def test_pin_limit_disables_pin_but_not_unpin() -> None:
     _run_headless(scenario())
 
 
-def test_a_failed_pin_explains_itself_as_plain_text() -> None:
+def test_a_failed_pin_explains_itself_from_the_dbus_error_name() -> None:
     from blueferry import notification_pin_view
-    from blueferry.tui_notifications import pin_error_text
 
-    assert pin_error_text("the notification list is off; turn it on") == (
-        notification_pin_view.OFF_TEXT
-    )
-    assert pin_error_text("local history is locked") == notification_pin_view.LOCKED_TEXT
-    assert pin_error_text(
-        "the running backend cannot pin notifications; restart it after upgrading"
-    ) == notification_pin_view.UNSUPPORTED_TEXT
-    assert pin_error_text("[b]odd[/b]") == notification_pin_view.GENERIC_ERROR_TEXT
     backend = _PinBackend()
     backend.pin_error = "at most 20 notifications can be pinned; unpin one first"
 
@@ -389,6 +381,39 @@ def test_a_failed_pin_explains_itself_as_plain_text() -> None:
             screen.action_toggle_pin()
             await _until(
                 pilot, lambda: "pinned list is full" in _text(screen, "#notifications-pin-state"),
+            )
+            # The error is about that row: moving away clears it, and it does
+            # not come back.
+            await _highlight(pilot, screen, 0)
+            assert screen.pin_error == ""
+            assert "pinned list is full" not in _text(screen, "#notifications-pin-state")
+
+            # The name decides, not a word in the message: a NotReady error
+            # is "locked" even without that word, and "locked" in an
+            # InvalidArgs message is no lock.
+            backend.pin_error = "storage unavailable"
+            backend.pin_error_name = "org.blueferry.Error.NotReady"
+            await _highlight(pilot, screen, 1)
+            screen.action_toggle_pin()
+            await _until(pilot, lambda: screen.pin_error == notification_pin_view.LOCKED_TEXT)
+
+            backend.pin_error = "[b]the key is locked to a session[/b]"
+            backend.pin_error_name = "org.blueferry.Error.InvalidArgs"
+            screen.action_toggle_pin()
+            await _until(
+                pilot, lambda: screen.pin_error == notification_pin_view.GENERIC_ERROR_TEXT,
+            )
+            # A reload asked for by the user clears it too.
+            await pilot.pause(0.1)
+            screen.action_refresh()
+            assert screen.pin_error == ""
+
+            backend.pin_error = "[b]cannot pin[/b]"
+            backend.pin_error_name = "org.freedesktop.DBus.Error.UnknownMethod"
+            await pilot.pause(0.1)
+            screen.action_toggle_pin()
+            await _until(
+                pilot, lambda: screen.pin_error == notification_pin_view.UNSUPPORTED_TEXT,
             )
 
     _run_headless(scenario())

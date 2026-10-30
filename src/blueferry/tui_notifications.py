@@ -36,7 +36,6 @@ from blueferry import notification_apps_view, notification_pin_view, phone_link_
 from blueferry.client_tasks import TimerFactory
 from blueferry.i18n import _
 from blueferry.notification_history import LIMIT, NotificationHistory
-from blueferry.reconnect_view import RATE_LIMITED_TEXT
 from blueferry.text_safety import terminal_text
 from blueferry.tui_tasks import TextualTaskRunner, timer_factory
 
@@ -87,27 +86,6 @@ def notifications_text(rows: list[dict[str, str]]) -> Text:
             text.append("\n\n")
         text.append_text(notification_text(row))
     return text
-
-
-# The daemon's English messages for SetNotificationPinned failures, mapped
-# back to their D-Bus error names: BackendClient keeps only the message.
-_PIN_ERRORS = (
-    ("cannot pin notifications", ".UnknownMethod"),
-    ("notification list is off", ".NotReady"),
-    ("locked", ".NotReady"),
-    ("unknown notification key", ".InvalidArgs"),
-    ("can be pinned", ".InvalidArgs"),
-    ("too long to store", ".InvalidArgs"),
-)
-
-
-def pin_error_text(message: object) -> str:
-    """``notification_pin_view.pin_error_text`` for a BackendError message."""
-    text = str(message or "").strip()
-    if text == RATE_LIMITED_TEXT:
-        return text
-    name = next((error for needle, error in _PIN_ERRORS if needle in text), "")
-    return notification_pin_view.pin_error_text(name, text)
 
 
 class NotificationItem(ListItem):
@@ -170,6 +148,7 @@ class NotificationsScreen(ModalScreen[str | None]):
         self._pin_runner = TextualTaskRunner(self, group="notification-pin")
         self.pinning = False
         self.pin_error = ""
+        self._pin_error_key = ""  # the notification pin_error is about
         self._shown_key: tuple[tuple[str, ...], str] | None = None
 
     def compose(self) -> ComposeResult:
@@ -363,8 +342,16 @@ class NotificationsScreen(ModalScreen[str | None]):
         state.update(Text(_plain(message)))
         state.display = bool(message) and listing.display
 
+    def _set_pin_error(self, message: str, key: str = "") -> None:
+        self.pin_error, self._pin_error_key = message, key
+
     @on(ListView.Highlighted, "#notifications-list")
     def row_highlighted(self) -> None:
+        # An error is about one notification; a rebuild that keeps the
+        # highlight on it keeps the error, another row drops it.
+        item = self._selected()
+        if self.pin_error and (item is None or item.key != self._pin_error_key):
+            self._set_pin_error("")
         self._render_pin()
 
     @on(Button.Pressed, "#notifications-pin")
@@ -381,16 +368,32 @@ class NotificationsScreen(ModalScreen[str | None]):
             return
         key, pinned = target
         if pinned and notification_pin_view.pin_limit_reached(self._snapshot):
-            self.pin_error = notification_pin_view.pin_limit_text(
+            self._set_pin_error(notification_pin_view.pin_limit_text(
                 self._snapshot.get("pins_max"),
-            )
+            ), key)
             self._render_pin()
             return
-        self.pinning, self.pin_error = True, ""
+        self.pinning = True
+        self._set_pin_error("")
         self._render_pin()
 
+        # The task runner hands on only str(error); keep the error's
+        # D-Bus name here for the shared wording.
+        # (written on the worker before ``failed`` runs on the UI thread).
+        error_name = ""
+
+        def operation() -> bool:
+            nonlocal error_name
+            try:
+                return self._client.set_notification_pinned(key, pinned)
+            except Exception as error:
+                error_name = str(getattr(error, "dbus_name", "") or "")
+                raise
+
         def failed(message: str) -> None:
-            self.pin_error = pin_error_text(message)
+            self._set_pin_error(
+                notification_pin_view.pin_error_text(error_name, message), key,
+            )
 
         def finished() -> None:
             self.pinning = False
@@ -398,10 +401,7 @@ class NotificationsScreen(ModalScreen[str | None]):
             self.history.refresh()
             self._render_pin()
 
-        self._pin_runner.submit(
-            lambda: self._client.set_notification_pinned(key, pinned),
-            None, failed, finished,
-        )
+        self._pin_runner.submit(operation, None, failed, finished)
 
     # ---- closing --------------------------------------------------------
 
@@ -417,6 +417,8 @@ class NotificationsScreen(ModalScreen[str | None]):
         self.action_refresh()
 
     def action_refresh(self) -> None:
+        self._set_pin_error("")
+        self._render_pin()
         if not self._opt_in_hint:
             self.history.refresh()
 
