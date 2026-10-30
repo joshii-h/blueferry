@@ -854,3 +854,19 @@ ModalScreen {
     height: auto;
     color: #fca5a5;
 }
+
+#options-replies {
+    height: auto;
+    max-height: 7;
+    margin-top: 1;
+    background: #151f35;
+}
+
+#options-reply-text {
+    height: 3;
+    margin-top: 1;
+}
+
+#options-reply-actions Button {
+    margin-right: 1;
+}
