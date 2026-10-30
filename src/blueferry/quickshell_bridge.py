@@ -301,6 +301,12 @@ class QuickshellBridge:
         # index: each toggle rereads the list right before it writes, one
         # worker at a time, so a reordered list cannot hit the wrong app.
         self._notification_apps_lock = threading.Lock()
+        # Muted bundle IDs that dim list rows: read once, then reused for
+        # every list refresh until NotificationAppsChanged drops them. The
+        # generation keeps a read that raced a change from being cached.
+        self._muted_lock = threading.Lock()
+        self._muted_cache: frozenset[str] | None = None
+        self._muted_generation = 0
 
     def host_info(self) -> dict[str, str]:
         """Return daemon-independent facts sent to the shell at startup."""
@@ -342,13 +348,36 @@ class QuickshellBridge:
         return notifications_reply(snapshot, "", muted=self._muted_apps(status))
 
     def _muted_apps(self, status: Mapping[str, Any]) -> frozenset[str]:
-        """Muted bundle IDs to dim list rows; none when they cannot be read."""
+        """Muted bundle IDs to dim list rows; none when they cannot be read.
+
+        The cached set is reused until :meth:`notification_apps_changed`;
+        a failed read is not cached, so the next refresh tries again.
+        """
         if not notification_apps_view.supported(status):
+            self.notification_apps_changed()
             return frozenset()
+        with self._muted_lock:
+            if self._muted_cache is not None:
+                return self._muted_cache
+            generation = self._muted_generation
         try:
-            return notification_apps_view.muted_ids(self.client.notification_apps())
+            payload = self.client.notification_apps()
         except BackendError:
             return frozenset()
+        return self._remember_muted(payload, generation)
+
+    def _remember_muted(self, payload: object, generation: int) -> frozenset[str]:
+        muted = notification_apps_view.muted_ids(payload)
+        with self._muted_lock:
+            if generation == self._muted_generation:
+                self._muted_cache = muted
+        return muted
+
+    def notification_apps_changed(self) -> None:
+        """Forget the cached muted apps; the next list refresh rereads them."""
+        with self._muted_lock:
+            self._muted_generation += 1
+            self._muted_cache = None
 
     def _set_notification_pinned(self, key: str, pinned: bool) -> dict[str, Any]:
         """Pin or unpin one list row; a refusal comes back in shared wording."""
@@ -367,12 +396,15 @@ class QuickshellBridge:
         if not notification_apps_view.supported(self.client.status().to_dict()):
             # An older daemon without muting: the page hides the section.
             return notification_apps_reply({}, supported=False)
+        with self._muted_lock:
+            generation = self._muted_generation
         try:
             payload = self.client.notification_apps()
         except BackendError as error:
             return notification_apps_reply(
                 {}, error=str(error) or _("Could not read the muted apps.")
             )
+        self._remember_muted(payload, generation)
         return notification_apps_reply(payload)
 
     def _toggle_notification_app(self, index: int, app_id: str) -> dict[str, Any]:
@@ -405,6 +437,8 @@ class QuickshellBridge:
                 return notification_apps_reply(
                     payload, error=notification_apps_view.change_failed_text(error)
                 )
+            # The list rows dim from a fresh read, not from this guess.
+            self.notification_apps_changed()
             for app in payload["apps"]:
                 if app["app_id"] == target[0]:
                     app["muted"] = muted is True
@@ -667,6 +701,11 @@ class _RequestWorkers:
             })
 
 
+def _notification_apps_changed(bridge: QuickshellBridge) -> None:
+    bridge.notification_apps_changed()
+    bridge.emit_event("notification-apps-changed")
+
+
 def _install_signal_receivers(bridge: QuickshellBridge) -> list[object]:
     bus = get_session_bus()
     common = {
@@ -712,7 +751,7 @@ def _install_signal_receivers(bridge: QuickshellBridge) -> list[object]:
         ),
         # Content-free; the shell rereads the muted apps while Settings shows.
         bus.add_signal_receiver(
-            lambda: bridge.emit_event("notification-apps-changed"),
+            lambda: _notification_apps_changed(bridge),
             signal_name="NotificationAppsChanged",
             **common,
         ),

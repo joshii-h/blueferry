@@ -1454,5 +1454,81 @@ def test_bridge_forwards_the_content_free_notification_apps_signal(monkeypatch) 
     output = io.StringIO()
     bridge = QuickshellBridge(FakeClient(), output)  # type: ignore[arg-type]
     quickshell_bridge._install_signal_receivers(bridge)
+    bridge._muted_cache = frozenset({"com.example.chat"})
     receivers["NotificationAppsChanged"]()
     assert json.loads(output.getvalue()) == {"event": "notification-apps-changed", "data": None}
+    # The event is sent after the cached muted apps are dropped.
+    assert bridge._muted_cache is None
+
+
+def test_list_refreshes_reuse_the_muted_apps_until_they_change() -> None:
+    client = NotificationAppsClient()
+    client.notification_snapshot = {
+        "enabled": True, "content": True,
+        "notifications": [_record("k", "com.example.chat")],
+    }
+    bridge = QuickshellBridge(client)  # type: ignore[arg-type]
+
+    def refresh():
+        return bridge.dispatch("notifications", {})["rows"][0]["muted"]
+
+    def app_reads():
+        return client.calls.count(("notification_apps",))
+
+    assert refresh() is True and refresh() is True
+    assert app_reads() == 1
+    client.apps["apps"][0]["muted"] = False  # type: ignore[index]
+    bridge.notification_apps_changed()
+    assert refresh() is False and refresh() is False
+    assert app_reads() == 2
+    # The Settings page's read refreshes the cache too.
+    client.apps["apps"][0]["muted"] = True  # type: ignore[index]
+    bridge.notification_apps_changed()
+    bridge.dispatch("notification_apps", {})
+    assert refresh() is True and app_reads() == 3
+
+
+def test_a_failed_muted_apps_read_is_retried_on_the_next_refresh() -> None:
+    from blueferry.client import BackendError
+
+    client = NotificationAppsClient()
+    client.notification_snapshot = {
+        "enabled": True, "content": True,
+        "notifications": [_record("k", "com.example.chat")],
+    }
+    apps = client.apps
+    client.apps = BackendError("locked")
+    bridge = QuickshellBridge(client)  # type: ignore[arg-type]
+    assert bridge.dispatch("notifications", {})["rows"][0]["muted"] is False
+    client.apps = apps
+    assert bridge.dispatch("notifications", {})["rows"][0]["muted"] is True
+    assert client.calls.count(("notification_apps",)) == 2
+
+
+def test_a_muted_apps_read_racing_a_change_is_not_cached() -> None:
+    client = NotificationAppsClient()
+    client.notification_snapshot = {
+        "enabled": True, "content": True,
+        "notifications": [_record("k", "com.example.chat")],
+    }
+    bridge = QuickshellBridge(client)  # type: ignore[arg-type]
+    original = client.notification_apps
+
+    def changed_meanwhile():
+        payload = original()
+        bridge.notification_apps_changed()
+        return payload
+
+    client.notification_apps = changed_meanwhile  # type: ignore[method-assign]
+    bridge.dispatch("notifications", {})
+    client.notification_apps = original  # type: ignore[method-assign]
+    bridge.dispatch("notifications", {})
+    assert client.calls.count(("notification_apps",)) == 2
+
+
+def test_a_saved_toggle_drops_the_cached_muted_apps() -> None:
+    client = NotificationAppsClient()
+    bridge = QuickshellBridge(client)  # type: ignore[arg-type]
+    bridge._muted_cache = frozenset()
+    bridge.dispatch("toggle_notification_app", {"index": 1, "app_id": "com.example.mail"})
+    assert bridge._muted_cache is None
