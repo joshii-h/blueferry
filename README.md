@@ -1011,7 +1011,7 @@ iPhone's cover-art connection open and stores the small images in
 disconnects. Nothing goes to the internet. The Qt and GTK clients show it
 next to the track, and with the MPRIS option desktops (GNOME, Plasma, DMS,
 Waybar …) pick it up as `mpris:artUrl`. The track that is already playing
-when the phone connects usually gets its cover only from the next track on.
+when the phone connects may get its cover only from the next track on.
 
 BlueFerry does not act as an AVRCP controller itself: that could make the
 iPhone route its audio to this computer. Cover art only uses the connection

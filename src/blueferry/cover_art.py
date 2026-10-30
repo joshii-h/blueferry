@@ -22,7 +22,9 @@ Observed on a real iPhone (iOS 27, BlueZ 5.87, see PROTOCOL.md):
   If the player supports browsing, the Now Playing list is read once
   (``MediaFolder1.ChangeFolder`` to the playlist is a local scope change in
   BlueZ, ``ListItems`` asks the phone for the items including their image
-  handle). Without browsing the cover appears from the next track on.
+  handle). That makes bluetoothd send SetBrowsedPlayer (and possibly
+  SetAddressedPlayer), so only the player BlueZ already addresses is
+  listed. Without browsing the cover appears from the next track on.
 
 Everything stays local: the images go to an owner-only cache directory and
 nothing is sent anywhere. The feature follows the media-control opt-in.
@@ -69,7 +71,7 @@ _IMAGE_HANDLE = re.compile(r"[0-9]{7}", re.ASCII)
 # A thumbnail is 200x200 (BIP); generous bounds still stop a broken or
 # hostile peer from filling the disk or handing clients a decoder bomb.
 MAX_IMAGE_BYTES = 1024 * 1024
-MAX_IMAGE_DIMENSION = 4096
+MAX_IMAGE_DIMENSION = 1024
 MAX_CACHE_FILES = 20
 MAX_CACHE_BYTES = 8 * 1024 * 1024
 # Now Playing entries read to find the current track's image handle.
@@ -79,6 +81,10 @@ CREATE_TIMEOUT_SEC = 30.0
 CALL_TIMEOUT_SEC = 10.0
 TRANSFER_TIMEOUT_SEC = 30
 RETRY_DELAYS_SEC = (2, 5, 10, 30, 60)
+# iOS removes and recreates its player on an app change and sometimes on
+# pause/play. While AVRCP stays connected the session waits this long for a
+# player to come back instead of closing and reopening (flapping).
+PLAYER_GRACE_SEC = 5
 WATCH_RETRY_SEC = 30
 
 _FILE_PREFIX = "cover-"
@@ -137,7 +143,10 @@ def jpeg_dimensions(data: bytes) -> tuple[int, int] | None:
 
 
 def cache_directory() -> Path:
-    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    base = os.environ.get("XDG_CACHE_HOME", "")
+    # The XDG Base Directory spec says to ignore relative paths.
+    if not os.path.isabs(base):
+        base = str(Path.home() / ".cache")
     return Path(base) / "blueferry" / "cover"
 
 
@@ -213,7 +222,6 @@ class CoverCache:
             return None
         final = incoming.with_name(f"{_FILE_PREFIX}{secrets.token_hex(8)}-{handle}.jpg")
         try:
-            os.chmod(incoming, PRIVATE_FILE_MODE, follow_symlinks=False)
             os.rename(incoming, final)
         except OSError as error:
             log.info("could not store cover image: %s", type(error).__name__)
@@ -235,6 +243,8 @@ class CoverCache:
             if current.st_size > MAX_IMAGE_BYTES:
                 log.info("discarding cover image larger than %d bytes", MAX_IMAGE_BYTES)
                 return None
+            # obexd wrote it; make sure it is owner-only before it is shared.
+            os.fchmod(descriptor, PRIVATE_FILE_MODE)
             chunks = []
             remaining = MAX_IMAGE_BYTES + 1
             while remaining > 0:
@@ -396,6 +406,7 @@ class PhoneCoverArt:
         self._avrcp_connected: bool | None = None
         self._probe_generation = 0
         self._watch_retry_id: int | None = None
+        self._grace_id: int | None = None
         # BIP session state.
         self._generation = 0
         self._conn: ObexConnection | None = None
@@ -634,13 +645,26 @@ class PhoneCoverArt:
 
     # ---- BIP session -----------------------------------------------------
 
+    def _player_may_return(self) -> bool:
+        """AVRCP is still up, so a vanished player is likely recreated."""
+        return (
+            self._enabled and not self._stopped and self._owner_available
+            and self._avrcp_connected is True
+        )
+
     def _reconcile(self) -> None:
         port = self._wanted_port()
         if port is None:
+            if self._player_may_return() and (self._conn is not None or self._opening):
+                # Keep the session and the current cover for a moment.
+                if self._grace_id is None:
+                    self._grace_id = self._schedule(PLAYER_GRACE_SEC, self._grace_expired)
+                return
             self._cancel_retry()
             self._failures = 0
             self._close_session()
             return
+        self._cancel_grace()
         if self._session_port != port and (self._conn is not None or self._opening):
             log.info("iPhone cover art port changed; reopening the session")
             self._close_session()
@@ -649,6 +673,20 @@ class PhoneCoverArt:
                 self._open(port)
             return
         self._update_cover()
+
+    def _grace_expired(self) -> bool:
+        self._grace_id = None
+        if self._wanted_port() is None:
+            log.info("iPhone media player did not come back; closing cover art session")
+            self._cancel_retry()
+            self._failures = 0
+            self._close_session()
+        return False
+
+    def _cancel_grace(self) -> None:
+        if self._grace_id is not None:
+            self._cancel(self._grace_id)
+            self._grace_id = None
 
     def _open(self, port: int) -> None:
         self._generation += 1
@@ -743,6 +781,7 @@ class PhoneCoverArt:
     def _close_session(self) -> None:
         """Forget the session; closing the owner connection ends it in obexd."""
         had_session = self._conn is not None or self._opening
+        self._cancel_grace()
         self._generation += 1
         self._cancel_fetch()
         self._remove(self._conn_matches)
@@ -816,6 +855,11 @@ class PhoneCoverArt:
         if current is None or self._listing:
             return
         path, player = current
+        # ListItems makes bluetoothd send SetBrowsedPlayer (and possibly
+        # SetAddressedPlayer) for this player; never for a fallback player,
+        # only for the one BlueZ already addresses.
+        if path != self._active_player:
+            return
         item = player.track.get("Item")
         if self._listed or not player.browsable or not player.playlist or item is None:
             return
@@ -915,7 +959,10 @@ class PhoneCoverArt:
             return
         if fetch.transfer is None:
             # The reply naming this transfer is still queued behind us.
-            self._early_status[str(path)] = status
+            # Only transfers of our own session, so the map stays bounded.
+            session = self._session_path
+            if session is not None and str(path).startswith(session + "/"):
+                self._early_status[str(path)] = status
             return
         if str(path) == fetch.transfer:
             self._fetch_done(fetch, status)
@@ -959,6 +1006,6 @@ def _describe(error: Exception) -> str:
     name = error_name(error)
     message = getattr(error, "message", "") or ""
     # "Connection refused (111)": another BIP client holds the phone's slot.
-    if "111" in message or "refused" in message.lower():
+    if "(111)" in message or "refused" in message.lower():
         return f"{name} (another cover art session is open?)"
     return name

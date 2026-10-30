@@ -130,9 +130,8 @@ nicht BlueFerrys Nachrichten-Schnittstelle.
 - BlueFerry tritt selbst nicht als AVRCP-Fernbedienung auf; das könnte das
   iPhone dazu bringen, seinen Ton an den Computer zu schicken. Das Cover
   (siehe unten) nutzt nur die AVRCP-Verbindung, die BlueZ ohnehin hat.
-- Das Cover des Titels, der beim Verbinden schon läuft, erscheint meist erst
-  ab dem nächsten Titel (das iPhone schickt den Bildverweis nur für Titel,
-  die es nach dem Öffnen der Cover-Verbindung beschreibt).
+- Bei manchen Playern erscheint das Cover des Titels, der beim Verbinden
+  schon läuft, erst ab dem nächsten Titel.
 
 ## Cover
 
