@@ -17,6 +17,8 @@ STATUS_KEY = "calls_quick_replies"
 # Mirrors blueferry.calls.quick_replies (the daemon validates again).
 MAX_REPLIES = 5
 MAX_REPLY_CHARS = 160
+# A typed reply; every client caps its text field here (popups too).
+MAX_CUSTOM_CHARS = 1000
 # The value of the "type your own text" entry in a choice list.
 CUSTOM = "\x00custom"
 
@@ -84,7 +86,17 @@ def custom_text_error(text: str) -> str:
     """Why a typed text cannot be sent; "" when it can."""
     if not text.strip():
         return _("Type a message first.")
+    if len(text.strip()) > MAX_CUSTOM_CHARS:
+        return _("A message can have at most {count} characters.").format(count=MAX_CUSTOM_CHARS)
     return ""
+
+
+def dialog_view(status: Mapping[str, Any]) -> dict[str, Any]:
+    """Everything a decline dialog shows: title, choices, field and its limit."""
+    return {
+        "title": dialog_title(), "choices": choices(status), "custom": CUSTOM,
+        "placeholder": custom_placeholder(), "max_chars": MAX_CUSTOM_CHARS,
+    }
 
 
 def sent_text() -> str:
@@ -161,5 +173,6 @@ def settings_view(status: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "supported": supported(status), "label": settings_label(), "hint": settings_hint(),
         "replies": current, "can_add": can_add(current), "add_label": add_label(),
+        "max_chars": MAX_REPLY_CHARS, "max_replies": MAX_REPLIES,
         "empty": _("No saved replies: declining offers only your own text."),
     }
