@@ -29,6 +29,14 @@ flowchart LR
   nicht von selbst).
 - Zeigt bei einem eingehenden Anruf eine Desktop-Mitteilung mit **Answer**
   und **Decline**. Sie schließt sich, sobald es nicht mehr klingelt.
+- Während eines Gesprächs (hier oder am iPhone angenommen, oder ein
+  ausgehender Anruf, sobald er verbunden ist) bleibt eine Mitteilung
+  stehen: **Call with** und der Anrufer, die Startzeit („since 15:14“) und
+  **Hang up**. Beim Halten steht dort **On hold**. Wer die Mitteilung
+  schließt, beendet damit nie den Anruf; sie bleibt zu, bis der Anruf
+  gehalten oder fortgesetzt wird. Endet der Anruf, verschwindet sie. Mit
+  `BLUEFERRY_SHOW_NOTIFICATION_CONTENT=false` zeigt sie keinen Anrufer;
+  **No notifications** schaltet sie ab wie die Klingel-Mitteilung.
 - Der Qt-Client bekommt einen Dialog **Phone Calls**, der Terminal-Client
   ein Anruf-Panel (`c`) und die CLI die Befehlsgruppe `calls`:
 

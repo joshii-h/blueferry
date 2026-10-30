@@ -152,6 +152,8 @@ class EventDispatcher:
         # Shutdown: the server is still ours, so retire live iPhone action
         # buttons instead of leaving them wired to a daemon that is gone.
         self.ancs_actions_reset()
+        # Likewise call popups: no Hang up button may outlive the daemon.
+        self._fan_out("close_all_call_notifications")
         self._remove_libnotify_sink(log_change=False)
         self._remove_sinks(_OTP_SINK_NAME)
 
