@@ -577,7 +577,7 @@ def _exercise_notifications():
     runner = ManualRunner()
     window, client = _window({"daemon": True, "map": True}, timer=runner.timer)
     page = window.notifications
-    timer = runner.timers[-1]
+    timer = page.history._timer
     assert "notifications" not in client.names(), "hidden tab: nothing is read"
     window.show_tab("notifications")
     _settle()
@@ -723,7 +723,7 @@ def _exercise_pins():
     status = {**NOTIFICATIONS_ON, "notification_muted_app_count": 1}
     window, client = _window(status, timer=runner.timer)
     page = window.notifications
-    timer = runner.timers[-1]
+    timer = page.history._timer
     toasts = []
     page._toast = toasts.append
     assert "apps" not in client.names(), "hidden tab: the muted apps are not read"
