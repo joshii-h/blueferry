@@ -31,6 +31,7 @@ class MutedApps:
         self._is_open = is_open
         self._shown = False
         self._reachable = False
+        self._count: object = _UNREAD
         self._loaded_count: object = _UNREAD
         self._payload: dict[str, Any] = view.normalize({})
         self._saving: set[str] = set()
@@ -46,24 +47,28 @@ class MutedApps:
             css_classes=["dim-label", "caption"],
         )
         self.group.add(self.hint)
+        self._render()
         client.connect("notification-apps-changed", lambda *_args: self._changed())
 
     def apply(self, status: BackendStatus, reachable: bool) -> None:
         values = status.to_dict()
+        shown = reachable and view.supported(values)
+        changed = (shown, reachable) != (self._shown, self._reachable)
         self._reachable = reachable
-        self._shown = reachable and view.supported(values)
-        self.group.set_visible(self._shown)
-        count = values.get(view.STATUS_KEY, _UNREAD)
-        # A mute from the CLI or another client changes the count.
-        if self._shown and count != self._loaded_count and (
-            self._loaded_count is _UNREAD or self._is_open()
-        ):
-            self._loaded_count = count
+        self._shown = shown
+        self.group.set_visible(shown)
+        self._count = values.get(view.STATUS_KEY, _UNREAD)
+        # A mute from the CLI or another client changes the count; the
+        # first read happens when the settings open (load).
+        if shown and self._is_open() and self._count != self._loaded_count:
             self.load()
-        self._render()
+        # Only reachability changes the rows; the list itself comes from load.
+        if changed:
+            self._render()
 
     def load(self) -> None:
         if self._shown:
+            self._loaded_count = self._count
             self._client.notification_apps_async(self._loaded, lambda _message: None)
 
     def _changed(self) -> None:
@@ -125,11 +130,19 @@ class MutedApps:
             self.load()
             self._render()
 
+        def saved(state: object) -> None:
+            # Show the confirmed state now instead of the old list until the
+            # read below answers.
+            new_state = state if isinstance(state, bool) else muted
+            self._payload = view.normalize({**self._payload, "apps": [
+                {**app, "muted": new_state} if app["app_id"] == app_id else app
+                for app in self._payload["apps"]
+            ]})
+            finished()
+
         def failed(message: str) -> None:
             self._toast(view.change_failed_text(message))
             finished()
 
-        self._client.set_notification_app_muted_async(
-            app_id, muted, lambda _state: finished(), failed,
-        )
+        self._client.set_notification_app_muted_async(app_id, muted, saved, failed)
         self._render()

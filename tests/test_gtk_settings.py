@@ -550,7 +550,29 @@ def _exercise_muted_apps():
 
     dialog._apply_status(status(1))
     assert apps.group.get_visible()
+    assert client.calls == [], "the first read waits for the settings to open"
+    # Opening reads once; the status read right after does not read again.
+    dialog.open(window, "notifications")
+    open_state[0] = True
     client.take("apps")[1](APPS)
+    client.calls.clear()  # the other groups' reads on opening
+    dialog._apply_status(status(1))
+    assert client.calls == []
+    open_state[0] = False
+    # Status reads without a reachability change keep the rows as they are.
+    renders = []
+    original_render = apps._render
+    apps._render = lambda: (renders.append(True), original_render())
+    dialog._apply_status(status(1))
+    assert renders == []
+    dialog._apply_status(BackendStatus.from_dict({
+        "daemon": False, "notification_muted_app_count": 1}))
+    assert renders == [True] and not apps.group.get_visible()
+    dialog._apply_status(status(1))
+    assert renders == [True, True] and apps.group.get_visible()
+    apps._render = original_render
+    assert "apps" not in [call[0] for call in client.calls]
+    client.calls.clear()  # other groups react to the daemon coming back
     chat, game = apps.rows["com.example.Chat"], apps.rows["com.example.Game"]
     assert (chat.get_title(), chat.get_active(), chat.get_sensitive()) == (
         "<b>Chat</b>", False, True)
@@ -575,6 +597,8 @@ def _exercise_muted_apps():
     client.take("apps")
     chat.set_active(True)
     client.take(("mute", "com.example.Chat", True))[1](True)
+    # Confirmed: shown at once, not only after the list is read again.
+    assert chat.get_active() and chat.get_sensitive() and "Muted" in chat.get_subtitle()
     muted = {**APPS, "apps": [{**APPS["apps"][0], "muted": True}, APPS["apps"][1]]}
     client.take("apps")[1](muted)
     assert chat.get_active() and "Muted" in chat.get_subtitle()
