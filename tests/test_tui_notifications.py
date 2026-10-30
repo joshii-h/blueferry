@@ -58,6 +58,9 @@ class _Monitor:
         changed, self.changed = self.changed > 0, 0
         return changed
 
+    def take_tether_changed(self) -> bool:
+        return False
+
     def close(self) -> None:
         pass
 
