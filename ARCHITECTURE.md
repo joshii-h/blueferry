@@ -668,7 +668,9 @@ A change to these rules has to be made in both places.
   ignored. Clients share `call_audio_view.py` for the wording.
   Muting for the call sets `mute` in the `Props` of the phone's
   `bluez_output.<MAC>` stream with `pw-cli set-param`, after the same
-  serial check. The state is in memory and ends with the call; each new
+  serial check. The request is in memory and ends when no call is left;
+  `audio.muted` reports the stream's state from the last check (a failed
+  write resets the request and announces it). Each new
   stream is checked once (so a stream that comes back gets the mute again,
   and a mute WirePlumber restored from an earlier call is lifted), and a
   muted call that ends, or switching calls off, unmutes the stream if it

@@ -155,9 +155,13 @@ WirePlumber nicht läuft.
 **Stumm** in der Anrufansicht des Qt-, GTK- und Terminal-Clients (oder
 `blueferry calls mute on|off`) schaltet das Mikrofon dieses Computers nur für
 den laufenden Anruf stumm: Die Gegenseite hört nichts, andere Anwendungen
-nehmen weiter vom Mikrofon auf. Die Stummschaltung endet mit dem Anruf; der
-nächste Anruf beginnt mit Ton. Bricht das Gesprächsaudio während des Anrufs
-ab und kommt wieder (eine neue Freisprech-Audioverbindung), bleibt es stumm.
+nehmen weiter vom Mikrofon auf. Die Stummschaltung endet, wenn kein Anruf
+mehr übrig ist (bei einem gehaltenen oder wartenden Anruf gilt sie dort
+weiter); der nächste Anruf beginnt mit Ton. Bricht das Gesprächsaudio während
+des Anrufs ab und kommt wieder (eine neue Freisprech-Audioverbindung), bleibt
+es stumm. Der Knopf wirkt, sobald das Gesprächsaudio da ist (einige Sekunden
+nach dem Annehmen), und zeigt, was PipeWire meldet: Scheitert das
+Stummschalten, bleibt er auf **Stumm**.
 
 BlueFerry schaltet dazu den Audio-Stream des Anrufs in PipeWire mit `pw-cli`
 (Teil von PipeWire) stumm, nicht das Mikrofon selbst. Hebst du die
