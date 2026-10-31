@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from typing import Optional
 
 import typer
 
@@ -154,7 +155,7 @@ def media(
         ),
         show_default=True,
     ),
-    direction: str | None = typer.Argument(
+    direction: Optional[str] = typer.Argument(  # noqa: UP045 - typer needs Optional here
         None, help="With 'volume': up or down (one iPhone volume step)",
         show_default=False,
     ),
