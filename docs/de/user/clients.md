@@ -24,6 +24,10 @@ Karte die Einstellung, die es einschaltet. Die Reiter wechselt man
 in der Kopfzeile, in einem schmalen Fenster unten:
 
 - **Messages**: Unterhaltungen und der Chat.
+- **Contacts**: die [Kontaktkarten](contacts.md) mit einem Suchfeld; eine
+  Karte zeigt jede Nummer mit Bezeichnung, E-Mail- und Postadressen,
+  Firma, Funktion und Foto, mit **Call** und **Message** (öffnet die
+  Unterhaltung mit dieser Nummer oder eine neue Nachricht).
 - **Calls**: laufende [Anrufe](calls.md) mit annehmen, halten/fortsetzen
   und auflegen sowie dem Ton-Schalter, ein Wählfeld, das auch deine
   Kontakte nach Namen durchsucht, und die [Anrufliste](call-history.md) nach Tagen
@@ -34,6 +38,11 @@ in der Kopfzeile, in einem schmalen Fenster unten:
   Einträge stehen oben, Einträge, die das iPhone entfernt hat oder die von
   [stummgeschalteten Apps](notification-mute.md) stammen, sind abgeblendet.
   Ist die Liste aus, sagt der Reiter warum und öffnet die Einstellung.
+
+Die Lupe in der Kopfzeile, `Strg+K` oder `Strg+F` öffnet die
+[Suche](search.md) über Unterhaltungen, Nachrichten, Kontakte und Anrufe.
+Ein Treffer öffnet die Unterhaltung bei dieser Nachricht, die Kontaktkarte
+oder den Anruf in der Anrufliste.
 
 **Settings** (Hauptmenü, `Strg+,`) hat dieselben Kategorien wie der
 KDE-Client, je eine Seite; die Umschaltleiste sitzt in der Kopfzeile, in

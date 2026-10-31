@@ -20,6 +20,10 @@ setting turns it on. The tabs are switched in the header bar, or at the
 bottom in a narrow window:
 
 - **Messages**: conversations and the chat.
+- **Contacts**: the [contact cards](contacts.md) with a search field; a
+  card shows every number with its label, email and postal addresses,
+  company, job title and photo, with **Call** and **Message** (opens the
+  conversation with that number, or a new message).
 - **Calls**: running [phone calls](calls.md) with answer, hold/resume and
   hang up and the sound switch, a dial pad that also searches your
   contacts by name, and the [call history](call-history.md) grouped by day,
@@ -30,6 +34,11 @@ bottom in a narrow window:
   first, and entries removed on the iPhone or from
   [muted apps](notification-mute.md) are dimmed. When the list is off, the
   tab says why and opens the setting.
+
+The magnifier in the header bar, `Ctrl+K` or `Ctrl+F` opens the
+[search](search.md) over conversations, messages, contacts and calls.
+Choosing a hit opens the conversation at that message, the contact card,
+or the call in the call history.
 
 **Settings** (main menu, `Ctrl+,`) has the same categories as the KDE
 client, one page each; the switcher sits in the header bar, or at the
