@@ -1327,6 +1327,8 @@ class BlueFerryApp(App[None]):
         audio = phone_audio(status.to_dict())
         if audio["available"]:
             extras.append("sound here" if audio["on_pc"] else "sound on iPhone")
+        if audio["sync"]:
+            extras.append(audio["sync"].rstrip("."))
         if extras:
             summary = "  ·  ".join([summary, *extras])
         connection = self.query_one("#connection-summary", Static)

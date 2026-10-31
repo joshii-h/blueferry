@@ -997,6 +997,14 @@ def test_textual_sound_switch_moves_the_iphone_audio_and_explains_refusals() -> 
             app.action_phone_audio()
             await app.workers.wait_for_complete()
             assert backend.routes == ["pc"]
+            backend.reported = {
+                "phone_audio_route": "pc", "phone_audio_playing": "pc",
+                "phone_audio_delay_ms": 110, "phone_audio_delay_reporting": True,
+            }
+            await app._apply_snapshot(app.state.fetch_snapshot())
+            await _wait_for_static_text_containing(
+                app, pilot, "#connection-summary", "A/V sync: 110 ms delay",
+            )
 
     _run_headless(scenario())
 
