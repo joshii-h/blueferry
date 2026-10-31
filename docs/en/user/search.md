@@ -13,7 +13,9 @@ Results are grouped into conversations (by name or group member),
 messages (by text, newest first, with the matching words highlighted),
 contacts (name, company, mail, postal address or number) and calls (caller
 name or number). Each group shows how many matches the limit left out.
-Numbers match by their digits once the query has at least three digits.
+Case, accents and spelling variants do not matter: `muller` finds
+`Müller`. Numbers match by their digits once the query has at least three
+digits, also for conversations. At most 50 hits per group are shown.
 Queries shorter than two characters find nothing.
 
 The graphical and terminal clients get a search field in a separate change;
@@ -32,8 +34,10 @@ until then use the command line.
 
 Local history is encrypted, so BlueFerry keeps no search index on disk.
 The background service searches the data it already holds decrypted in
-memory for the open clients, and only when you search; nothing is
-prepared or stored in advance. While the wallet is locked, calls are not
+memory for the open clients, and only when you search. To keep searching
+while you type fast, it keeps a lower-case copy of the searched messages in
+memory until the conversations change; nothing is prepared in advance or
+written to disk. While the wallet is locked, calls are not
 searched.
 
 ## Limits

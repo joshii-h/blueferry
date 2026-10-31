@@ -13,8 +13,11 @@ Die Treffer sind gruppiert: Unterhaltungen (nach Name oder
 Gruppenmitglied), Nachrichten (nach Text, neueste zuerst, mit
 hervorgehobener Fundstelle), Kontakte (Name, Firma, Mail, Postadresse oder
 Nummer) und Anrufe (Name oder Nummer). Jede Gruppe zeigt, wie viele Treffer
-wegen des Limits fehlen. Nummern werden über ihre Ziffern gefunden, sobald
-die Suche mindestens drei Ziffern enthält. Suchen mit weniger als zwei
+wegen des Limits fehlen. Groß-/Kleinschreibung, Akzente und
+Schreibvarianten spielen keine Rolle: `muller` findet `Müller`. Nummern
+werden über ihre Ziffern gefunden, sobald die Suche mindestens drei Ziffern
+enthält, auch bei Unterhaltungen. Pro Gruppe werden höchstens 50 Treffer
+angezeigt. Suchen mit weniger als zwei
 Zeichen finden nichts.
 
 Die grafischen Clients und der Terminal-Client bekommen ein Suchfeld mit
@@ -35,8 +38,10 @@ einer separaten Änderung; bis dahin nutze die Kommandozeile.
 Der lokale Verlauf ist verschlüsselt, deshalb legt BlueFerry keinen
 Suchindex auf der Festplatte an. Der Hintergrunddienst durchsucht die
 Daten, die er für die offenen Clients ohnehin entschlüsselt im Speicher
-hält, und zwar nur, wenn du suchst; vorab wird nichts aufbereitet oder
-gespeichert. Solange die Brieftasche gesperrt ist, werden Anrufe nicht
+hält, und zwar nur, wenn du suchst. Damit die Suche beim schnellen Tippen
+flüssig bleibt, behält er eine kleingeschriebene Kopie der durchsuchten
+Nachrichten im Speicher, bis sich die Unterhaltungen ändern; vorab wird
+nichts aufbereitet und nichts auf die Festplatte geschrieben. Solange die Brieftasche gesperrt ist, werden Anrufe nicht
 durchsucht.
 
 ## Grenzen
