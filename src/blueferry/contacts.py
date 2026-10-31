@@ -796,9 +796,13 @@ class ContactsResolver:
         )
 
     def _matching_indices(self, query: str) -> Iterator[int]:
-        needle = fold(" ".join(query.split()))
-        if not needle:
+        collapsed = " ".join(query.split())
+        if not collapsed:
             yield from range(len(self._records))
+            return
+        needle = fold(collapsed)
+        if not needle:
+            # Only characters that fold away (lone combining marks).
             return
         digits = re.sub(r"\D", "", needle)
         digit_query = (
