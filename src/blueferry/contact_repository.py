@@ -13,6 +13,8 @@ import time
 from contextlib import closing
 
 from blueferry import config
+from blueferry.contact_details import EMPTY as EMPTY_DETAILS
+from blueferry.contact_details import ContactDetails
 from blueferry.contact_photos import valid_photo
 from blueferry.events import is_email_shaped
 from blueferry.limits import (
@@ -87,6 +89,9 @@ _BUSY_ERROR_PREFIXES = ("SQLITE_BUSY_", "SQLITE_LOCKED_", "SQLITE_READONLY_")
 
 PhotoRef = int
 ContactEntry = tuple[ContactRecord, PhotoRef | None]
+# A record with its photo reference and its card details (labels, postal
+# addresses, organization). Details exist only in sealed payloads.
+ContactCard = tuple[ContactRecord, PhotoRef | None, ContactDetails]
 
 
 class PhotoStoreBusy(RuntimeError):
@@ -191,11 +196,14 @@ class ContactRepository:
         records: list[ContactRecord],
         *,
         photos: list[bytes | None] | None = None,
+        details: list[ContactDetails] | None = None,
     ) -> int:
-        """Atomically replace the cache; ``photos`` aligns with ``records``.
+        """Atomically replace the cache; ``photos`` and ``details`` align with ``records``.
 
         Photos are stored only under a storage policy object, sealed with the
         same key and replaced in the same transaction as their contacts.
+        Card details likewise exist only inside the sealed payload; the
+        plaintext tables keep the messaging addresses alone.
         """
         now = time.time()
         with closing(_open_db()) as connection:
@@ -219,6 +227,13 @@ class ContactRepository:
                         entry: dict[str, object] = {
                             "name": name or "", "phones": phones, "emails": emails,
                         }
+                        card = (
+                            details[index]
+                            if details is not None and index < len(details)
+                            else EMPTY_DETAILS
+                        )
+                        if card:
+                            entry["details"] = card.to_storage()
                         if photo is not None:
                             cursor = connection.execute(
                                 "INSERT INTO contact_photos(payload) VALUES (?)",
@@ -296,10 +311,10 @@ class ContactRepository:
             connection.execute("DELETE FROM contacts")
         return True
 
-    def _secure_records(self, connection: sqlite3.Connection) -> list[ContactEntry]:
+    def _secure_records(self, connection: sqlite3.Connection) -> list[ContactCard]:
         if self.storage is None or not self.storage.status.can_read:
             return []
-        records: list[ContactEntry] = []
+        records: list[ContactCard] = []
         for (payload,) in connection.execute(
             "SELECT payload FROM secure_contacts ORDER BY id LIMIT ?",
             (MAX_PHONEBOOK_CONTACTS,),
@@ -335,6 +350,7 @@ class ContactRepository:
                     if type(raw_photo) is int and raw_photo > 0
                     else None
                 )
+                card = ContactDetails.from_storage(value.get("details"))
             except CorruptStorageError:
                 self.storage.fail_closed(
                     "Encrypted contacts could not be authenticated"
@@ -342,26 +358,30 @@ class ContactRepository:
                 return []
             except (ValueError, RuntimeError, TypeError):
                 continue
-            records.append(((name, phones, emails), photo))
+            records.append(((name, phones, emails), photo, card))
         return records
 
     def load(self, *, strict: bool = False) -> list[ContactRecord]:
-        return [record for record, _photo in self.load_entries(strict=strict)]
+        return [record for record, _photo, _details in self.load_cards(strict=strict)]
 
     def load_entries(self, *, strict: bool = False) -> list[ContactEntry]:
         """Load records with their photo reference (``None`` without a photo)."""
+        return [(record, photo) for record, photo, _details in self.load_cards(strict=strict)]
+
+    def load_cards(self, *, strict: bool = False) -> list[ContactCard]:
+        """Load records with their photo reference and card details."""
         if self.storage is not None and not self.storage.status.can_read:
             return []
         try:
             with closing(_open_db()) as connection:
                 if self.storage is None:
                     return [
-                        (record, None)
+                        (record, None, EMPTY_DETAILS)
                         for record in self._plaintext_records(connection)
                     ]
                 discarded = self._discard_plaintext(connection)
                 records = self._secure_records(connection)
-                if any(photo is not None for _record, photo in records):
+                if any(photo is not None for _record, photo, _details in records):
                     # clear_photos() leaves ids in sealed payloads; never
                     # advertise a photo whose row no longer exists.
                     stored = {
@@ -369,8 +389,8 @@ class ContactRepository:
                         for row in connection.execute("SELECT id FROM contact_photos")
                     } if _has_photo_table(connection) else set()
                     records = [
-                        (record, photo if photo in stored else None)
-                        for record, photo in records
+                        (record, photo if photo in stored else None, card)
+                        for record, photo, card in records
                     ]
                 if discarded:
                     connection.execute("VACUUM")
