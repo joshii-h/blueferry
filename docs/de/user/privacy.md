@@ -84,6 +84,12 @@ Unterhaltungen einen Neustart überstehen. Du entscheidest, wie:
   Speichermodus.
 - `blueferry history-clear` löscht den lokalen Nachrichtenverlauf.
 
+Die [Kartenangaben](contacts.md) der Kontakte (Bezeichnungen der Nummern,
+Postadressen, Firma, Position) liegen nur in verschlüsselten
+Kontakteinträgen; im unverschlüsselten Modus werden sie gar nicht
+gespeichert. Die [Suche](search.md) legt keinen Index auf der Festplatte
+an; sie läuft über Daten, die der Dienst ohnehin im Speicher hält.
+
 Mit den optionalen [Kontaktfotos](contact-photos.md) enthält der
 Kontakt-Cache auch die Bilder deiner Kontakte, im selben Speichermodus. Für
 Popup-Symbole legt das Backend kurzlebige Kopien, die nur dir gehören, in

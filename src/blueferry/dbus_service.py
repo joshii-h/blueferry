@@ -55,6 +55,8 @@ class MessagesService(dbus.service.Object):
         self._change_revision = 0
         self.operations = operations or BackendOperations(sessions, dependencies)
         self._projection_worker = BackgroundWorker("blueferry-projection", maximum=1)
+        # Matching only; a few queued keystrokes, then NotReady until it drains.
+        self._search_worker = BackgroundWorker("blueferry-search", maximum=4)
         # One active lookup plus an interactive request queued behind a
         # cancelled passive lookup. The executor still runs one job at a time.
         self._wallet_worker = BackgroundWorker("blueferry-wallet", maximum=2)
@@ -242,6 +244,55 @@ class MessagesService(dbus.service.Object):
                 self.operations.list_contacts(offset, limit)
             ),
         ))
+
+    @dbus.service.method(
+        IFACE, in_signature="su", out_signature="s", sender_keyword="sender",
+        async_callbacks=("reply_handler", "error_handler"),
+    )
+    def Search(self, query: str, limit: int, reply_handler, error_handler, sender=None) -> None:
+        """Search conversations, messages, contacts and calls in memory, as JSON.
+
+        Sources are snapshotted on the main loop; matching runs on the search
+        worker so a client searching while the user types never blocks it.
+        """
+        def replied(result: dict) -> None:
+            try:
+                encoded = self._json_response(result)
+            except Exception as error:
+                error_handler(self._dbus_error(error))
+                return
+            reply_handler(encoded)
+
+        self._conversation_call(
+            sender, "read", lambda: self.operations.search_async(
+                str(query), int(limit), self._search_worker.submit, replied,
+                lambda error: error_handler(self._dbus_error(error)),
+            ), error_handler,
+        )
+
+    @dbus.service.method(
+        IFACE, in_signature="uus", out_signature="s", sender_keyword="sender"
+    )
+    def ListContactCards(self, offset: int, limit: int, query: str, sender=None) -> str:
+        """One page of contact cards (ids, names, counts), optionally filtered."""
+        return self._sync(lambda: self._authorized(
+            sender, "read",
+            lambda: self._json_response(
+                self.operations.list_contact_cards(offset, limit, str(query))
+            ),
+        ))
+
+    @dbus.service.method(
+        IFACE, in_signature="s", out_signature="say", sender_keyword="sender"
+    )
+    def GetContact(self, contact_id: str, sender=None) -> tuple[str, dbus.ByteArray]:
+        """Every detail of one contact card as JSON, plus its photo bytes."""
+        def card() -> tuple[str, dbus.ByteArray]:
+            document, photo = self.operations.contact_card(str(contact_id))
+            return self._json_response(document), dbus.ByteArray(photo)
+
+        # Charged like GetContactPhoto: the reply can carry a decrypted photo.
+        return self._sync(lambda: self._authorized(sender, "contact-photo", card))
 
     @dbus.service.method(
         IFACE, in_signature="s", out_signature="ay", sender_keyword="sender"
@@ -1068,6 +1119,7 @@ class MessagesService(dbus.service.Object):
         if storage is not None:
             storage.cancel_pending()
         self._projection_worker.close()
+        self._search_worker.close()
         self._wallet_worker.close()
         self._caller_guard.close()
 

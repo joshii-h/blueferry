@@ -73,3 +73,6 @@ src/blueferry/companion_model.py
 src/blueferry/qt/qml/CompanionToolsSection.qml
 src/blueferry/media_volume_view.py
 src/blueferry/notification_apps_view.py
+src/blueferry/phone_audio_view.py
+src/blueferry/contacts_view.py
+src/blueferry/search_view.py
