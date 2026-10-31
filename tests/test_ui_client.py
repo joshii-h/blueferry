@@ -708,3 +708,38 @@ def test_notification_apps_changed_is_forwarded_as_a_gobject_signal(monkeypatch)
     finally:
         client.stop()
     assert seen == [True]
+
+
+def test_contact_cards_and_search_are_blocking_reads_for_the_shared_models(
+    monkeypatch,
+) -> None:
+    from blueferry.client import ContactNotFoundError
+
+    class Backend:
+        def contact_cards(self, offset, limit, query):
+            return {"contacts": [], "offset": offset, "total": 0, "query": query,
+                    "limit": limit}
+
+        def contact(self, contact_id):
+            if contact_id == "gone":
+                raise ContactNotFoundError("unknown contact")
+            return {"id": contact_id}, b"photo"
+
+        def search(self, query, limit):
+            return {"query": query, "limit": limit}
+
+    client, submitted = _recording_client(monkeypatch, Backend())
+    events = []
+    try:
+        client.submit(lambda: client.contact_cards(100, 50, "ad"), events.append)
+        client.submit(lambda: client.contact("c1"), events.append)
+        client.submit(lambda: client.contact("gone"), events.append, events.append)
+        client.submit(lambda: client.search("noon", 20), events.append)
+    finally:
+        client.stop()
+    assert events == [
+        {"contacts": [], "offset": 100, "total": 0, "query": "ad", "limit": 50},
+        ({"id": "c1"}, b"photo"), "unknown contact",
+        {"query": "noon", "limit": 20},
+    ]
+    assert submitted == ["read"] * 4

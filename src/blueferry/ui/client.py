@@ -804,6 +804,23 @@ class DaemonClient(GObject.Object):
         """ListNotifications; blocking, so only for work passed to :meth:`submit`."""
         return self._call_backend(lambda backend: backend.notifications(limit))
 
+    def contact_cards(self, offset: int, limit: int, query: str) -> dict:
+        """ListContactCards; blocking, so only for work passed to :meth:`submit`."""
+        return self._call_backend(
+            lambda backend: backend.contact_cards(offset, limit, query)
+        )
+
+    def contact(self, contact_id: str) -> tuple[dict, bytes]:
+        """GetContact (card and photo bytes); blocking, only through :meth:`submit`.
+
+        A stale id raises :class:`blueferry.client.ContactNotFoundError`.
+        """
+        return self._call_backend(lambda backend: backend.contact(contact_id))
+
+    def search(self, query: str, limit: int) -> dict:
+        """Search; blocking, so only for work passed to :meth:`submit`."""
+        return self._call_backend(lambda backend: backend.search(query, limit))
+
     def set_notification_pinned_async(
         self, key: str, pinned: bool, on_ok, on_err
     ) -> None:
