@@ -4,6 +4,7 @@ from __future__ import annotations
 import typer
 
 from blueferry.client import BackendClient, BackendError
+from blueferry.limits import MAX_SEARCH_RESULTS
 from blueferry.text_safety import terminal_text
 
 _TARGET_KEYS = {
@@ -29,14 +30,17 @@ def _marked(row: dict) -> str:
 
 def search(
     query: str = typer.Argument(..., help="Text, name or number to look for"),
-    limit: int = typer.Option(10, "--limit", "-n", min=1, help="Results per group"),
+    limit: int = typer.Option(
+        10, "--limit", "-n", min=1,
+        help=f"Results per group (capped at {MAX_SEARCH_RESULTS})",
+    ),
     ids: bool = typer.Option(False, "--ids", help="Show the ids to open each hit"),
 ) -> None:
     """Search messages, conversations, contacts and call history at once."""
     from blueferry import search_view
 
     try:
-        result = BackendClient().search(query, limit)
+        result = BackendClient().search(query, min(limit, MAX_SEARCH_RESULTS))
     except BackendError as error:
         typer.echo(typer.style(f"Search failed: {error}", fg=typer.colors.RED), err=True)
         raise typer.Exit(code=3) from None
@@ -58,7 +62,13 @@ def search(
                     f"{key}={_one_line(target[key])}" for key in keys
                 ))
         if section["more"]:
-            typer.echo(f"  {section['more']}; raise --limit to see more")
+            if view["limit"] < MAX_SEARCH_RESULTS:
+                typer.echo(f"  {section['more']}; raise --limit to see more")
+            else:
+                typer.echo(f"  {section['more']}; refine the query to see them")
+    note = search_view.limit_text(result, limit)
+    if note:
+        typer.echo(note, err=True)
     if view["hint"]:
         typer.echo(view["hint"], err=not view["sections"])
     if not view["sections"]:

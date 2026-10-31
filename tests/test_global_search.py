@@ -343,3 +343,29 @@ def test_cli_exits_one_without_results(monkeypatch) -> None:
     ))
     result = CliRunner().invoke(app, ["search", "zzz"])
     assert result.exit_code == 1 and "Nothing matches" in result.output
+
+
+def test_presenter_reports_the_applied_limit() -> None:
+    assert search_view.search_view(RESULT)["limit"] == 2
+    assert search_view.limit_text(RESULT) == "Showing at most 2 results per group."
+    complete = {"query": "x", "limit": 50, "messages": {"total": 1, "results": [
+        {"thread_key": "t", "handle": "m", "snippet": "x"},
+    ]}}
+    assert search_view.limit_text(complete) == ""
+    assert search_view.limit_text(complete, 100) == "Showing at most 50 results per group."
+    assert search_view.limit_text({"query": "x"}, 100) == ""
+
+
+def test_cli_caps_the_limit_and_says_so(monkeypatch) -> None:
+    requested = []
+
+    def search(query, limit):
+        requested.append(limit)
+        return {**RESULT, "limit": limit}
+
+    monkeypatch.setattr(cli_search, "BackendClient", lambda: SimpleNamespace(search=search))
+    result = CliRunner().invoke(app, ["search", "lunch", "-n", "100"])
+    assert result.exit_code == 0, result.output
+    assert requested == [MAX_SEARCH_RESULTS]
+    assert f"Showing at most {MAX_SEARCH_RESULTS} results per group." in result.output
+    assert "refine the query" in result.output

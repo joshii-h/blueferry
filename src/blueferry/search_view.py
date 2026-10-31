@@ -67,7 +67,12 @@ def normalize(payload: object) -> dict[str, Any]:
         except ValueError:
             payload = {}
     value = payload if isinstance(payload, Mapping) else {}
-    result: dict[str, Any] = {"query": _text(value.get("query"))}
+    result: dict[str, Any] = {
+        "query": _text(value.get("query")),
+        # The per-group limit the daemon applied (it caps the requested one);
+        # 0 when the reply does not say.
+        "limit": _count(value.get("limit")),
+    }
     for group in GROUPS:
         raw = value.get(group)
         raw = raw if isinstance(raw, Mapping) else {}
@@ -237,6 +242,27 @@ def hint(payload: object) -> str:
     return " ".join(lines)
 
 
+def limit_text(payload: object, requested: int | None = None) -> str:
+    """Explain the per-group limit the daemon applied, "" when nothing is cut.
+
+    Mentions it when a group has more matches than shown, or when the
+    daemon capped a larger ``requested`` limit.
+    """
+    view = normalize(payload)
+    limit = view["limit"]
+    if not limit:
+        return ""
+    capped = requested is not None and requested > limit
+    cut = any(view[group]["total"] > len(view[group]["results"]) for group in GROUPS)
+    if not (capped or cut):
+        return ""
+    return ngettext(
+        "Showing at most {limit} result per group.",
+        "Showing at most {limit} results per group.",
+        limit,
+    ).format(limit=limit)
+
+
 def scope_text() -> str:
     """What the search covers, for a tooltip or the empty state."""
     return _(
@@ -273,6 +299,8 @@ def search_view(payload: object) -> dict[str, Any]:
         "sections": groups,
         "count": sum(len(section["rows"]) for section in groups),
         "hint": hint(payload),
+        "limit": normalize(payload)["limit"],
+        "limit_text": limit_text(payload),
     }
 
 
