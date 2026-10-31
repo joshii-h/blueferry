@@ -20,8 +20,11 @@ enthält, auch bei Unterhaltungen. Pro Gruppe werden höchstens 50 Treffer
 angezeigt. Suchen mit weniger als zwei
 Zeichen finden nichts.
 
-Die grafischen Clients und der Terminal-Client bekommen ein Suchfeld mit
-einer separaten Änderung; bis dahin nutze die Kommandozeile.
+Im KDE-Client öffnen die Lupe in der Kopfzeile, `Ctrl+K` oder `Ctrl+F` die
+Suche. Sie sucht beim Tippen, nach einer kurzen Pause, und zeigt dieselben
+Gruppen; Pfeiltasten und Enter oder ein Klick öffnen einen Treffer: die
+Unterhaltung bei der Nachricht, die Kontaktkarte oder den Anruf in der
+Anrufliste. Beim Schließen vergisst die Suche die Ergebnisse.
 
 ## Was durchsucht wird
 

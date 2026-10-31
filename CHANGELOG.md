@@ -38,6 +38,15 @@
   holds in memory; there is no search index on disk. `ListCallHistory`
   entries gain an opaque `id`, and `GetStatus` reports `search_result_limit`.
   CLI: `blueferry search`.
+- KDE client: a **Contacts** tab lists the contact cards with a search
+  field (searching after a short pause while typing) and loads more cards
+  while scrolling; a card shows every labelled number, email and postal
+  address, company, job title and photo, with **Call** and **Message**, and
+  the list reloads when `contact_card_epoch` changes. A global search
+  (header magnifier, `Ctrl+K` or `Ctrl+F`) shows the grouped hits and opens
+  the conversation at the message, the contact card or the call. The shared
+  models `contacts_model` and `search_model` hold the paging, debouncing and
+  stale-id handling for every client; recent-call rows carry the call `ids`.
 
 ## [0.9.0](https://github.com/erikwb/blueferry/releases/tag/v0.9.0) - 2026-10-27
 

@@ -25,8 +25,13 @@ The card ids stay the same while a card is unchanged, until the background
 service restarts. After a sync that changed a card, its old id no longer
 works; list the contacts again.
 
-The graphical and terminal clients get a contact view in a separate change;
-until then use the command line.
+In the KDE client, the **Contacts** tab lists the cards with a search
+field (it searches as you type, after a short pause) and loads more cards as
+you scroll. Choose a card to see all its details; **Call** dials the first
+number, **Message** opens the conversation with it or starts a new one, and
+each number or address has its own call, message, email and copy buttons.
+The list is read only while the tab is shown, and reloads by itself when
+the background service restarts or the contacts were synced again.
 
 ## Photos
 

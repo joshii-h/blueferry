@@ -21,11 +21,15 @@ The window is a phone overview. On the left, a card shows the iPhone's name,
 connection, battery and signal, what is playing (with previous, play/pause
 and next), and quick switches for [the sound](phone-audio.md) and the
 [away lock](proximity-lock.md). Features that are off stay visible but
-greyed out, with the setting that turns them on. On the right are three
+greyed out, with the setting that turns them on. On the right are the
 tabs:
 
 - **Messages**: conversations with All, Unread and Starred filters, and the
   chat.
+- **Contacts**: the [contact cards](contacts.md) with a search field; a
+  card shows every number with its label, email and postal addresses,
+  company, job title and photo, with **Call** and **Message** (opens the
+  conversation with that number, or a new message).
 - **Calls**: [phone calls](calls.md) with a dial pad and running calls as
   cards (answer, hold, hang up), and the [call history](call-history.md)
   grouped by day, with All and Missed.
@@ -33,6 +37,11 @@ tabs:
   of other apps.
 
 In a narrow window the card folds behind the phone button in the header.
+
+The magnifier in the header, `Ctrl+K` or `Ctrl+F` opens the
+[search](search.md) over conversations, messages, contacts and calls.
+Choosing a hit opens the conversation at that message, the contact card,
+or the call in the call history.
 
 **Settings** (the gear in the header) has categories on the left, like KDE's
 System Settings:

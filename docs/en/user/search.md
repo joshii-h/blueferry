@@ -18,8 +18,11 @@ Case, accents and spelling variants do not matter: `muller` finds
 digits, also for conversations. At most 50 hits per group are shown.
 Queries shorter than two characters find nothing.
 
-The graphical and terminal clients get a search field in a separate change;
-until then use the command line.
+In the KDE client, the magnifier in the header, `Ctrl+K` or `Ctrl+F` opens
+the search. It searches as you type, after a short pause, and shows the
+same groups; arrow keys and Enter, or a click, open a hit: the conversation
+scrolled to the message, the contact card, or the call in the call history.
+Closing the search forgets the results.
 
 ## What is searched
 

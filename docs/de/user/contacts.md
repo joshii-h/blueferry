@@ -27,8 +27,14 @@ Die IDs der Karten bleiben gleich, solange sich eine Karte nicht ändert und
 der Hintergrunddienst nicht neu startet. Nach einem Abgleich, der eine Karte
 geändert hat, gilt ihre alte ID nicht mehr; liste die Kontakte dann neu auf.
 
-Die grafischen Clients und der Terminal-Client bekommen eine Kontaktansicht
-mit einer separaten Änderung; bis dahin nutze die Kommandozeile.
+Im KDE-Client listet der Reiter **Contacts** die Karten mit einem Suchfeld
+(es sucht beim Tippen, nach einer kurzen Pause) und lädt beim Scrollen
+weitere Karten nach. Eine Karte zeigt alle Angaben; **Call** wählt die
+erste Nummer, **Message** öffnet die Unterhaltung damit oder beginnt eine
+neue, und jede Nummer oder Adresse hat eigene Knöpfe zum Anrufen,
+Schreiben, Mailen und Kopieren. Die Liste wird nur gelesen, solange der
+Reiter offen ist, und lädt von selbst neu, wenn der Hintergrunddienst neu
+startet oder die Kontakte neu synchronisiert wurden.
 
 ## Fotos
 

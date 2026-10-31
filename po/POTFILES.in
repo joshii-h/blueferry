@@ -68,3 +68,5 @@ src/blueferry/companion_model.py
 src/blueferry/qt/qml/CompanionToolsSection.qml
 src/blueferry/contacts_view.py
 src/blueferry/search_view.py
+src/blueferry/qt/qml/ContactsTab.qml
+src/blueferry/qt/qml/SearchDialog.qml
