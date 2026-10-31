@@ -20,8 +20,10 @@ enthält, auch bei Unterhaltungen. Pro Gruppe werden höchstens 50 Treffer
 angezeigt. Suchen mit weniger als zwei
 Zeichen finden nichts.
 
-Die grafischen Clients und der Terminal-Client bekommen ein Suchfeld mit
-einer separaten Änderung; bis dahin nutze die Kommandozeile.
+Im Terminal-Client öffnet `f` dieselbe Suche beim Tippen, und Enter auf einem
+Treffer öffnet die Unterhaltung, die Kontaktkarte oder den Anruf (siehe
+[Clients](clients.md#kontakte-und-suche)). Die grafischen Clients bekommen ein
+Suchfeld mit einer separaten Änderung.
 
 ## Was durchsucht wird
 

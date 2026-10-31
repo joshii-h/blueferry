@@ -18,8 +18,10 @@ Case, accents and spelling variants do not matter: `muller` finds
 digits, also for conversations. At most 50 hits per group are shown.
 Queries shorter than two characters find nothing.
 
-The graphical and terminal clients get a search field in a separate change;
-until then use the command line.
+In the terminal client, `f` opens the same search as you type, and Enter
+on a hit opens the conversation, contact card or call (see
+[Clients](clients.md#contacts-and-search)). The graphical clients get a
+search field in a separate change.
 
 ## What is searched
 

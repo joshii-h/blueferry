@@ -38,6 +38,13 @@
   holds in memory; there is no search index on disk. `ListCallHistory`
   entries gain an opaque `id`, and `GetStatus` reports `search_result_limit`.
   CLI: `blueferry search`.
+- Terminal client: `C` (or **Contacts** in the command palette) lists the
+  contact cards with a search field and paging, shows every number, email
+  and postal address of the selected card, and calls, messages or copies the
+  selected entry. `f` (or **Search Everything**) searches conversations,
+  messages, contacts and calls as you type and opens the hit: the
+  conversation, the contact card or the call in Recent calls. Contact
+  photos are not shown.
 
 ## [0.9.0](https://github.com/erikwb/blueferry/releases/tag/v0.9.0) - 2026-10-27
 

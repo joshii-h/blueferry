@@ -229,7 +229,9 @@ All paths are relative to `src/blueferry/` unless noted.
 | `tui_doctor.py` | Textual diagnostics report: `blueferry doctor` on a worker, plain-text report with Copy. |
 | `tui_tasks.py` | Textual `TaskRunner`/`Timer` adapters for `client_tasks` (thread workers, results via `call_from_thread`, `set_timer`). |
 | `tui_notification_rules.py` | Textual editor for notification click rules. |
-| `tui_phone.py` | Textual "iPhone Overview" (the phone card: name, connection, battery/signal/network, now playing, `feature_hints`), the opt-in now-playing line, and the recent-calls screen (`call_groups`, call back, message). |
+| `tui_phone.py` | Textual "iPhone Overview" (the phone card: name, connection, battery/signal/network, now playing, `feature_hints`), the opt-in now-playing line, and the recent-calls screen (`call_groups`, call back, message; a search hit's call id selects its row). |
+| `tui_contacts.py` | Textual contacts screen (`C`): `ListContactCards` pages with a typing-delayed search, `GetContact` details (`contacts_view` sections; photo bytes ignored), call/message/copy on a detail row; reloads on a new `contact_card_epoch`, a `NotFound` card says so and reloads. |
+| `tui_search.py` | Textual global search (`f`): `Search` after the typing delay (`search_view` sections, message match highlighted), stale answers dropped by generation, one retry on `NotReady`; Enter dismisses with the hit's target for the app to open. |
 | `phone_overview.py` | Toolkit-free now-playing and recent-call rules shared by the GTK, TUI and Quickshell clients (mirrors the Qt QML rules). |
 | `ui/app.py` | GTK4/libadwaita application entry point. |
 | `ui/window.py` | Main GTK window: the phone card above an `AdwViewStack` with the Messages, Calls and Notifications tabs (switcher in the header, a bottom bar below 650 px); only the visible tab of a shown window reads (`set_watched`), closing stops every read; `add_tab` is where further tabs (Photos) go. Opens the settings dialog on a category and confirms every call (`dial_presenter.py`). |

@@ -25,8 +25,10 @@ The card ids stay the same while a card is unchanged, until the background
 service restarts. After a sync that changed a card, its old id no longer
 works; list the contacts again.
 
-The graphical and terminal clients get a contact view in a separate change;
-until then use the command line.
+In the terminal client, `C` opens the contacts with search, the card
+details and Call, Send a Message and Copy (see
+[Clients](clients.md#contacts-and-search)). The graphical clients get a
+contact view in a separate change.
 
 ## Photos
 

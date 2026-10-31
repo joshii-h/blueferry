@@ -241,6 +241,29 @@ Anrufe, `s` (oder **Refresh from iPhone**) liest die Liste des iPhones neu
 ein. Enter oder **Call Back** ruft die gewählte Nummer nach der
 Bestätigung an, **Send a Message** beginnt eine neue Nachricht an sie.
 
+### Kontakte und Suche
+
+`C` (Umschalt+c; oder **Contacts** in der Palette) öffnet die
+[Kontaktkarten](contacts.md) des iPhones. Die Liste folgt dem Suchfeld kurz
+nach dem letzten Tastendruck und lädt weitere Kontakte nach, sobald du ihr
+Ende erreichst. Enter zeigt die gewählte Karte: Name, Funktion und Firma,
+dann jede Nummer, E-Mail- und Postadresse mit ihrer Bezeichnung. Auf einer
+Zeile der Karte ruft `c` (oder **Call**) die Nummer nach der Bestätigung an,
+`m` (oder **Send a Message**) beginnt eine neue Nachricht an die Nummer oder
+E-Mail-Adresse, und `y` (oder **Copy**) kopiert den Eintrag über das
+Terminal (OSC 52). Enter macht das Erste davon, das die Zeile anbietet.
+Kontaktfotos zeigt das Terminal nicht. Startet der Hintergrunddienst neu
+oder liest er die Kontakte neu ein, wird die Liste neu gelesen; eine Karte,
+die sich inzwischen geändert hat, sagt das.
+
+`f` (oder **Search Everything** in der Palette) ist die [globale
+Suche](search.md): ein Feld für Unterhaltungen, Nachrichten, Kontakte und
+Anrufe, gruppiert, mit den passenden Wörtern einer Nachricht hervorgehoben.
+Sie sucht kurz nach dem letzten Tastendruck; Enter im Feld springt zu den
+Treffern. Enter auf einem Treffer öffnet ihn: die Unterhaltung (bei der
+Nachricht), die Kontaktkarte oder **Recent calls** mit diesem Anruf
+ausgewählt. `/` bleibt der Schnellfilter der Unterhaltungsliste.
+
 ## Kommandozeile
 
 Der Befehl `blueferry` hilft bei der Diagnose und in Skripten:

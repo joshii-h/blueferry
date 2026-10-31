@@ -227,6 +227,28 @@ phone numbers of matching contacts. A call is always confirmed first.
 **Call Back** calls the selected number after the confirmation, **Send a
 Message** starts a new message to it.
 
+### Contacts and search
+
+`C` (Shift+c; or **Contacts** in the palette) opens the iPhone's
+[contact cards](contacts.md). The list follows the search field a moment
+after you stop typing and loads further contacts when you reach its end.
+Enter shows the selected card: name, job title and company, then every
+number, email and postal address with its label. On a detail row, `c` (or
+**Call**) calls the number after the confirmation, `m` (or **Send a
+Message**) starts a new message to the number or email address, and `y` (or
+**Copy**) copies the entry through the terminal (OSC 52). Enter does the
+first of these the row offers. Contact photos are not shown in the
+terminal. When the background service restarts or re-reads the contacts,
+the list is read again; a card that changed meanwhile says so.
+
+`f` (or **Search Everything** in the palette) is the [global
+search](search.md): one field for conversations, messages, contacts and
+calls, grouped, with the matching words of a message highlighted. It
+searches a moment after you stop typing; Enter in the field moves to the
+results. Enter on a hit opens it: the conversation (at the message), the
+contact card, or **Recent calls** with that call selected. `/` stays the
+quick filter of the conversation list.
+
 ## Command line
 
 The `blueferry` command is useful for diagnostics and scripts:
