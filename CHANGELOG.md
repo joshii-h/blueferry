@@ -38,6 +38,12 @@
   holds in memory; there is no search index on disk. `ListCallHistory`
   entries gain an opaque `id`, and `GetStatus` reports `search_result_limit`.
   CLI: `blueferry search`.
+- Quickshell: a search button (and Ctrl+F) opens a popup that lists and
+  searches the contact cards and, from two characters on, searches
+  conversations, messages, contacts and calls. Hits open their
+  conversation or contact card; a card's numbers and addresses and call
+  hits offer Call (confirmed first) and Message. Read only while the popup
+  is open.
 
 ## [0.9.0](https://github.com/erikwb/blueferry/releases/tag/v0.9.0) - 2026-10-27
 

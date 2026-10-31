@@ -209,6 +209,24 @@ Die Mitteilungsliste des Panels hat keine weiteren Aktionen pro Eintrag (sie
 die das iPhone nicht mehr reagieren kann, dort bis auf **Removed on
 iPhone** gleich aus.
 
+### Kontakte und Suche im Panel
+
+Der Suchknopf (⌕) neben **+** oder `Strg+F` öffnet **Search**, wenn der
+Hintergrunddienst [Kontaktkarten](contacts.md) oder die [globale
+Suche](search.md) kennt. Mit leerem Feld listet sie die Kontakte, mit
+**More contacts** für die nächste Seite. Ab zwei Zeichen durchsucht sie
+Unterhaltungen, Nachrichten, Kontakte und Anrufe zugleich, kurz nach dem
+letzten Tastendruck; die Treffer sind gruppiert, und die passenden Wörter
+einer Nachricht sind fett. Ein Klick auf eine Unterhaltung oder Nachricht
+öffnet sie. Ein Klick auf einen Kontakt zeigt seine Nummern, E-Mail- und
+Postadressen: **Call** ruft eine Nummer nach einer Bestätigung an,
+**Message** öffnet **New message** mit der Nummer oder Adresse. Ein
+Anruf-Treffer hat **Call** und **Message** für den Anrufer. **Call** ist mit
+Begründung ausgegraut, bis Telefonate eingeschaltet und bereit sind. Das
+Panel hat keine Anrufansicht; annehmen, halten und auflegen geht auf dem
+iPhone oder in einem anderen Client. Solange das Fenster zu ist, wird nichts
+davon gelesen, und beim Schließen wird es vergessen.
+
 ### Was das Panel weglässt
 
 Quickshell ist ein kompaktes Panel, deshalb bleiben einige Teile bei den
@@ -221,6 +239,7 @@ anderen Clients:
 | Begleitwerkzeuge | Desktop-Helfer richtet man einmal ein; das ist keine Aufgabe für ein Panel | Qt- oder GTK-Einstellungen, `blueferry tools` |
 | Nachrichtenverlauf löschen | Bietet auch der Terminal-Client nicht an | `blueferry history-clear` |
 | Click Rules, letzte Anrufe, das Anruf-Panel | Noch nicht im Quickshell-Client | Qt-, GTK- oder Terminal-Client |
+| Kontaktfotos, Einträge einer Karte kopieren, einen Anruf-Treffer in den letzten Anrufen öffnen | Die Suche im Panel findet nur einen Kontakt zum Anrufen oder Schreiben; eine Liste der letzten Anrufe hat das Panel nicht | Qt-, GTK- oder Terminal-Client, `blueferry contacts show --photo` |
 
 Das Panel lädt keinen Übersetzungskatalog, seine eigenen Beschriftungen
 sind deshalb englisch. Texte aus dem gemeinsamen BlueFerry-Code, etwa der

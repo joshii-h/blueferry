@@ -27,8 +27,10 @@ Die IDs der Karten bleiben gleich, solange sich eine Karte nicht ändert und
 der Hintergrunddienst nicht neu startet. Nach einem Abgleich, der eine Karte
 geändert hat, gilt ihre alte ID nicht mehr; liste die Kontakte dann neu auf.
 
-Die grafischen Clients und der Terminal-Client bekommen eine Kontaktansicht
-mit einer separaten Änderung; bis dahin nutze die Kommandozeile.
+Im Quickshell-Panel findet der Suchknopf (oder `Strg+F`) einen Kontakt und
+ruft eine seiner Nummern an oder schreibt an eine Nummer oder Adresse (siehe
+[Clients](clients.md#kontakte-und-suche-im-panel)). Die anderen Clients
+bekommen eine Kontaktansicht mit einer separaten Änderung.
 
 ## Fotos
 

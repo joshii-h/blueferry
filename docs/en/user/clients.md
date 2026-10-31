@@ -195,6 +195,23 @@ The panel's notification list has no other row actions (it does not open or
 answer notifications), so a notification the iPhone can no longer act on
 looks the same there apart from **Removed on iPhone**.
 
+### Contacts and search in the panel
+
+The search button (⌕) next to **+**, or `Ctrl+F`, opens **Search** with a
+background service that has [contact cards](contacts.md) or the [global
+search](search.md). With an empty field it lists the contacts, with
+**More contacts** for the next page. Typing at least two characters
+searches conversations, messages, contacts and calls at once, a moment
+after you stop typing; the hits are grouped and the matching words of a
+message are shown in bold. Click a conversation or message to open it.
+Click a contact to see its numbers, email and postal addresses: **Call**
+calls a number after a confirmation, **Message** opens **New message** with
+the number or address filled in. A call hit has **Call** and **Message**
+for the caller. **Call** is greyed out, with the reason, until phone calls
+are on and ready. The panel has no calls view, so answer, hold and hang up
+on the iPhone or in another client. Nothing of this is read while the
+popup is closed, and it is forgotten when you close it.
+
 ### What the panel leaves out
 
 Quickshell is a compact panel, so some parts stay with the other clients:
@@ -206,6 +223,7 @@ Quickshell is a compact panel, so some parts stay with the other clients:
 | Companion tools | Setting up desktop helpers is a one-time job, not a panel task | Qt or GTK settings, `blueferry tools` |
 | Clearing the message history | Not offered by the terminal client either | `blueferry history-clear` |
 | Click Rules, recent calls, the calls panel | Not in the Quickshell client yet | Qt, GTK or terminal client |
+| Contact photos, copying card entries, opening a call hit in the recent calls | The panel's search only finds a contact to call or write; it has no recent-calls list | Qt, GTK or terminal client, `blueferry contacts show --photo` |
 
 The panel loads no translation catalog, so its own labels are English.
 Texts that come from the shared BlueFerry code, such as the reconnect hint,

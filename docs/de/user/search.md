@@ -20,8 +20,10 @@ enthält, auch bei Unterhaltungen. Pro Gruppe werden höchstens 50 Treffer
 angezeigt. Suchen mit weniger als zwei
 Zeichen finden nichts.
 
-Die grafischen Clients und der Terminal-Client bekommen ein Suchfeld mit
-einer separaten Änderung; bis dahin nutze die Kommandozeile.
+Im Quickshell-Panel sucht der Suchknopf (oder `Strg+F`) beim Tippen und
+öffnet aus einem Treffer die Unterhaltung oder die Kontaktkarte (siehe
+[Clients](clients.md#kontakte-und-suche-im-panel)). Die anderen Clients
+bekommen ein Suchfeld mit einer separaten Änderung.
 
 ## Was durchsucht wird
 
