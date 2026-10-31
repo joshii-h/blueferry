@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import unicodedata
 from contextlib import closing
 
 import pytest
@@ -419,3 +420,12 @@ def test_cli_shows_a_card_by_name_and_writes_the_photo(monkeypatch, tmp_path) ->
     assert ambiguous.exit_code == 2 and "use an id" in ambiguous.output
     missing = CliRunner().invoke(app, ["contacts", "show", "zed"])
     assert missing.exit_code == 1
+
+
+@pytest.mark.parametrize("query", ["Müller", "Muller", "MULLER", "müller"])
+def test_card_query_ignores_accents_and_unicode_forms(storage, query) -> None:
+    stored = unicodedata.normalize("NFD", "Jörg Müller")
+    ContactRepository(storage).replace([(stored, ["15551112222"], [])])
+    resolver = ContactsResolver(storage=storage)
+    for spelling in (query, unicodedata.normalize("NFD", query)):
+        assert resolver.cards(query=spelling)[0] == 1, spelling

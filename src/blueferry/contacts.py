@@ -44,6 +44,7 @@ from blueferry.obex.sessions import SessionManager
 from blueferry.obex.transfer import TransferStatusWatch, wait_for_transfer
 from blueferry.phone_numbers import address_identities, contact_phone
 from blueferry.private_files import runtime_private_directory
+from blueferry.text_fold import fold
 from blueferry.vcard import iter_bounded_lines, iter_vcard_bodies, iter_vcard_cards
 
 if TYPE_CHECKING:
@@ -551,7 +552,7 @@ def _card_id(record: ContactRecord, details: ContactDetails) -> str:
 
 
 def _card_haystack(record: ContactRecord, details: ContactDetails) -> tuple[str, str]:
-    """Casefolded text and the phone digits a card query is matched against."""
+    """Folded text and the phone digits a card query is matched against."""
     name, phones, emails = record
     texts = [name or "", details.organization, details.title, *emails]
     texts.extend(item.value for item in details.emails)
@@ -559,7 +560,7 @@ def _card_haystack(record: ContactRecord, details: ContactDetails) -> tuple[str,
         texts.extend(address.fields().values())
     numbers = [*phones, *(item.value for item in details.phones)]
     digits = " ".join(re.sub(r"\D", "", number) for number in numbers)
-    return "\n".join(text for text in texts if text).casefold(), digits
+    return fold("\n".join(text for text in texts if text)), digits
 
 
 ContactCardView = tuple[str, ContactRecord, ContactDetails, PhotoRef | None]
@@ -775,7 +776,7 @@ class ContactsResolver:
         )
 
     def _matching_indices(self, query: str) -> Iterator[int]:
-        needle = " ".join(query.split()).casefold()
+        needle = fold(" ".join(query.split()))
         if not needle:
             yield from range(len(self._records))
             return
@@ -798,7 +799,8 @@ class ContactsResolver:
         """``(matching card count, one page of cards)`` in display-name order.
 
         ``query`` matches name, organization, title, email and postal
-        address text case-insensitively, and phone numbers by their digits.
+        address text ignoring case, accents and Unicode spelling variants,
+        and phone numbers by their digits.
         """
         start = max(0, int(offset))
         stop = None if limit is None else start + max(0, int(limit))
