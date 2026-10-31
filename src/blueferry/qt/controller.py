@@ -20,6 +20,7 @@ from PySide6.QtDBus import QDBusConnection
 
 from blueferry import (
     __version__,
+    contacts_view,
     doctor_report,
     features_view,
     media_volume_view,
@@ -28,10 +29,12 @@ from blueferry import (
     phone_audio_view,
     phone_link_view,
     phone_overview,
+    search_view,
 )
 from blueferry.backend_lifecycle import ensure_backend_current, restart_backend
 from blueferry.bluetooth_devices import iphone_candidates
 from blueferry.client import BackendClient, BackendError, TetherUnsupportedError
+from blueferry.contacts_model import ContactBook
 from blueferry.conversation_state import (
     ConversationSnapshot,
     ConversationState,
@@ -52,6 +55,7 @@ from blueferry.qt.plugin_surfaces import PluginSurfaces
 from blueferry.qt.tasks import Task, qt_timers
 from blueferry.quirks_report import issue_report, issue_url
 from blueferry.reconnect_view import UNREACHABLE_TEXT, reconnect_view, result_text
+from blueferry.search_model import GlobalSearch
 from blueferry.service_manager import bluetooth_restart_command
 from blueferry.setup_client import (
     DISCOVERY_SECONDS,
@@ -83,6 +87,9 @@ MAX_CACHED_AVATAR_BYTES = 16 * 1024 * 1024
 MAX_PENDING_AVATARS = 32
 AVATAR_RETRY_SECONDS = 30
 AVATAR_RETRY_MAX_SECONDS = 600
+# Avatar-provider key of the open contact card's photo; never a phone number
+# or e-mail address, so it cannot collide with a conversation avatar.
+CARD_PHOTO_PREFIX = "contact-card:"
 
 
 class _WorkerRunner:
@@ -198,6 +205,8 @@ class BridgeController(QObject):
     pluginSettingsChanged = Signal()
     pluginSurfacesChanged = Signal()
     notificationAppsChanged = Signal()
+    contactsChanged = Signal()
+    searchChanged = Signal()
     phoneIdentityChanged = Signal()
     featuresChanged = Signal()
     doctorChanged = Signal()
@@ -344,6 +353,23 @@ class BridgeController(QObject):
         self._notification_apps_timer.setSingleShot(True)
         self._notification_apps_timer.setInterval(150)
         self._notification_apps_timer.timeout.connect(self.refreshNotificationApps)
+        # Contacts tab (read only while shown) and the global search; both
+        # use the shared models, the D-Bus calls run on the worker.
+        self._card_photo: tuple[str, bytes] = ("", b"")
+        self._card_photo_serial = 0
+        self._contact_book = ContactBook(
+            runner=_WorkerRunner(self), timer=qt_timers(self),
+            fetch_page=lambda offset, limit, query: self._backend.contact_cards(
+                offset, limit, query),
+            fetch_card=lambda contact_id: self._backend.contact(contact_id),
+            on_change=self._contacts_updated,
+        )
+        self._search = GlobalSearch(
+            runner=_WorkerRunner(self), timer=qt_timers(self),
+            fetch=lambda query, limit: self._backend.search(query, limit),
+            on_change=self.searchChanged.emit,
+        )
+        self.statusChanged.connect(self._status_for_contacts)
         self._tether: dict = {"available": False}
         self._tether_pending = False
         self._tether_timer = QTimer(self)
@@ -575,6 +601,9 @@ class BridgeController(QObject):
     def avatar_bytes(self, address: str) -> bytes | None:
         """Thread-safe lookup used by :class:`AvatarImageProvider`."""
         with self._avatar_lock:
+            if address.startswith(CARD_PHOTO_PREFIX):
+                key, data = self._card_photo
+                return data if data and address == key else None
             return self._avatars.get(address)
 
     def _sync_avatars(self) -> None:
@@ -991,6 +1020,95 @@ class BridgeController(QObject):
             completed,
             failed,
         )
+
+    # ---- Contacts tab and global search ---------------------------------
+
+    @Slot()
+    def _status_for_contacts(self) -> None:
+        self._contact_book.apply_status(self._status)
+        self._search.apply_status(self._status)
+
+    def _contacts_updated(self) -> None:
+        book = self._contact_book
+        photo = book.photo if book.card["open"] else b""
+        with self._avatar_lock:
+            if not photo:
+                self._card_photo = ("", b"")
+            elif photo is not self._card_photo[1]:
+                # A new key per photo, so QML never shows a cached older one.
+                self._card_photo_serial += 1
+                self._card_photo = (f"{CARD_PHOTO_PREFIX}{self._card_photo_serial}", photo)
+        self.contactsChanged.emit()
+
+    @Property(bool, notify=statusChanged)
+    def contactsSupported(self) -> bool:
+        """Whether the running daemon offers contact cards."""
+        return contacts_view.supported(self._status)
+
+    @Property("QVariantMap", notify=contactsChanged)
+    def contacts(self):
+        """The Contacts list: rows, count and empty texts, paging state."""
+        return self._contact_book.view()
+
+    @Property("QVariantMap", notify=contactsChanged)
+    def contactCard(self):
+        """The open card (``contacts_view.card_view``) and its photo URL."""
+        key = self._card_photo[0]
+        return {
+            **self._contact_book.card,
+            "photo": avatar_url(key, 0) if key else "",
+        }
+
+    @Slot(bool)
+    def watchContacts(self, watched: bool) -> None:
+        """The Contacts tab is shown (load) or hidden (forget the cards)."""
+        self._contact_book.watch(watched)
+
+    @Slot(str)
+    def setContactQuery(self, query: str) -> None:
+        self._contact_book.set_query(query)
+
+    @Slot()
+    def reloadContacts(self) -> None:
+        self._contact_book.reload()
+
+    @Slot()
+    def loadMoreContacts(self) -> None:
+        self._contact_book.load_more()
+
+    @Slot(str)
+    def openContact(self, contact_id: str) -> None:
+        self._contact_book.open(contact_id)
+
+    @Slot()
+    def closeContact(self) -> None:
+        self._contact_book.close()
+
+    @Property(bool, notify=statusChanged)
+    def searchSupported(self) -> bool:
+        """Whether the running daemon offers the global search."""
+        return search_view.supported(self._status)
+
+    @Property("QVariantMap", notify=searchChanged)
+    def searchResults(self):
+        """``search_view.search_view`` plus state; highlights as [start, length]."""
+        view = self._search.view()
+        sections = [
+            {**section, "rows": [
+                {**row, "highlight": list(row["highlight"] or [])}
+                for row in section["rows"]
+            ]}
+            for section in view["sections"]
+        ]
+        return {**view, "sections": sections}
+
+    @Slot(str)
+    def setSearchQuery(self, query: str) -> None:
+        self._search.set_query(query)
+
+    @Slot()
+    def clearSearch(self) -> None:
+        self._search.clear()
 
     @Property(str, notify=callHistoryChanged)
     def callHistoryError(self) -> str:

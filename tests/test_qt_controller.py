@@ -2384,7 +2384,9 @@ def test_muted_apps_are_read_only_while_shown_and_only_from_capable_daemons(monk
     backend = _PinBackend(muted={"com.example.chat"})
     controller = BridgeController(backend=backend, setup=object(), subscribe=False, autostart=False)
     _run_inline_any(controller, monkeypatch)
-    (notifications_timer,) = timers.timers
+    # The first qt_timers timer is the notification list's (contacts and
+    # search follow).
+    notifications_timer = timers.timers[0]
 
     assert controller.notificationAppsSupported is False
     controller.watchNotificationApps(True)
@@ -2455,3 +2457,101 @@ def test_notification_rows_without_pin_keys_hide_the_pin_control(monkeypatch):
 
     controller.watchNotifications(False)
     assert controller.notifications == []
+
+
+class _CardBackend:
+    """ListContactCards, GetContact and Search answered from memory."""
+
+    def __init__(self):
+        self.pages = []
+        self.searches = []
+
+    def contact_cards(self, offset=0, limit=150, query=""):
+        self.pages.append((offset, limit, query))
+        return {"contacts": [{"id": "c1", "name": "Ada Lovelace", "organization": "",
+                              "primary": "+15550001", "has_photo": True}],
+                "total": 1, "offset": offset, "query": query}
+
+    def contact(self, contact_id):
+        if contact_id == "gone":
+            from blueferry.client import ContactNotFoundError
+
+            raise ContactNotFoundError("unknown contact")
+        return ({"id": contact_id, "name": "Ada Lovelace", "has_photo": True,
+                 "phones": [{"kind": "mobile", "label": "", "value": "+1 555 0001",
+                             "number": "+15550001"}]}, b"\x89PNG photo")
+
+    def search(self, query, limit):
+        self.searches.append((query, limit))
+        return {"query": query, "limit": limit, "messages": {"total": 1, "results": [
+            {"thread_key": "t1", "handle": "h1", "thread_name": "Ada",
+             "snippet": "at noon", "match_start": 3, "match_length": 4}]}}
+
+
+def _card_status(epoch=1):
+    return {"contact_card_count": 1, "contact_card_epoch": epoch, "search_result_limit": 50}
+
+
+def test_contacts_are_read_while_watched_and_the_card_photo_is_served(monkeypatch):
+    backend = _CardBackend()
+    controller = _inline_controller(monkeypatch, backend)
+    controller._status = _card_status()
+    controller.statusChanged.emit()
+    assert controller.contactsSupported is True and backend.pages == []
+    controller.watchContacts(True)
+    assert backend.pages == [(0, 100, "")]
+    assert controller.contacts["rows"][0]["title"] == "Ada Lovelace"
+    assert controller.contacts["count_text"] == "1 contact"
+
+    controller.openContact("c1")
+    card = controller.contactCard
+    assert card["open"] is True and card["sections"][0]["id"] == "phones"
+    assert card["photo"].startswith("image://blueferry-avatar/")
+    from blueferry.qt.avatars import address_from_id
+
+    key = address_from_id(card["photo"].split("image://blueferry-avatar/", 1)[1])
+    assert controller.avatar_bytes(key) == b"\x89PNG photo"
+    assert controller.avatar_bytes("contact-card:999") is None
+
+    # A new epoch reloads the list and reads the open card again.
+    controller._status = _card_status(epoch=2)
+    controller.statusChanged.emit()
+    assert len(backend.pages) == 2
+
+    controller.openContact("gone")
+    assert controller.contactCard["stale"] is True
+    assert controller.contactCard["photo"] == ""
+    assert controller.avatar_bytes(key) is None
+
+    controller.watchContacts(False)
+    assert controller.contacts["rows"] == [] and controller.contactCard["open"] is False
+
+
+def test_contact_query_waits_for_a_pause(monkeypatch):
+    backend = _CardBackend()
+    controller = _inline_controller(monkeypatch, backend)
+    controller._status = _card_status()
+    controller.statusChanged.emit()
+    controller.watchContacts(True)
+    controller.setContactQuery("ad")
+    assert backend.pages == [(0, 100, "")]
+    controller._contact_book._timer._timer.timeout.emit()
+    assert backend.pages[-1] == (0, 100, "ad")
+
+
+def test_global_search_waits_for_a_pause_and_exposes_highlights_as_lists(monkeypatch):
+    backend = _CardBackend()
+    controller = _inline_controller(monkeypatch, backend)
+    controller._status = _card_status()
+    controller.statusChanged.emit()
+    assert controller.searchSupported is True
+    controller.setSearchQuery("noon")
+    assert backend.searches == [] and controller.searchResults["loading"] is True
+    controller._search._timer._timer.timeout.emit()
+    assert backend.searches == [("noon", 20)]
+    [section] = controller.searchResults["sections"]
+    assert section["rows"][0]["highlight"] == [3, 4]
+    assert section["rows"][0]["target"] == {"kind": "message", "thread_key": "t1",
+                                            "handle": "h1"}
+    controller.clearSearch()
+    assert controller.searchResults["sections"] == []
