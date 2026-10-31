@@ -130,7 +130,7 @@ def _event_time(event: dict) -> str:
     return str(event.get("timestamp") or event.get("seen_at") or "")
 
 
-def _timestamp_order(value: str) -> float:
+def timestamp_order(value: str) -> float:
     """Compare instants: outgoing local offsets and incoming UTC may differ."""
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
@@ -320,7 +320,7 @@ def build_threads(events: list[dict], resolver=None) -> list[dict]:
             "body_truncated": bool(event.get("body_truncated", False)),
         }
         thread["messages"].append(message)
-        if _timestamp_order(str(message["timestamp"])) >= _timestamp_order(thread["last_ts"]):
+        if timestamp_order(str(message["timestamp"])) >= timestamp_order(thread["last_ts"]):
             thread["last_ts"] = message["timestamp"]
             if event.get("group_observed_sender"):
                 thread["prompt_sender"] = str(event["group_observed_sender"])
@@ -329,7 +329,7 @@ def build_threads(events: list[dict], resolver=None) -> list[dict]:
                     if not thread["key"].startswith("alphanumeric:")
                     for key in conversation_keys(thread)}
     for thread in by_key.values():
-        thread["messages"].sort(key=lambda message: _timestamp_order(message["timestamp"]))
+        thread["messages"].sort(key=lambda message: timestamp_order(message["timestamp"]))
         if not thread["is_group"]:
             if thread["key"].startswith("alphanumeric:"):
                 # A legacy service key must not select a numeric conversation,
@@ -375,7 +375,7 @@ def sort_threads(
         decorated,
         key=lambda item: (
             bool(item.get("starred")),
-            _timestamp_order(str(item.get("last_ts") or "")),
+            timestamp_order(str(item.get("last_ts") or "")),
         ),
         reverse=True,
     )

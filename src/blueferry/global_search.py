@@ -19,7 +19,7 @@ from typing import Any
 
 from blueferry.call_history import CallRecord, resolve_contact_name
 from blueferry.limits import MAX_SEARCH_SNIPPET_CHARS
-from blueferry.threads import _timestamp_order
+from blueferry.threads import timestamp_order
 
 _PHONE_QUERY = re.compile(r"[\d\s+()./-]+")
 _MIN_DIGIT_QUERY = 3
@@ -90,7 +90,7 @@ def search_threads(
             if position < 0:
                 continue
             message_total += 1
-            hits.append((_timestamp_order(str(message.get("timestamp") or "")), {
+            hits.append((timestamp_order(str(message.get("timestamp") or "")), {
                 "thread": thread, "message": message, "body": body, "position": position,
             }))
     # Newest first, comparing instants (local offsets and UTC may differ).
