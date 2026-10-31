@@ -460,3 +460,10 @@ def test_card_query_ignores_accents_and_unicode_forms(storage, query) -> None:
     resolver = ContactsResolver(storage=storage)
     for spelling in (query, unicodedata.normalize("NFD", query)):
         assert resolver.cards(query=spelling)[0] == 1, spelling
+
+
+def test_a_query_that_folds_away_matches_nothing(storage) -> None:
+    ContactRepository(storage).replace([("Alice", ["15551112222"], [])])
+    resolver = ContactsResolver(storage=storage)
+    assert resolver.cards(query="\u0301\u0308")[0] == 0
+    assert resolver.cards(query="  ")[0] == 1
