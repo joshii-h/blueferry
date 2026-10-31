@@ -164,12 +164,12 @@ def _too_deeply_nested(text: str, limit: int = MAX_JSON_DEPTH) -> bool:
     """
     depth = 0
     in_string = False
-    for token in _JSON_TOKEN.findall(text):
-        if token == '"':
+    for piece in _JSON_TOKEN.findall(text):
+        if piece == '"':
             in_string = not in_string
-        elif in_string or token[0] == "\\":
+        elif in_string or piece[0] == "\\":
             continue
-        elif token in "[{":
+        elif piece in "[{":
             depth += 1
             if depth > limit:
                 return True
