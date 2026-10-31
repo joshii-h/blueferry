@@ -219,6 +219,12 @@ def test_a_crashing_target_loader_ends_the_drop(tmp_path) -> None:
     assert harness.notices == [("bus gone", False)]
 
 
+def test_several_folders_are_named_briefly(tmp_path) -> None:
+    folders = drop.DroppedFiles(folders=("a", "b", "c", "d"))
+    assert drop.skipped_note(drop.DroppedUris(("x",)), folders) == (
+        "Folders cannot be sent; skipped 4 folders (a, b, c, \u2026).")
+
+
 def test_duplicate_labels_name_the_plugin() -> None:
     other = surfaces.ShareChoice("io.example.kde", "KDE Connect", "k1", "iPhone")
     rows = drop.choice_rows([PHONE, other])
