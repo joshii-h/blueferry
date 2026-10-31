@@ -136,6 +136,9 @@ class FakeClient:
     def contact_photo_async(self, *_args, **_kwargs):
         pass
 
+    def mark_thread_read_async(self, *_args, **_kwargs):
+        pass
+
     def names(self):
         return [call[0] for call in self.calls]
 
