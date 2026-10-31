@@ -45,8 +45,8 @@
 - KDE client: a **Contacts** tab lists the contact cards with a search
   field (searching after a short pause while typing) and loads more cards
   while scrolling; a card shows every labelled number, email and postal
-  address, company, job title and photo, with **Call** and **Message**, and
-  the list reloads when `contact_card_epoch` changes. A global search
+  address, company, job title and photo, with **Call** (asks first) and
+  **Message**, and the list reloads when `contact_card_epoch` changes. A global search
   (header magnifier, `Ctrl+K` or `Ctrl+F`) shows the grouped hits and opens
   the conversation at the message, the contact card or the call.
 

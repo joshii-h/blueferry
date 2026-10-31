@@ -519,8 +519,9 @@ Kirigami.ApplicationWindow {
         onTargetActivated: target => root.openSearchTarget(target)
     }
 
-    // A clicked tel:/callto: link; asks before dialing, and explains when
-    // calls are off, so it exists whether or not calls are enabled.
+    // A clicked tel:/callto: link or a contact card's Call; asks before
+    // dialing, and explains when calls are off, so it exists whether or not
+    // calls are enabled.
     DialLinkDialog {
         id: dialLinkDialog
         bridge: root.bridge
@@ -1119,7 +1120,9 @@ Kirigami.ApplicationWindow {
 
                             ContactsTab {
                                 bridge: root.bridge
-                                onCallRequested: number => root.bridge.dialCall(root.dialable(number))
+                                // Asks first, like a tel: link (dialLinkDialog).
+                                onCallRequested: number => root.bridge.requestDialLink(
+                                    "tel:" + root.dialable(number))
                                 onMessageRequested: address => root.messageAddress(address)
                             }
 

@@ -881,6 +881,7 @@ def settings_window(qml_engine):
             function sendMediaCommand(command) { record("sendMediaCommand", [command]); }
             function refreshCalls() { record("refreshCalls", []); }
             function dialCall(number) { record("dialCall", [number]); }
+            function requestDialLink(link) { record("requestDialLink", [link]); }
             function answerCall(callId) { record("answerCall", [callId]); }
             function hangupCall(callId) { record("hangupCall", [callId]); }
             function hangupAllCalls() { record("hangupAllCalls", []); }
@@ -5511,7 +5512,7 @@ def test_contacts_tab_reads_only_while_shown_and_opens_cards(qml_engine, setting
         "textFormat: Text.PlainText") - source.count("Kirigami.Heading {")
 
 
-def test_contact_card_actions_dial_through_the_call_api(qml_engine, settings_window):
+def test_contact_card_call_asks_through_the_phone_link_dialog(qml_engine, settings_window):
     window, bridge = settings_window
     bridge.setProperty("contactsSupported", True)
     bridge.setProperty("status", {"calls_enabled": True})
@@ -5523,8 +5524,10 @@ def test_contact_card_actions_dial_through_the_call_api(qml_engine, settings_win
     button = _settings_object(window, "contactCallButton")
     assert button.property("enabled") is True
     button.clicked.emit()
+    # Asks first: the number goes through the phone-link confirmation.
     assert _evaluate(qml_engine, "testBridge.calls")[-1] == {
-        "method": "dialCall", "args": ["+15550001"]}
+        "method": "requestDialLink", "args": ["tel:+15550001"]}
+    assert "dialCall" not in _bridge_methods(qml_engine)
     stale = {**CONTACT_CARD, "sections": [], "stale": True,
              "error": "This contact changed or was removed. Reload the list."}
     bridge.setProperty("contactCard", stale)

@@ -32,12 +32,12 @@ Kontaktansicht in den Clients:
 - **KDE-Client:**
   der Reiter **Contacts** listet die Karten mit einem Suchfeld (es sucht
   beim Tippen, nach einer kurzen Pause) und lädt beim Scrollen weitere
-  Karten nach. Eine Karte zeigt alle Angaben; **Call** wählt die erste
-  Nummer, **Message** öffnet die Unterhaltung damit oder beginnt eine neue,
-  und jede Nummer oder Adresse hat eigene Knöpfe zum Anrufen, Schreiben,
-  Mailen und Kopieren. Die Liste wird nur gelesen, solange der Reiter offen
-  ist, und lädt von selbst neu, wenn der Hintergrunddienst neu startet oder
-  die Kontakte neu synchronisiert wurden.
+  Karten nach. Eine Karte zeigt alle Angaben; **Call** fragt nach, bevor es
+  die erste Nummer wählt, **Message** öffnet die Unterhaltung damit oder
+  beginnt eine neue, und jede Nummer oder Adresse hat eigene Knöpfe zum
+  Anrufen, Schreiben, Mailen und Kopieren. Die Liste wird nur gelesen,
+  solange der Reiter offen ist, und lädt von selbst neu, wenn der
+  Hintergrunddienst neu startet oder die Kontakte neu synchronisiert wurden.
 - **GTK-Client:**
   noch nicht; nutze die Kommandozeile.
 - **Terminal-Client:**
