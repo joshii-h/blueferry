@@ -356,6 +356,8 @@ Kirigami.ApplicationWindow {
 
     Connections {
         target: root.bridge
+        // Older or test bridges have no drop zone.
+        ignoreUnknownSignals: true
         function onFileDropNotice(text, ok) {
             root.showPassiveNotification(text, ok ? "short" : "long")
         }
