@@ -8,7 +8,8 @@ is read only while its tab is visible to the user (see
 :meth:`MainWindow.sync_watches`); tabs are added with
 :meth:`MainWindow.add_tab`. What the Qt card shows below its switches,
 "From Plugins" and "Tools", unfolds below the card strip with
-**Plugins & Tools**.
+**Plugins & Tools**. Files dropped anywhere on the window go to a "Send
+to…" target (``ui/file_drop.py``).
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from blueferry.ui.companion_tools import CompanionToolsSection, ToolsFactory, de
 from blueferry.ui.contacts import ContactsPage
 from blueferry.ui.conversations import ConversationsPage
 from blueferry.ui.dial_presenter import dial_prompt
+from blueferry.ui.file_drop import FileDropFactory, FileDropZone, default_file_drop
 from blueferry.ui.notifications import NotificationsPage
 from blueferry.ui.phone_card import PhoneCard, load_phone_name
 from blueferry.ui.photos import PhotosPage
@@ -53,6 +55,7 @@ class MainWindow(Adw.ApplicationWindow):
         opener: Callable[[str], None] | None = None,
         open_file: Callable[[object], None] | None = None,
         ui_state: UiState | None = None,
+        file_drop: FileDropFactory | None = None,
     ) -> None:
         super().__init__(application=application, title=_("BlueFerry"))
         self._client = client
@@ -180,7 +183,15 @@ class MainWindow(Adw.ApplicationWindow):
         content.append(self.extras)
         content.append(Gtk.Separator())
         content.append(self.stack)
-        self._toasts.set_child(content)
+        # Files dropped anywhere on the window go to a "Send to…" target.
+        self.file_drop = FileDropZone(
+            self, file_drop or default_file_drop(client), toast=self.toast,
+            open_plugin_settings=lambda: self.present_phone_settings("plugins"),
+            on_sent=self.plugin_cards.schedule_reload,
+        )
+        drop_overlay = Gtk.Overlay(child=content)
+        self.file_drop.attach(drop_overlay)
+        self._toasts.set_child(drop_overlay)
 
         self.switcher_bar = Adw.ViewSwitcherBar(stack=self.stack)
         toolbar = Adw.ToolbarView()
