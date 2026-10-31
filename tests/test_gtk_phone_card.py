@@ -944,6 +944,9 @@ def _exercise_contacts():
     # Plain text, never markup.
     assert [row.get_title() for row in rows] == ["<b>Ada</b> Lovelace", "Bob"]
     assert not rows[0].get_use_markup()
+    # The avatars show the presenter's initials (contacts_view.initials).
+    avatars = [w for row in rows for w in _descendants(row) if type(w).__name__ == "Avatar"]
+    assert [a.get_text() for a in avatars] == ["L", "B"]
     assert page.count_label.get_label() == "3 contacts"
     assert page.more_button.get_visible()
     page.more_button.emit("clicked")
@@ -971,6 +974,7 @@ def _exercise_contacts():
     client.take(("card", "c1"))[1]((ADA_CARD, b""))
     assert page.card_stack.get_visible_child_name() == "card"
     assert page.title_label.get_label() == "<b>Ada</b> Lovelace"
+    assert page.avatar.get_text() == "L"
     assert page.subtitle_label.get_label() == "Countess · Analytical"
     details = [(row.get_subtitle(), row.get_title()) for row in _rows(page.sections)]
     assert details == [("Mobile", "+1 555 0001"), ("Work", "ada@example.org"),
@@ -1056,6 +1060,26 @@ def _exercise_search():
     assert window.messages._focused_handle == "h9"
     assert window.messages._pending_thread_key == "t1"
 
+    # The hit is centred once and stays marked; another conversation forgets it.
+    from blueferry.models import Thread
+
+    def thread(key, handles):
+        return Thread.from_dict({
+            "key": key, "name": key, "is_group": False, "recipients": [f"+4179{key}"],
+            "reply_ready": True, "last_ts": "2026-10-06T14:36:00",
+            "messages": [{"handle": h, "body": h, "timestamp": "2026-10-06T14:36:00"}
+                         for h in handles]})
+
+    messages = window.messages
+    messages._apply_threads([thread("t1", ["h1", "h9"]), thread("t2", ["h2"])])
+    messages._select_pending_thread()
+    _settle()
+    assert messages._state.selected_key == "t1"
+    assert messages._focused_handle == "h9" and messages._focus_pending is False
+    messages.open_thread("t2")
+    _settle()
+    assert messages._focused_handle == "" and messages._focus_pending is False
+
     window.open_search_target({"kind": "contact", "contact_id": "c1"})
     _settle()
     assert window.stack.get_visible_child_name() == "contacts"
@@ -1071,6 +1095,14 @@ def _exercise_search():
         "address": "+41790000001", "name": "Anna", "id": "call-1"})])
     [row] = _rows(window.calls.recent_list)
     assert row.has_css_class("call-focused")
+    assert window.calls._focus_pending is False, "scrolled to once"
+    window.calls.missed_filter.set_active(True)
+    window.calls.all_filter.set_active(True)
+    [row] = _rows(window.calls.recent_list)
+    assert row.has_css_class("call-focused"), "a re-render keeps the mark"
+    window.show_tab("messages")
+    _settle()
+    assert window.calls._focused_call == "", "leaving the tab forgets the hit"
 
     # A daemon without Search says so instead of searching.
     client.answer_status({"daemon": True, "map": True})
