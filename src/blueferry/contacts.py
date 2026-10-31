@@ -733,6 +733,21 @@ class ContactsResolver:
         self.photo_revision += 1
         self.card_epoch = (self.card_epoch + 1) & 0x7FFFFFFF
 
+    def adopt_card_haystacks(self, snapshot: object) -> None:
+        """Keep card query text a worker folded for a snapshot of this cache.
+
+        Ignored once the cache was reloaded since the snapshot (the epoch
+        moved on) or when this cache already has its own.
+        """
+        if (
+            isinstance(snapshot, ContactsResolver)
+            and self._card_haystacks is None
+            and snapshot._card_haystacks is not None
+            and snapshot.card_epoch == self.card_epoch
+            and len(snapshot._card_haystacks) == len(self._records)
+        ):
+            self._card_haystacks = snapshot._card_haystacks
+
     def refresh(self) -> int:
         """Replace the cache only after a successful read; propagate failures."""
         prepared = ContactsResolver(storage=self.storage, strict=True, photos=self._photos)

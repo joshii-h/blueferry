@@ -55,6 +55,8 @@ class MessagesService(dbus.service.Object):
         self._change_revision = 0
         self.operations = operations or BackendOperations(sessions, dependencies)
         self._projection_worker = BackgroundWorker("blueferry-projection", maximum=1)
+        # Matching only; a few queued keystrokes, then NotReady until it drains.
+        self._search_worker = BackgroundWorker("blueferry-search", maximum=4)
         # One active lookup plus an interactive request queued behind a
         # cancelled passive lookup. The executor still runs one job at a time.
         self._wallet_worker = BackgroundWorker("blueferry-wallet", maximum=2)
@@ -248,10 +250,23 @@ class MessagesService(dbus.service.Object):
         async_callbacks=("reply_handler", "error_handler"),
     )
     def Search(self, query: str, limit: int, reply_handler, error_handler, sender=None) -> None:
-        """Search conversations, messages, contacts and calls in memory, as JSON."""
+        """Search conversations, messages, contacts and calls in memory, as JSON.
+
+        Sources are snapshotted on the main loop; matching runs on the search
+        worker so a client searching while the user types never blocks it.
+        """
+        def replied(result: dict) -> None:
+            try:
+                encoded = self._json_response(result)
+            except Exception as error:
+                error_handler(self._dbus_error(error))
+                return
+            reply_handler(encoded)
+
         self._conversation_call(
-            sender, "read", lambda: reply_handler(
-                self._json_response(self.operations.search(str(query), int(limit))),
+            sender, "read", lambda: self.operations.search_async(
+                str(query), int(limit), self._search_worker.submit, replied,
+                lambda error: error_handler(self._dbus_error(error)),
             ), error_handler,
         )
 
@@ -1025,6 +1040,7 @@ class MessagesService(dbus.service.Object):
         if storage is not None:
             storage.cancel_pending()
         self._projection_worker.close()
+        self._search_worker.close()
         self._wallet_worker.close()
         self._caller_guard.close()
 

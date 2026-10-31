@@ -122,6 +122,11 @@ class ConversationIndex:
             self._signature = signature
         return self._threads
 
+    @property
+    def cached_threads(self) -> list[dict] | None:
+        """The last published projection, without checking or rebuilding it."""
+        return self._threads
+
     def find(self, key: str) -> dict | None:
         return next((thread for thread in self.threads() if key in conversation_keys(thread)), None)
 

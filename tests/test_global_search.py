@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import unicodedata
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -10,12 +11,12 @@ from typer.testing import CliRunner
 
 from blueferry import cli_search, config, search_view
 from blueferry.backend_operations import BackendDependencies, BackendOperations
-from blueferry.call_history import CallRecord
+from blueferry.call_history import CallRecord, call_entry_id
 from blueferry.cli import app
 from blueferry.contact_repository import ContactRepository
 from blueferry.contacts import ContactsResolver
-from blueferry.errors import InvalidArgumentsError
-from blueferry.global_search import search_calls, search_threads, snippet
+from blueferry.errors import InvalidArgumentsError, NotReadyError
+from blueferry.global_search import ThreadSearchIndex, search_calls, search_threads, snippet
 from blueferry.history import append_event
 from blueferry.limits import MAX_SEARCH_RESULTS, MAX_SEARCH_SNIPPET_CHARS
 from blueferry.models import CallHistoryEntry
@@ -68,6 +69,79 @@ def test_threads_match_names_members_and_bodies_newest_first() -> None:
     assert search_threads(THREADS, "the   usual", 10)[1]["total"] == 1
 
 
+def test_highlight_follows_the_original_after_sharp_s() -> None:
+    threads = [{"key": "t", "name": "T", "messages": [
+        {"handle": "m", "body": "Straße Bern lunch", "timestamp": "2026-10-30T10:00:00Z"},
+    ]}]
+    for query in ("lunch", "LUNCH"):
+        [hit] = search_threads(threads, query, 5)[1]["results"]
+        start, length = hit["match_start"], hit["match_length"]
+        assert hit["snippet"][start:start + length] == "lunch", query
+    [hit] = search_threads(threads, "strasse", 5)[1]["results"]
+    assert hit["snippet"][hit["match_start"]:][:hit["match_length"]] == "Straße"
+
+
+@pytest.mark.parametrize("form", ["NFC", "NFD"])
+@pytest.mark.parametrize("query", ["Müller", "Muller", "MULLER"])
+def test_names_and_bodies_ignore_accents_and_unicode_forms(form, query) -> None:
+    name = unicodedata.normalize(form, "Jörg Müller")
+    threads = [{"key": "t", "name": name, "members": [], "messages": [
+        {"handle": "m", "body": f"Grüsse von {name}!", "timestamp": "2026-10-30T10:00:00Z"},
+    ]}]
+    for spelling in (query, unicodedata.normalize("NFD", query)):
+        conversations, messages = search_threads(threads, spelling, 5)
+        assert conversations["total"] == 1, spelling
+        [hit] = messages["results"]
+        marked = hit["snippet"][hit["match_start"]:hit["match_start"] + hit["match_length"]]
+        assert marked == unicodedata.normalize(form, "Müller"), spelling
+
+
+def test_conversations_match_number_digits() -> None:
+    threads = [{"key": "address:41791234567", "name": "+41 79 123 45 67", "members": [],
+                "recipients": ["+41791234567"], "messages": []},
+               {"key": "address:15550000000", "name": "Alice", "members": [],
+                "recipients": ["+15550000000"], "messages": []}]
+    assert search_threads(threads, "79 123", 5)[0]["results"][0]["thread_key"] == (
+        "address:41791234567"
+    )
+    assert search_threads(threads, "555 000", 5)[0]["results"][0]["name"] == "Alice"
+    assert search_threads(threads, "1 4", 5)[0]["total"] == 0  # too short for digits
+
+
+def test_thread_index_is_reused_for_one_projection(operations, monkeypatch) -> None:
+    operations.search("lunch", 10)
+    index = operations._search_index
+    assert isinstance(index, ThreadSearchIndex)
+    monkeypatch.setattr(
+        "blueferry.backend_operations.ThreadSearchIndex",
+        lambda _threads: pytest.fail("bodies were folded again"),
+    )
+    assert operations.search("report", 10)["messages"]["total"] == 1
+    assert operations._search_index is index
+
+
+def test_search_async_matches_off_the_main_loop(operations) -> None:
+    jobs = []
+    replies = []
+
+    def submit(job, *, on_success, on_error):
+        jobs.append((job, on_success, on_error))
+
+    operations.search_async("alice", 10, submit, replies.append, pytest.fail)
+    assert replies == [] and len(jobs) == 1
+    job, on_success, _on_error = jobs[0]
+    on_success(job())
+    assert replies[0]["contacts"]["total"] == 1
+    # The card query text folded by the job is kept by the live cache.
+    assert operations.dependencies.contacts._card_haystacks is not None
+
+    def busy(_job, **_callbacks):
+        raise RuntimeError("busy")
+
+    with pytest.raises(NotReadyError):
+        operations.search_async("alice", 10, busy, replies.append, pytest.fail)
+
+
 def test_thread_results_are_limited_but_counted() -> None:
     _conversations, messages = search_threads(THREADS, "lunch", 1)
     assert messages["total"] == 2 and len(messages["results"]) == 1
@@ -92,7 +166,8 @@ def test_calls_match_names_and_number_digits() -> None:
 
     hits = search_calls(records, "alice", 10, resolve)
     assert hits["total"] == 1 and hits["results"][0]["name"] == "Alice Example"
-    assert hits["results"][0]["id"] == records[0].key
+    assert hits["results"][0]["id"] == call_entry_id(records[0])
+    assert "5551112222" not in hits["results"][0]["id"]
     assert search_calls(records, "079 123 45", 10, None)["total"] == 0
     assert search_calls(records, "79 123 45", 10, None)["results"][0]["name"] == "Pizza Place"
     assert search_calls(records, "12", 10, None)["total"] == 0  # too short for digits
