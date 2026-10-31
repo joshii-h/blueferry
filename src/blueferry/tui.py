@@ -32,10 +32,12 @@ from textual.widgets import (
 
 from blueferry import (
     config,
+    contacts_view,
     doctor_report,
     media_volume_view,
     phone_link_view,
     phone_overview,
+    search_view,
 )
 from blueferry.backend_lifecycle import BackendLifecycleError, ensure_backend_current
 from blueferry.bus import get_session_bus
@@ -70,6 +72,7 @@ from blueferry.tether_status import TetherStatus
 from blueferry.text_safety import terminal_text
 from blueferry.time_display import format_message_timestamp
 from blueferry.tui_calls import CallsScreen
+from blueferry.tui_contacts import ContactsResult, ContactsScreen
 from blueferry.tui_doctor import DoctorScreen
 from blueferry.tui_notification_rules import REVISION_KEY, NotificationRulesScreen
 from blueferry.tui_notifications import NotificationsScreen
@@ -82,6 +85,7 @@ from blueferry.tui_phone import (
     now_playing_text,
     volume_controls,
 )
+from blueferry.tui_search import SearchResult, SearchScreen
 
 _REFRESH_SECONDS = 15.0
 _SIGNAL_PUMP_SECONDS = 0.2
@@ -136,6 +140,14 @@ class _Client(_TetherClient, Protocol):
 
     # Contact matches for the calls panel's number field.
     def find_contacts(self, query: str) -> list[tuple[str, str]]: ...
+
+    def contact_cards(
+        self, offset: int = 0, limit: int = 150, query: str = "",
+    ) -> dict: ...
+
+    def contact(self, contact_id: str) -> tuple[dict, bytes]: ...
+
+    def search(self, query: str, limit: int = 20) -> dict: ...
 
     # Opt-in recent iPhone notifications (ListNotifications).
     def notifications(self, limit: int = 50) -> dict: ...
@@ -724,7 +736,9 @@ class HelpScreen(ModalScreen[None]):
             "[bold #7dd3fc]Open / reply[/]  Enter\n"
             "[bold #7dd3fc]Send[/]  Enter\n"
             "[bold #7dd3fc]New line[/]  Shift+Enter\n"
-            "[bold #7dd3fc]Search[/]  /\n"
+            "[bold #7dd3fc]Search conversations[/]  /\n"
+            "[bold #7dd3fc]Search messages, contacts and calls[/]  f\n"
+            "[bold #7dd3fc]Contacts · call · message · copy[/]  C · c m y\n"
             "[bold #7dd3fc]New message[/]  n\n"
             "[bold #7dd3fc]Star conversation[/]  s\n"
             "[bold #7dd3fc]Delete conversation[/]  Delete\n"
@@ -924,6 +938,8 @@ class BlueFerryApp(App[None]):
         Binding("s", "toggle_star", "Star"),
         Binding("delete", "delete_thread", "Delete"),
         Binding("c", "calls", "Calls", show=False),
+        Binding("C", "contacts", "Contacts", show=False),
+        Binding("f", "global_search", "Search everything", show=False),
         Binding("t", "tethering", "Tethering"),
         Binding("o", "options", "Settings"),
         Binding("l", "click_rules", "Click rules", show=False),
@@ -1159,6 +1175,7 @@ class BlueFerryApp(App[None]):
                         screen.status_changed(self.state.status)
                 elif isinstance(screen, (
                     PhoneOverviewScreen, CallsScreen, RecentCallsScreen, NotificationsScreen,
+                    ContactsScreen,
                 )):
                     screen.status_changed(values)
         elif self.state.error != previous_error:
@@ -1536,6 +1553,16 @@ class BlueFerryApp(App[None]):
             self.action_notifications,
         )
         yield SystemCommand(
+            _("Search Everything"),
+            _("Search messages, contacts and calls (f)"),
+            self._open_global_search,
+        )
+        yield SystemCommand(
+            _("Contacts"),
+            _("Browse the iPhone's contacts, then call or message one (C)"),
+            self._open_contacts,
+        )
+        yield SystemCommand(
             _("Phone Calls"), _("Dial, answer, hold and hang up (c)"), self._open_calls,
         )
         yield SystemCommand(
@@ -1827,7 +1854,7 @@ class BlueFerryApp(App[None]):
             return
         self._open_recent_calls()
 
-    def _open_recent_calls(self) -> None:
+    def _open_recent_calls(self, call_id: str = "") -> None:
         if isinstance(self.screen, RecentCallsScreen):
             return
         values = self.state.status.to_dict()
@@ -1836,10 +1863,11 @@ class BlueFerryApp(App[None]):
             self.notify(terminal_text(hint), severity="warning", markup=False)
             return
         self.push_screen(
-            RecentCallsScreen(self.state.client, status=values), self._recent_call_chosen,
+            RecentCallsScreen(self.state.client, status=values, focus_call_id=call_id),
+            self._recent_call_chosen,
         )
 
-    def _recent_call_chosen(self, choice: RecentCallsResult) -> None:
+    def _recent_call_chosen(self, choice: RecentCallsResult | ContactsResult) -> None:
         if choice is None:
             return
         action, address = choice
@@ -1847,6 +1875,71 @@ class BlueFerryApp(App[None]):
             self._open_calls(address)
         elif action == "message":
             self.push_screen(NewMessageScreen(address), self._new_message_ready)
+
+    def action_contacts(self) -> None:
+        if isinstance(self.focused, Input | TextArea):
+            return
+        self._open_contacts()
+
+    def _open_contacts(self, contact_id: str = "") -> None:
+        if isinstance(self.screen, ContactsScreen):
+            if contact_id:
+                self.screen.open_card(contact_id)
+            return
+        values = self.state.status.to_dict()
+        if not contacts_view.supported(values):
+            self.notify(
+                _("The running backend cannot show contact cards; restart it after upgrading"),
+                severity="warning", markup=False,
+            )
+            return
+        self.push_screen(
+            ContactsScreen(self.state.client, status=values, open_id=contact_id),
+            self._recent_call_chosen,
+        )
+
+    def action_global_search(self) -> None:
+        if isinstance(self.focused, Input | TextArea):
+            return
+        self._open_global_search()
+
+    def _open_global_search(self) -> None:
+        if isinstance(self.screen, SearchScreen):
+            return
+        if not search_view.supported(self.state.status.to_dict()):
+            self.notify(
+                _("The running backend cannot search; restart it after upgrading"),
+                severity="warning", markup=False,
+            )
+            return
+        self.push_screen(SearchScreen(self.state.client), self._search_hit_chosen)
+
+    def _search_hit_chosen(self, target: SearchResult) -> None:
+        """Open where a search hit lives (``search_view`` row targets)."""
+        if target is None:
+            return
+        kind = target.get("kind")
+        if kind == "contact":
+            self._open_contacts(str(target.get("contact_id") or ""))
+        elif kind == "call":
+            self._open_recent_calls(str(target.get("call_id") or ""))
+        elif kind in {"conversation", "message"}:
+            self._open_conversation_hit(
+                str(target.get("thread_key") or ""), str(target.get("handle") or ""),
+            )
+
+    def _open_conversation_hit(self, thread_key: str, handle: str) -> None:
+        found = bool(handle) and self.state.select_message(handle)
+        thread = None if found or not thread_key else self.state.thread(thread_key)
+        if thread is not None:
+            self.state.selected_key = thread.key
+        elif not found:
+            self.notify(
+                _("This conversation is not in the list; refresh and try again."),
+                severity="warning", markup=False,
+            )
+            return
+        self.call_later(self._show_selected_from_notification)
 
     def action_toggle_star(self) -> None:
         focused = self.focused
