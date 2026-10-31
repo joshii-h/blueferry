@@ -189,7 +189,7 @@ def search_calls(
         resolved = resolve_contact_name(record, resolve) if resolve is not None else None
         name = resolved or record.name or ""
         number = _NON_DIGITS.sub("", record.address or record.phone or "")
-        if not ((name and folded in fold(name)) or (digits and digits in number)):
+        if not ((folded and name and folded in fold(name)) or (digits and digits in number)):
             continue
         total += 1
         if len(results) < limit:

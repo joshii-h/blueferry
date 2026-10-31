@@ -369,3 +369,10 @@ def test_cli_caps_the_limit_and_says_so(monkeypatch) -> None:
     assert requested == [MAX_SEARCH_RESULTS]
     assert f"Showing at most {MAX_SEARCH_RESULTS} results per group." in result.output
     assert "refine the query" in result.output
+
+
+def test_a_query_that_folds_away_matches_nothing() -> None:
+    marks = "\u0301\u0308"
+    conversations, messages = search_threads(THREADS, marks, 5)
+    assert conversations["total"] == 0 and messages["total"] == 0
+    assert search_calls([_call("missed", 1, name="Alice")], marks, 5, None)["total"] == 0
