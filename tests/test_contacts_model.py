@@ -25,7 +25,7 @@ class Runner:
             operation, on_done, on_error = self.queue.pop(0)
             try:
                 value = operation()
-            except Exception as error:  # noqa: BLE001 - mirrors the TaskRunner
+            except Exception as error:  # mirrors the TaskRunner contract
                 if on_error is not None:
                     on_error(str(error))
                 continue
