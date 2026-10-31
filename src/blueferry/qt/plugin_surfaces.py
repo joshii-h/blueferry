@@ -7,6 +7,10 @@ watches ``Plugin1.CardChanged`` with QtDBus only from the owners of the
 enabled card plugins' bus names the model hands it (QtDBus follows the owner
 of each watched name), so no other session-bus client can make the card
 call every plugin in a loop. QML sees one plain ``state`` map.
+
+It also hosts the main window's drop zone,
+:class:`blueferry.file_drop_view.FileDrop`, on the same pool: files dropped
+anywhere on the window go to a "Send to…" target.
 """
 from __future__ import annotations
 
@@ -16,6 +20,7 @@ from typing import Any
 from PySide6.QtCore import SLOT, QObject, QThreadPool, QUrl, Signal, Slot
 
 from blueferry import plugin_surfaces as surfaces
+from blueferry.file_drop_view import FileDrop
 from blueferry.plugin_api import OBJECT_PATH, SIGNAL_CARD_CHANGED, SURFACES_INTERFACE
 from blueferry.plugin_surfaces_model import PluginSurfacesModel
 from blueferry.qt.tasks import QtTaskRunner, qt_timers
@@ -29,6 +34,10 @@ def open_url(uri: str) -> None:
 
 class PluginSurfaces(QObject):
     changed = Signal()
+    # The drop zone's picker or explanation changed.
+    dropChanged = Signal()
+    # A short notice about a drop (text, ok): a passive notification.
+    dropNotice = Signal(str, bool)
 
     def __init__(
         self,
@@ -59,6 +68,11 @@ class PluginSurfaces(QObject):
             load_cards=load_cards, load_targets=load_targets, card_names=card_names,
             share_available=share_available, invoke=invoke, find=find, send=send,
             card_choice=card_choice,
+        )
+        self.file_drop = FileDrop(
+            runner=QtTaskRunner(pool), notify=self.dropNotice.emit,
+            on_change=self.dropChanged.emit, on_sent=self.model.schedule_reload,
+            load_targets=load_targets, send=send,
         )
 
     def state(self) -> dict:
@@ -112,6 +126,20 @@ class PluginSurfaces(QObject):
         """A card action with ``send_to``, or files dropped on its item."""
         self.model.send_from_card(plugin_id, target_id, label,
                                   [local_path(url) for url in urls])
+
+    # ---- drop zone ----------------------------------------------------------------
+
+    def drop(self, urls: Sequence[object]) -> None:
+        """Files dropped on the main window (QML ``drop.urls``)."""
+        self.file_drop.drop([uri_text(url) for url in urls])
+
+
+def uri_text(url: object) -> str:
+    """A dropped URL as encoded text, so ``%`` in a file name survives."""
+    if isinstance(url, QUrl):
+        return bytes(url.toEncoded().data()).decode("ascii", "replace")
+    return str(url)
+
 
 def local_path(url: object) -> str:
     if isinstance(url, QUrl):

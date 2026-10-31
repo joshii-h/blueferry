@@ -23,6 +23,7 @@ from blueferry import (
     contacts_view,
     doctor_report,
     features_view,
+    file_drop_view,
     media_volume_view,
     notification_apps_view,
     notification_pin_view,
@@ -204,6 +205,9 @@ class BridgeController(QObject):
     companionToolsChanged = Signal()
     pluginSettingsChanged = Signal()
     pluginSurfacesChanged = Signal()
+    fileDropChanged = Signal()
+    # A short notice about files dropped on the window: text, ok.
+    fileDropNotice = Signal(str, bool)
     notificationAppsChanged = Signal()
     contactsChanged = Signal()
     searchChanged = Signal()
@@ -382,6 +386,8 @@ class BridgeController(QObject):
             bus=self._bus, parent=self,
         )
         self._plugin_surfaces.changed.connect(self.pluginSurfacesChanged)
+        self._plugin_surfaces.dropChanged.connect(self.fileDropChanged)
+        self._plugin_surfaces.dropNotice.connect(self.fileDropNotice)
         # Enabling, installing or removing a plugin changes the card. None
         # until the first plugin list has loaded; an empty tuple means "no
         # plugin installed", so installing the very first one still reloads.
@@ -783,6 +789,32 @@ class BridgeController(QObject):
         """A card action with send_to, or files dropped on a card item."""
         self._plugin_surfaces.send_from_card(
             str(plugin_id), str(target_id), str(label), list(urls or []))
+
+    @Property("QVariantMap", notify=fileDropChanged)
+    def fileDrop(self):
+        """Files dropped on the window (file_drop_view.py): phase (idle,
+        checking, picking, none, sending), choices with key/label/icon,
+        selected, title, body and the fixed texts; all plain text."""
+        return {
+            **self._plugin_surfaces.file_drop.state(),
+            "overlayTitle": file_drop_view.overlay_title(),
+            "overlaySubtitle": file_drop_view.overlay_subtitle(),
+            "settingsLabel": file_drop_view.settings_label(),
+            "sendLabel": file_drop_view.send_label(),
+        }
+
+    @Slot("QVariantList")
+    def dropFiles(self, urls: list) -> None:
+        """Files dropped anywhere on the main window."""
+        self._plugin_surfaces.drop(list(urls or []))
+
+    @Slot(str)
+    def pickDropTarget(self, key: str) -> None:
+        self._plugin_surfaces.file_drop.pick(str(key))
+
+    @Slot()
+    def cancelDrop(self) -> None:
+        self._plugin_surfaces.file_drop.cancel()
 
     @Property("QVariantMap", notify=companionToolsChanged)
     def companionTools(self):
