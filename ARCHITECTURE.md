@@ -263,6 +263,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `qt/qml/TetherSection.qml` | "Enable Bluetooth tethering" checkbox, then the connect switch and automatic choice; loaded only when the daemon offers `Tether1`. |
 | `qt/qml/GroupConfirmationDialog.qml` | Group recipient confirmation before sending. |
 | `qt/qml/NewMessageDialog.qml` | New message composition. |
+| `qt/qml/FileDropLayer.qml` | The window drop zone's overlay, target picker and "no target" explanation over `file_drop_view.py`; the `DropArea` itself sits in `Main.qml` below the pages, so card items that take files keep their own drop. `qt/plugin_surfaces.py` runs the shared `FileDrop` on its pool. |
 | `qt/qml/PhoneCard.qml` | The phone card left of the tabs: name, connection, battery/signal, now playing and quick switches (sound, away lock); opt-ins that are off stay greyed out with a hint. Folds behind a header button in a narrow window. |
 | `qt/qml/CallsTab.qml` | Calls tab: running calls as cards (answer, hold, hang up), dial pad, and the day-grouped recent calls (`RecentCallsPage.qml`). |
 | `qt/qml/NotificationsTab.qml` | Notifications tab: the opt-in recent-notification list, loaded only while shown. |

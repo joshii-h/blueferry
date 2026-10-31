@@ -42,6 +42,10 @@ Einstellung, die sie einschaltet. Rechts liegen die Reiter:
 In einem schmalen Fenster klappt die Karte hinter den Telefon-Knopf in der
 Kopfzeile.
 
+Zieh Dateien aus der Dateiverwaltung aufs Fenster, um sie über ein Plugin
+mit **Send to…** wie LocalSend ans iPhone zu senden; siehe
+[Dateien aufs Fenster ziehen](plugins.md#dateien-aufs-fenster-ziehen).
+
 Die Lupe in der Kopfzeile, `Strg+K` oder `Strg+F` öffnet die
 [Suche](search.md) über Unterhaltungen, Nachrichten, Kontakte und Anrufe.
 Ein Treffer öffnet die Unterhaltung bei dieser Nachricht, die Kontaktkarte

@@ -38,6 +38,10 @@ tabs:
 
 In a narrow window the card folds behind the phone button in the header.
 
+Drag files from the file manager onto the window to send them to the
+iPhone through a **Send to…** plugin such as LocalSend; see
+[dropping files on the window](plugins.md#dropping-files-on-the-window).
+
 The magnifier in the header, `Ctrl+K` or `Ctrl+F` opens the
 [search](search.md) over conversations, messages, contacts and calls.
 Choosing a hit opens the conversation at that message, the contact card,
