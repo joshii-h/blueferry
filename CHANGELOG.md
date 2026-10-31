@@ -24,6 +24,20 @@
   iPhone or from muted apps, and the pin limit and errors shown above the
   list; a **Muted apps** section in Settings › Notifications with a switch per
   app, refreshed on `NotificationAppsChanged` while it is shown.
+- Contact cards: the contact cache now keeps each number with its iPhone
+  label, labelled email addresses, postal addresses, company and job title,
+  inside the encrypted contact records only. `Messages1.ListContactCards`
+  pages through the cards (optionally filtered, no photo bytes) and
+  `GetContact` returns one card with its photo; `GetStatus` reports
+  `contact_card_count` and `contact_card_epoch` (changes when card ids may
+  no longer resolve). Card queries ignore case, accents and Unicode forms.
+  CLI: `blueferry contacts list|show`.
+- Global search: `Messages1.Search` looks through conversations, messages,
+  contact cards and call history in one call and groups the hits with the
+  ids to open them. It searches only the decrypted data the daemon already
+  holds in memory; there is no search index on disk. `ListCallHistory`
+  entries gain an opaque `id`, and `GetStatus` reports `search_result_limit`.
+  CLI: `blueferry search`.
 
 ## [0.9.0](https://github.com/erikwb/blueferry/releases/tag/v0.9.0) - 2026-10-27
 
