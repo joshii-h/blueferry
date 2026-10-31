@@ -1,0 +1,226 @@
+"""Files dropped on the main window: decisions and strings shared by Qt and GTK.
+
+No toolkit, no plugin process: fake targets and a manual runner.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+from blueferry import file_drop_view as drop
+from blueferry import plugin_surfaces as surfaces
+from blueferry.plugin_api.surfaces import MAX_SHARE_FILES
+from tests.client_fakes import ManualRunner
+
+PHONE = surfaces.ShareChoice("io.example.localsend", "LocalSend", "ls-1", "iPhone")
+ABLAGE = surfaces.ShareChoice("io.example.ablage", "Ablage", "drop", "Ablage", "folder-cloud")
+
+
+def _files(tmp_path: Path, *names: str) -> list[Path]:
+    paths = []
+    for name in names:
+        path = tmp_path / name
+        path.write_text("x", encoding="utf-8")
+        paths.append(path)
+    return paths
+
+
+class Harness:
+    def __init__(self, choices=(), problems=()) -> None:
+        self.work = ManualRunner()
+        self.notices: list[tuple[str, bool]] = []
+        self.sent: list[tuple[str, list[str]]] = []
+        self.loads = 0
+        self.after_send = 0
+        self.targets = surfaces.ShareTargets(list(choices), list(problems))
+        self.ok = True
+
+        def load() -> surfaces.ShareTargets:
+            self.loads += 1
+            return self.targets
+
+        def send(choice, paths):
+            self.sent.append((choice.key, list(paths)))
+            return surfaces.Outcome(self.ok, "Sent." if self.ok else "Refused.")
+
+        self.model = drop.FileDrop(
+            runner=self.work, notify=lambda text, ok: self.notices.append((text, ok)),
+            on_sent=self._sent, load_targets=load, send=send,
+        )
+
+    def _sent(self) -> None:
+        self.after_send += 1
+
+    def run_all(self) -> None:
+        while self.work.pending:
+            self.work.run_next()
+
+
+def test_only_local_file_uris_become_paths() -> None:
+    result = drop.local_paths([
+        "file:///home/me/a%20b.txt", "file://localhost/home/me/c.txt",
+        "https://example.com/x", "sftp://host/file", "file://otherhost/etc/passwd",
+        "file:relative", "", "file:///home/me/a%20b.txt",
+    ])
+    assert result.paths == ("/home/me/a b.txt", "/home/me/c.txt")
+    assert result.remote == 4
+
+
+def test_one_file_with_one_target_is_sent_with_a_notice(tmp_path) -> None:
+    (one,) = _files(tmp_path, "photo.jpg")
+    harness = Harness([PHONE])
+    harness.model.drop([one.as_uri()])
+    assert harness.model.state()["phase"] == drop.CHECKING
+    assert harness.loads == 0  # nothing blocking before the runner runs
+    harness.work.run_next()
+    assert harness.model.state()["phase"] == drop.SENDING
+    assert harness.notices == [("Sending a file to iPhone…", True)]
+    harness.run_all()
+    assert harness.sent == [(PHONE.key, [str(one.resolve())])]
+    assert harness.notices[-1] == ("Sent.", True)
+    assert harness.after_send == 1
+    assert harness.model.state()["phase"] == drop.IDLE
+
+
+def test_several_files_go_out_in_one_send(tmp_path) -> None:
+    files = _files(tmp_path, "a.txt", "b.txt", "c.txt")
+    harness = Harness([PHONE])
+    harness.model.drop([path.as_uri() for path in files])
+    harness.run_all()
+    assert harness.sent == [(PHONE.key, [str(path.resolve()) for path in files])]
+    assert harness.notices[0] == ("Sending 3 files to iPhone…", True)
+
+
+def test_a_folder_is_skipped_and_said_so(tmp_path) -> None:
+    (one,) = _files(tmp_path, "a.txt")
+    folder = tmp_path / "Pictures"
+    folder.mkdir()
+    harness = Harness([PHONE])
+    harness.model.drop([one.as_uri(), folder.as_uri()])
+    harness.run_all()
+    assert harness.sent == [(PHONE.key, [str(one.resolve())])]
+    assert ("Folders cannot be sent; skipped Pictures.", False) in harness.notices
+
+
+def test_only_a_folder_sends_nothing_and_starts_no_plugin(tmp_path) -> None:
+    harness = Harness([PHONE])
+    harness.model.drop([tmp_path.as_uri()])
+    harness.run_all()
+    assert harness.sent == []
+    assert harness.loads == 0
+    assert harness.notices == [(f"Folders cannot be sent; skipped {tmp_path.name}.", False)]
+    assert harness.model.state()["phase"] == drop.IDLE
+
+
+def test_remote_uris_alone_are_refused_without_the_runner() -> None:
+    harness = Harness([PHONE])
+    harness.model.drop(["https://example.com/a.jpg"])
+    assert harness.work.pending == []
+    assert harness.notices == [("Skipped an item that is not on this computer.", False)]
+
+
+def test_no_target_explains_which_plugins_provide_one(tmp_path) -> None:
+    (one,) = _files(tmp_path, "a.txt")
+    harness = Harness([], ["Ablage: timeout"])
+    harness.model.drop([one.as_uri()])
+    harness.run_all()
+    state = harness.model.state()
+    assert state["phase"] == drop.NO_TARGET
+    assert "LocalSend" in state["body"] and "Settings > Plugins" in state["body"]
+    assert "Ablage: timeout" in state["body"]
+    assert harness.sent == []
+    harness.model.cancel()
+    assert harness.model.state()["phase"] == drop.IDLE
+
+
+def test_several_targets_ask_and_remember_the_choice(tmp_path) -> None:
+    (one,) = _files(tmp_path, "a.txt")
+    harness = Harness([PHONE, ABLAGE])
+    harness.model.drop([one.as_uri()])
+    harness.run_all()
+    state = harness.model.state()
+    assert state["phase"] == drop.PICKING
+    assert [row["key"] for row in state["choices"]] == [PHONE.key, ABLAGE.key]
+    assert state["selected"] == PHONE.key
+    assert state["body"] == "Where should the file go?"
+    harness.model.pick(ABLAGE.key)
+    harness.run_all()
+    assert harness.sent == [(ABLAGE.key, [str(one.resolve())])]
+
+    harness.model.drop([one.as_uri()])
+    harness.run_all()
+    assert harness.model.state()["selected"] == ABLAGE.key
+    harness.model.cancel()
+    assert harness.model.state()["phase"] == drop.IDLE
+    assert len(harness.sent) == 1
+
+
+def test_an_unknown_pick_sends_nothing(tmp_path) -> None:
+    (one,) = _files(tmp_path, "a.txt")
+    harness = Harness([PHONE, ABLAGE])
+    harness.model.drop([one.as_uri()])
+    harness.run_all()
+    harness.model.pick("io.example.gone:x")
+    assert harness.work.pending == []
+    assert harness.model.state()["phase"] == drop.PICKING
+
+
+def test_a_second_drop_waits_for_the_first(tmp_path) -> None:
+    (one,) = _files(tmp_path, "a.txt")
+    harness = Harness([PHONE])
+    harness.model.drop([one.as_uri()])
+    harness.model.drop([one.as_uri()])
+    assert harness.work.submitted == 1
+    assert harness.notices[-1][1] is False
+
+
+def test_more_files_than_the_api_allows_are_refused(tmp_path) -> None:
+    files = _files(tmp_path, *(f"f{index}.txt" for index in range(MAX_SHARE_FILES + 1)))
+    harness = Harness([PHONE])
+    harness.model.drop([path.as_uri() for path in files])
+    harness.run_all()
+    assert harness.sent == []
+    assert str(MAX_SHARE_FILES) in harness.notices[-1][0]
+
+
+def test_a_file_deleted_before_sending_is_reported(tmp_path) -> None:
+    (one,) = _files(tmp_path, "a.txt")
+    harness = Harness([PHONE, ABLAGE])
+    harness.model.drop([one.as_uri()])
+    harness.run_all()
+    one.unlink()
+    harness.model.pick(PHONE.key)
+    harness.run_all()
+    assert harness.sent == []
+    assert harness.notices[-1][1] is False
+    assert harness.after_send == 0
+
+
+def test_a_refused_send_does_not_reload_the_card(tmp_path) -> None:
+    (one,) = _files(tmp_path, "a.txt")
+    harness = Harness([PHONE])
+    harness.ok = False
+    harness.model.drop([one.as_uri()])
+    harness.run_all()
+    assert harness.notices[-1] == ("Refused.", False)
+    assert harness.after_send == 0
+
+
+def test_a_crashing_target_loader_ends_the_drop(tmp_path) -> None:
+    (one,) = _files(tmp_path, "a.txt")
+    harness = Harness([PHONE])
+
+    def boom():
+        raise RuntimeError("bus gone")
+
+    harness.model._load_targets = boom
+    harness.model.drop([one.as_uri()])
+    harness.run_all()
+    assert harness.model.state()["phase"] == drop.IDLE
+    assert harness.notices == [("bus gone", False)]
+
+
+def test_duplicate_labels_name_the_plugin() -> None:
+    other = surfaces.ShareChoice("io.example.kde", "KDE Connect", "k1", "iPhone")
+    rows = drop.choice_rows([PHONE, other])
+    assert [row["label"] for row in rows] == ["iPhone (LocalSend)", "iPhone (KDE Connect)"]
+    assert rows[0]["icon"] == "document-send"
