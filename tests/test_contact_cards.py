@@ -39,8 +39,10 @@ CARD = "\r\n".join([
     "FN:Alice Example",
     "N:Example;Alice;;;",
     "ORG:Example Corp;Research",
-    "TITLE:Chief\\, Tester",
+    "TITLE:Chief\\, Te",
+    " ster",
     "TEL;TYPE=CELL;TYPE=VOICE;TYPE=pref:+1 (555) 111-2222",
+    "TEL;CELL;PREF:+1 555 222 3333",
     "TEL;TYPE=HOME,FAX:555 333 4444",
     "item1.TEL:+1 555 777 8888",
     "item1.X-ABLabel:_$!<Pager>!$_",
@@ -58,6 +60,16 @@ CARD = "\r\n".join([
     "END:VCARD",
     "",
 ])
+
+
+
+
+def _card_details(card: str = CARD) -> ContactDetails:
+    """Details of one card as a sync sees them: unfolded first."""
+    details: list[ContactDetails] = []
+    _parse_vcard_records(card, details=details)
+    [result] = details
+    return result
 
 
 class _Wallet:
@@ -81,11 +93,12 @@ def storage(isolated_state):
 # ---- vCard parsing -----------------------------------------------------------
 
 def test_card_details_keep_labels_values_and_postal_addresses() -> None:
-    details = parse_card_details(CARD)
+    details = _card_details()
     assert details.organization == "Example Corp, Research"
     assert details.title == "Chief, Tester"
     assert details.phones == (
         LabeledValue("mobile", "", "+1 (555) 111-2222", "+15551112222"),
+        LabeledValue("mobile", "", "+1 555 222 3333", "+15552223333"),
         LabeledValue("home_fax", "", "555 333 4444", "5553334444"),
         LabeledValue("pager", "", "+1 555 777 8888", "+15557778888"),
         LabeledValue("custom", "Boat", "12", ""),
@@ -102,6 +115,32 @@ def test_card_details_keep_labels_values_and_postal_addresses() -> None:
         ),
         PostalAddress("custom", "Cabin", "", "", "Lake;side 2", "Zug", "", "6300", "Switzerland"),
     )
+
+
+def test_card_details_decode_quoted_printable_vcard_21() -> None:
+    card = "\r\n".join([
+        "BEGIN:VCARD",
+        "VERSION:2.1",
+        "FN:Jörg",
+        "TEL;CELL;PREF:+1 555 444 5555",
+        "ORG;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:B=C3=A4ckerei;M=C3=BChle",
+        "TITLE;CHARSET=ISO-8859-1;QUOTED-PRINTABLE:Gesch=E4ftsf=FChrer",
+        "ADR;HOME;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:;;Stra=C3=9Fe 1=3B Hof;Z=",
+        "=C3=BCrich;;8000;",
+        "item1.EMAIL:joerg@example.com",
+        "item1.X-ABLabel:_$!<Mobile>!$_",
+        "END:VCARD",
+        "",
+    ])
+    details = _card_details(card)
+    assert details.organization == "Bäckerei, Mühle"
+    assert details.title == "Geschäftsführer"
+    assert details.phones[0].kind == "mobile"
+    assert details.addresses == (
+        PostalAddress("home", "", "", "", "Straße 1; Hof", "Zürich", "", "8000", ""),
+    )
+    # A built-in label that is no email kind keeps its readable text.
+    assert details.emails == (LabeledValue("custom", "Mobile", "joerg@example.com"),)
 
 
 def test_card_details_are_bounded() -> None:
@@ -126,7 +165,7 @@ def test_parser_collects_details_aligned_with_records() -> None:
 
 
 def test_storage_form_round_trips_and_rejects_malformed_rows() -> None:
-    details = parse_card_details(CARD)
+    details = _card_details()
     assert ContactDetails.from_storage(json.loads(json.dumps(details.to_storage()))) == details
     assert ContactDetails.from_storage(None) is EMPTY
     assert not EMPTY and EMPTY.to_storage() == {}
@@ -167,7 +206,7 @@ def test_details_are_sealed_and_never_in_plaintext(storage) -> None:
 
 def test_plaintext_cache_keeps_no_details(isolated_state) -> None:
     ContactRepository().replace(
-        [("Alice", ["15551112222"], [])], details=[parse_card_details(CARD)],
+        [("Alice", ["15551112222"], [])], details=[_card_details()],
     )
     [(record, photo, details)] = ContactRepository().load_cards()
     assert record == ("Alice", ["15551112222"], []) and photo is None and details is EMPTY
@@ -219,7 +258,7 @@ def test_snapshot_keeps_cards() -> None:
     resolver._photos = lambda: False
     resolver._repository = type("R", (), {
         "load_cards": staticmethod(lambda **_kwargs: [
-            (("Alice", ["15551112222"], []), None, parse_card_details(CARD)),
+            (("Alice", ["15551112222"], []), None, _card_details()),
         ]),
     })()
     resolver._mem, resolver._records, resolver.photo_revision = {}, [], 0
@@ -256,7 +295,7 @@ def test_list_contact_cards_pages_without_photo_bytes(storage) -> None:
     [row] = page["contacts"]
     assert row == {
         "id": row["id"], "name": "Alice Example", "organization": "Example Corp, Research",
-        "primary": "+1 (555) 111-2222", "phone_count": 5, "email_count": 2,
+        "primary": "+1 (555) 111-2222", "phone_count": 6, "email_count": 2,
         "address_count": 2, "has_photo": True,
     }
     assert "photo" not in json.dumps(page).replace("has_photo", "")
