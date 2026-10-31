@@ -27,8 +27,16 @@ Die IDs der Karten bleiben gleich, solange sich eine Karte nicht ändert und
 der Hintergrunddienst nicht neu startet. Nach einem Abgleich, der eine Karte
 geändert hat, gilt ihre alte ID nicht mehr; liste die Kontakte dann neu auf.
 
-Die grafischen Clients und der Terminal-Client bekommen eine Kontaktansicht
-mit einer separaten Änderung; bis dahin nutze die Kommandozeile.
+Kontaktansicht in den Clients:
+
+- **KDE-Client:**
+  noch nicht; nutze die Kommandozeile.
+- **GTK-Client:**
+  noch nicht; nutze die Kommandozeile.
+- **Terminal-Client:**
+  noch nicht; nutze die Kommandozeile.
+- **Quickshell-Panel:**
+  noch nicht; nutze die Kommandozeile.
 
 ## Fotos
 

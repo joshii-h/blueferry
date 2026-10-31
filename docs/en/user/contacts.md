@@ -25,8 +25,16 @@ The card ids stay the same while a card is unchanged, until the background
 service restarts. After a sync that changed a card, its old id no longer
 works; list the contacts again.
 
-The graphical and terminal clients get a contact view in a separate change;
-until then use the command line.
+Contact view in the clients:
+
+- **KDE client:**
+  not yet; use the command line.
+- **GTK client:**
+  not yet; use the command line.
+- **Terminal client:**
+  not yet; use the command line.
+- **Quickshell panel:**
+  not yet; use the command line.
 
 ## Photos
 
