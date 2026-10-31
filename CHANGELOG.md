@@ -45,6 +45,13 @@
   call. The shared models `contacts_model` and `search_model` hold the
   paging, debouncing and stale-id handling for every client; recent-call
   rows carry the call `ids`.
+- GTK client: files dragged anywhere onto the main window go to a
+  **Send to…** target (hint "Drop to send to iPhone"): the only target at
+  once with a toast, a picker for several (the session's last pick
+  preselected), or an explanation with a button to Settings › Plugins when
+  no `share` plugin is there. Only local `file://` URIs, 1 to 64 files;
+  folders and remote URIs are skipped. The decisions and texts live in the
+  shared presenter `file_drop_view` for the GTK and KDE clients.
 
 ## [0.9.0](https://github.com/erikwb/blueferry/releases/tag/v0.9.0) - 2026-10-27
 

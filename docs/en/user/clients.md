@@ -50,6 +50,10 @@ it) and **Tools** (screen mirroring, LocalSend, the iPhone's photos over
 USB). It stays as you left it and unfolds by itself when a plugin brings
 something new, such as a running transfer.
 
+Drag files from the file manager anywhere onto the window to send them to
+the iPhone through a **Send to…** plugin such as LocalSend; see
+[dropping files on the window](plugins.md#dropping-files-on-the-window).
+
 **Settings** (main menu, `Ctrl+,`) has the same categories as the KDE
 client, one page each; the switcher sits in the header bar, or at the
 bottom in a narrow window, and the search button finds any setting:

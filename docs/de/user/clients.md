@@ -55,6 +55,10 @@ LocalSend, die Fotos des iPhones über USB). Der Bereich bleibt, wie du ihn
 verlassen hast, und klappt von selbst auf, wenn ein Plugin etwas Neues
 bringt, etwa eine laufende Übertragung.
 
+Zieh Dateien aus der Dateiverwaltung irgendwo aufs Fenster, um sie über ein
+Plugin mit **Send to…** wie LocalSend ans iPhone zu senden; siehe
+[Dateien aufs Fenster ziehen](plugins.md#dateien-aufs-fenster-ziehen).
+
 **Settings** (Hauptmenü, `Strg+,`) hat dieselben Kategorien wie der
 KDE-Client, je eine Seite; die Umschaltleiste sitzt in der Kopfzeile, in
 einem schmalen Fenster unten, und der Suchknopf findet jede Einstellung:
