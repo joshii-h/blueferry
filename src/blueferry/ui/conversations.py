@@ -749,8 +749,9 @@ class ConversationsPage(Gtk.Box):
         self._msg_list.remove_all()
         focused = None
         for message in thread.messages:
-            row = self._append_bubble(message, is_group=thread.is_group)
-            if self._focused_handle and message.handle == self._focused_handle:
+            marked = bool(self._focused_handle) and message.handle == self._focused_handle
+            row = self._append_bubble(message, is_group=thread.is_group, focused=marked)
+            if marked:
                 focused = row
         if focused is not None:
             self._scroll_to_row(focused)
@@ -1014,7 +1015,9 @@ class ConversationsPage(Gtk.Box):
 
     # ---- message bubbles ----------------------------------------------
 
-    def _append_bubble(self, message: ThreadMessage, *, is_group: bool) -> Gtk.ListBoxRow:
+    def _append_bubble(
+        self, message: ThreadMessage, *, is_group: bool, focused: bool = False,
+    ) -> Gtk.ListBoxRow:
         row = Gtk.ListBoxRow(activatable=False, selectable=False)
         outer = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL,
@@ -1031,7 +1034,7 @@ class ConversationsPage(Gtk.Box):
         )
         if message.outgoing:
             bubble.add_css_class("msg-out")
-        if self._focused_handle and message.handle == self._focused_handle:
+        if focused:  # the message a search hit points at
             bubble.add_css_class("msg-focused")
         if is_group:
             bubble.append(
