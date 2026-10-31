@@ -223,7 +223,7 @@ Quickshell is a compact panel, so some parts stay with the other clients:
 | Companion tools | Setting up desktop helpers is a one-time job, not a panel task | Qt or GTK settings, `blueferry tools` |
 | Clearing the message history | Not offered by the terminal client either | `blueferry history-clear` |
 | Click Rules, recent calls, the calls panel | Not in the Quickshell client yet | Qt, GTK or terminal client |
-| Contact photos, copying card entries, opening a call hit in the recent calls | The panel's search only finds a contact to call or write; it has no recent-calls list | Qt, GTK or terminal client, `blueferry contacts show --photo` |
+| Contact photos, copying card entries, writing an email (mail app), opening a call hit in the recent calls | The panel's search only finds a contact to call or write; it has no recent-calls list | Qt, GTK or terminal client, `blueferry contacts show --photo` |
 
 The panel loads no translation catalog, so its own labels are English.
 Texts that come from the shared BlueFerry code, such as the reconnect hint,
