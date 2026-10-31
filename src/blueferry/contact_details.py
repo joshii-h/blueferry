@@ -232,6 +232,9 @@ class _Property:
         )
 
 
+_QUOTED_PRINTABLE = "QUOTED-PRINTABLE"
+
+
 def _charset(value: str) -> str:
     name = value.strip().strip('"')
     try:
@@ -255,20 +258,20 @@ def _property(line: str) -> _Property | None:
         key, has_value, values = param.strip().partition("=")
         key = key.strip().upper()
         if has_value and key == "ENCODING":
-            quoted_printable = values.strip().strip('"').upper() == "QUOTED-PRINTABLE"
+            quoted_printable = values.strip().strip('"').upper() == _QUOTED_PRINTABLE
             continue
         if has_value and key == "CHARSET":
             charset = _charset(values)
             continue
         if has_value and key != "TYPE":
             continue
-        for token in (values if has_value else key).split(","):
-            token = token.strip().strip('"').upper()
-            if token == "QUOTED-PRINTABLE":
+        for part in (values if has_value else key).split(","):
+            word = part.strip().strip('"').upper()
+            if word == _QUOTED_PRINTABLE:
                 # vCard 2.1 allows the bare encoding name as a parameter.
                 quoted_printable = True
-            elif token:
-                tokens.add(token)
+            elif word:
+                tokens.add(word)
     return _Property(
         group.upper(), name.upper(), frozenset(tokens), value, quoted_printable, charset,
     )
