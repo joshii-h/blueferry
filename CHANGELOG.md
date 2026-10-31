@@ -35,6 +35,10 @@
   holds in memory; there is no search index on disk. `ListCallHistory`
   entries gain an opaque `id`, and `GetStatus` reports `search_result_limit`.
   CLI: `blueferry search`.
+- Client models: `contacts_model` and `search_model` hold the paging,
+  typing delay, stale-id and busy handling of the contact list and the
+  global search for the KDE, GTK and terminal clients; recent-call rows
+  from `phone_overview.call_groups` carry the ids of the folded calls.
 - GTK client: a **Contacts** tab lists the contact cards with a search
   field (searching after a short pause while typing) and loads more cards
   at the end of the list; a card shows every labelled number, email and
@@ -42,9 +46,7 @@
   and **Message**, and the list reloads when `contact_card_epoch` changes.
   A global search (header button, `Ctrl+K` or `Ctrl+F`) shows the grouped
   hits and opens the conversation at the message, the contact card or the
-  call. The shared models `contacts_model` and `search_model` hold the
-  paging, debouncing and stale-id handling for every client; recent-call
-  rows carry the call `ids`.
+  call.
 
 ## [0.9.0](https://github.com/erikwb/blueferry/releases/tag/v0.9.0) - 2026-10-27
 
