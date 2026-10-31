@@ -20,7 +20,7 @@ enthält, auch bei Unterhaltungen. Pro Gruppe werden höchstens 50 Treffer
 angezeigt. Suchen mit weniger als zwei
 Zeichen finden nichts.
 
-Im KDE-Client öffnen die Lupe in der Kopfzeile, `Ctrl+K` oder `Ctrl+F` die
+Im KDE-Client öffnen die Lupe in der Kopfzeile, `Strg+K` oder `Strg+F` die
 Suche. Sie sucht beim Tippen, nach einer kurzen Pause, und zeigt dieselben
 Gruppen; Pfeiltasten und Enter oder ein Klick öffnen einen Treffer: die
 Unterhaltung bei der Nachricht, die Kontaktkarte oder den Anruf in der

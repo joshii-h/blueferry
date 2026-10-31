@@ -42,7 +42,7 @@ Einstellung, die sie einschaltet. Rechts liegen die Reiter:
 In einem schmalen Fenster klappt die Karte hinter den Telefon-Knopf in der
 Kopfzeile.
 
-Die Lupe in der Kopfzeile, `Ctrl+K` oder `Ctrl+F` öffnet die
+Die Lupe in der Kopfzeile, `Strg+K` oder `Strg+F` öffnet die
 [Suche](search.md) über Unterhaltungen, Nachrichten, Kontakte und Anrufe.
 Ein Treffer öffnet die Unterhaltung bei dieser Nachricht, die Kontaktkarte
 oder den Anruf in der Anrufliste.
