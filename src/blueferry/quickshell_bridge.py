@@ -18,6 +18,7 @@ from dataclasses import asdict
 from typing import Any, TextIO
 
 from blueferry import (
+    contacts_view,
     doctor_report,
     features_view,
     media_volume_view,
@@ -25,10 +26,16 @@ from blueferry import (
     notification_pin_view,
     phone_link_view,
     phone_overview,
+    search_view,
 )
 from blueferry.backend_lifecycle import restart_backend
 from blueferry.bus import get_session_bus
-from blueferry.client import BackendClient, BackendError, TetherUnsupportedError
+from blueferry.client import (
+    BackendClient,
+    BackendError,
+    ContactNotFoundError,
+    TetherUnsupportedError,
+)
 from blueferry.client_activation import record_client_use
 from blueferry.config import FEATURE_SWITCHES
 from blueferry.contact_photos import image_type, valid_photo
@@ -44,6 +51,9 @@ MAX_PENDING_REQUESTS = 32
 REQUEST_WORKERS = 4
 # The panel's notification list is compact; the other clients keep 100.
 NOTIFICATION_LIMIT = 30
+# Contact cards per page and search hits per group in the compact panel.
+CONTACT_PAGE = 50
+SEARCH_LIMIT = 10
 _FEATURE_NAME = re.compile(r"[a-z][a-z0-9_]{0,63}")
 _FEATURE_VARIABLES = {name: variable for name, variable, _default in FEATURE_SWITCHES}
 
@@ -230,6 +240,106 @@ def notification_apps_reply(
         "supported": supported,
         "saved": saved,
         "error": error,
+    }
+
+
+def contact_cards_reply(payload: object) -> dict[str, Any]:
+    """``contacts_view.list_view`` for the panel's contact search.
+
+    Rows carry ``id``, ``title``, ``subtitle``, ``initials`` and
+    ``has_photo``; ``next_offset`` asks for the following page.
+    """
+    return contacts_view.list_view(payload)
+
+
+def contact_card_reply(document: object) -> dict[str, Any]:
+    """One card for the panel: header plus a flat list of detail rows.
+
+    Each row is a ``contacts_view.detail_sections`` row with its section
+    (``section``, ``section_title``) and the two actions the panel offers:
+    ``can_call`` (a dialable number) and ``can_message``. ``found`` is
+    False and ``message`` the shared stale text when the id no longer
+    resolves.
+    """
+    view = contacts_view.card_view(document)
+    rows = []
+    for section in view["sections"]:
+        for row in section["rows"]:
+            target = str(row["target"])
+            actions = row["actions"]
+            rows.append({
+                "section": section["id"],
+                "section_title": section["title"],
+                "label": row["label"],
+                "value": row["value"],
+                "target": target,
+                "can_call": contacts_view.ACTION_DIAL in actions
+                and bool(phone_link_view.dialable(target)),
+                "can_message": contacts_view.ACTION_MESSAGE in actions,
+            })
+    return {
+        "found": True,
+        "message": "",
+        "title": view["title"],
+        "subtitle": view["subtitle"],
+        "initials": view["initials"],
+        "rows": rows,
+    }
+
+
+def stale_card_reply() -> dict[str, Any]:
+    return {
+        "found": False, "message": contacts_view.stale_text(),
+        "title": "", "subtitle": "", "initials": "", "rows": [],
+    }
+
+
+def search_reply(payload: object) -> dict[str, Any]:
+    """``search_view`` for the panel as one flat list without nested arrays.
+
+    Each row has its section (``section``, ``section_title`` and
+    ``section_more``, the shared "N more matches" text), the shared
+    ``title``, ``subtitle``, ``time``, the message snippet split around the
+    match (``snippet_before``, ``snippet_match``, ``snippet_after``) and
+    the target flattened to ``kind``, ``thread_key``, ``handle``,
+    ``contact_id`` and, for calls, the caller's ``number`` so the panel can
+    call back or write without a recent-calls list.
+    """
+    normalized = search_view.normalize(payload)
+    numbers = {
+        str(item.get("id")): str(item.get("address") or "")
+        for item in normalized["calls"]["results"]
+        if isinstance(item.get("id"), str)
+    }
+    more = {section["id"]: section["more"] for section in search_view.sections(payload)}
+    rows = []
+    for row in search_view.flat_rows(payload):
+        target = row["target"]
+        snippet = str(row["snippet"])
+        highlight = row["highlight"]
+        start, length = highlight if highlight else (len(snippet), 0)
+        rows.append({
+            "section": row["section"],
+            "section_title": row["section_title"],
+            "section_more": more.get(row["section"], ""),
+            "title": row["title"],
+            "subtitle": row["subtitle"],
+            "time": row["time"],
+            "snippet_before": snippet[:start],
+            "snippet_match": snippet[start:start + length],
+            "snippet_after": snippet[start + length:],
+            "kind": str(target.get("kind") or ""),
+            "thread_key": str(target.get("thread_key") or ""),
+            "handle": str(target.get("handle") or ""),
+            "contact_id": str(target.get("contact_id") or ""),
+            "number": numbers.get(str(target.get("call_id") or ""), ""),
+        })
+    return {
+        "query": normalized["query"],
+        "count": len(rows),
+        "hint": search_view.hint(payload),
+        "limit_text": search_view.limit_text(payload, SEARCH_LIMIT),
+        "rows": rows,
     }
 
 
@@ -483,6 +593,11 @@ class QuickshellBridge:
             if "phone_audio_route" in status:
                 # Quickshell has no gettext; it shows the shared wording.
                 status["phone_audio_view"] = phone_audio(status)
+            if contacts_view.supported(status) or search_view.supported(status):
+                # Why Call is greyed out in the contact search; "" when ready.
+                status["dial_hint"] = phone_link_view.calls_hint(
+                    status, str(status.get("calls_state") or "disabled"),
+                )
             if "phone_reconnect_state" in status:
                 # Older daemons cannot reconnect on request: no row.
                 status["reconnect_view"] = self._reconnect_view(status)
@@ -617,6 +732,30 @@ class QuickshellBridge:
             return doctor_report.view(
                 doctor_report.finished_state(doctor_report.idle_state(), report)
             )
+        if method == "contact_cards":
+            offset = _index(args, "offset")
+            if offset < 0:
+                raise RequestError("offset must not be negative")
+            return contact_cards_reply(
+                self.client.contact_cards(offset, CONTACT_PAGE, _text(args, "query")),
+            )
+        if method == "contact_card":
+            try:
+                # The panel shows no photo; the bytes are dropped here.
+                document, _photo = self.client.contact(_text(args, "id"))
+            except ContactNotFoundError:
+                return stale_card_reply()
+            return contact_card_reply(document)
+        if method == "search":
+            query = _text(args, "query")
+            if not search_view.should_search(query):
+                return search_reply({"query": query})
+            return search_reply(self.client.search(query, SEARCH_LIMIT))
+        if method == "dial":
+            number = phone_link_view.dialable(_text(args, "number"))
+            if not number:
+                raise RequestError("number must contain digits")
+            return {"call": str(self.client.dial(number))}
         if method == "notifications":
             return self._notifications()
         if method == "set_notification_pinned":

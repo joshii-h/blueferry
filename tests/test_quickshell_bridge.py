@@ -1552,3 +1552,165 @@ def test_a_saved_toggle_drops_the_cached_muted_apps() -> None:
     bridge._muted_cache = frozenset()
     bridge.dispatch("toggle_notification_app", {"index": 1, "app_id": "com.example.mail"})
     assert bridge._muted_cache is None
+
+
+class ContactsClient(FakeClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.stale: set[str] = set()
+        self.search_answer: dict = {}
+
+    def contact_cards(self, offset=0, limit=150, query=""):
+        self.calls.append(("contact_cards", offset, limit, query))
+        return {
+            "contacts": [
+                {"id": "c1", "name": "<b>Ana</b>", "organization": "ACME",
+                 "primary": "+41790000000", "phone_count": 1},
+                {"id": "c1", "name": "duplicate"},
+                {"name": "no id"},
+            ],
+            "total": 60, "offset": offset, "query": query,
+        }
+
+    def contact(self, contact_id):
+        from blueferry.client import ContactNotFoundError
+
+        self.calls.append(("contact", contact_id))
+        if contact_id in self.stale:
+            raise ContactNotFoundError("gone")
+        return {
+            "id": contact_id, "name": "Ana", "title": "Boss", "organization": "ACME",
+            "phones": [
+                {"kind": "mobile", "value": "079 000 00 00", "number": "+41790000000"},
+                {"kind": "custom", "label": "Desk", "value": "ext. 12", "number": ""},
+            ],
+            "emails": [{"kind": "home", "value": "ana@example.com"}],
+            "addresses": [{"kind": "work", "street": "Main St 1", "locality": "Bern",
+                           "postal_code": "3000"}],
+        }, b"\xff\xd8photo"
+
+    def search(self, query, limit=20):
+        self.calls.append(("search", query, limit))
+        return {**self.search_answer, "query": query}
+
+    def dial(self, number):
+        self.calls.append(("dial", number))
+        return "/call/1"
+
+
+def test_bridge_pages_contact_cards_with_the_shared_rows() -> None:
+    client = ContactsClient()
+    reply = QuickshellBridge(client).dispatch(  # type: ignore[arg-type]
+        "contact_cards", {"query": "ana", "offset": 50},
+    )
+    assert client.calls == [("contact_cards", 50, 50, "ana")]
+    assert reply["rows"] == [{
+        "id": "c1", "title": "<b>Ana</b>", "subtitle": "ACME · +41790000000",
+        "initials": "", "has_photo": False,
+    }]
+    assert reply["count_text"] == "60 matching contacts"
+    assert reply["has_more"] is True and reply["next_offset"] == 51
+
+
+@pytest.mark.parametrize("args", [
+    {"query": "ana"}, {"query": "ana", "offset": -1}, {"query": "ana", "offset": True},
+    {"offset": 0}, {"query": 3, "offset": 0},
+])
+def test_bridge_rejects_malformed_contact_card_requests(args) -> None:
+    client = ContactsClient()
+    with pytest.raises(RequestError):
+        QuickshellBridge(client).dispatch("contact_cards", args)  # type: ignore[arg-type]
+    assert client.calls == []
+
+
+def test_bridge_opens_a_card_as_flat_rows_without_its_photo() -> None:
+    client = ContactsClient()
+    bridge = QuickshellBridge(client)  # type: ignore[arg-type]
+    reply = bridge.dispatch("contact_card", {"id": "c1"})
+    assert reply["found"] is True and reply["message"] == ""
+    assert reply["title"] == "Ana" and reply["subtitle"] == "Boss · ACME"
+    assert "photo" not in json.dumps(reply)
+    rows = reply["rows"]
+    assert [(row["section"], row["label"], row["value"]) for row in rows] == [
+        ("phones", "Mobile", "079 000 00 00"),
+        ("phones", "Desk", "ext. 12"),
+        ("emails", "Home", "ana@example.com"),
+        ("addresses", "Work", "Main St 1\n3000 Bern"),
+    ]
+    assert [(row["can_call"], row["can_message"]) for row in rows] == [
+        (True, True), (False, False), (False, True), (False, False),
+    ]
+    assert rows[0]["target"] == "+41790000000"
+    assert rows[0]["section_title"] == "Phone"
+
+    client.stale.add("old")
+    stale = bridge.dispatch("contact_card", {"id": "old"})
+    assert stale["found"] is False and stale["rows"] == []
+    assert stale["message"] == "This contact changed or was removed. Reload the list."
+
+
+def test_bridge_flattens_search_hits_with_the_match_and_the_call_number() -> None:
+    client = ContactsClient()
+    client.search_answer = {
+        "limit": 10,
+        "messages": {"total": 12, "results": [
+            {"thread_key": "t1", "handle": "h1", "thread_name": "Ana", "sender": "Ana",
+             "timestamp": "2026-10-01T10:00:00+00:00", "snippet": "see <b>you</b> soon",
+             "match_start": 4, "match_length": 10},
+        ]},
+        "contacts": {"total": 1, "results": [{"id": "c1", "name": "Ana"}]},
+        "calls": {"total": 1, "results": [
+            {"id": "k1", "direction": "missed", "timestamp": "2026-10-01T09:00:00+00:00",
+             "address": "+41790000000", "name": "Ana"},
+        ]},
+    }
+    bridge = QuickshellBridge(client)  # type: ignore[arg-type]
+    reply = bridge.dispatch("search", {"query": "ana"})
+    assert client.calls == [("search", "ana", 10)]
+    message, contact, call = reply["rows"]
+    assert message["section"] == "messages" and message["section_title"] == "Messages"
+    assert message["section_more"] == "11 more matches"
+    assert (message["snippet_before"], message["snippet_match"], message["snippet_after"]) == (
+        "see ", "<b>you</b>", " soon",
+    )
+    assert (message["kind"], message["thread_key"], message["handle"]) == ("message", "t1", "h1")
+    assert (contact["kind"], contact["contact_id"]) == ("contact", "c1")
+    assert contact["snippet_before"] == "" and contact["snippet_match"] == ""
+    assert (call["kind"], call["number"]) == ("call", "+41790000000")
+    assert call["subtitle"] == "Missed call · +41790000000"
+    assert reply["limit_text"] == "Showing at most 10 results per group."
+    assert reply["count"] == 3 and reply["hint"] == ""
+    # Nothing nested: every row value is a plain string.
+    assert all(isinstance(value, str) for row in reply["rows"] for value in row.values())
+
+    short = bridge.dispatch("search", {"query": "a"})
+    assert short["rows"] == [] and "two characters" in short["hint"]
+    assert len(client.calls) == 1
+
+
+def test_bridge_dials_only_digits_and_reports_the_calls_hint() -> None:
+    from blueferry.models import BackendStatus
+
+    client = ContactsClient()
+    bridge = QuickshellBridge(client)  # type: ignore[arg-type]
+    assert bridge.dispatch("dial", {"number": "+41 79 000 00 00"}) == {"call": "/call/1"}
+    assert client.calls == [("dial", "+41790000000")]
+    with pytest.raises(RequestError, match="digits"):
+        bridge.dispatch("dial", {"number": "ext."})
+    with pytest.raises(RequestError):
+        bridge.dispatch("dial", {})
+
+    client.status = lambda **_kwargs: BackendStatus.from_dict({  # type: ignore[method-assign]
+        "daemon": True, "calls_enabled": True, "calls_state": "ready",
+        "contact_card_count": 3,
+    })
+    assert bridge.dispatch("status", {})["dial_hint"] == ""
+    client.status = lambda **_kwargs: BackendStatus.from_dict({  # type: ignore[method-assign]
+        "daemon": True, "calls_enabled": False, "search_result_limit": 50,
+    })
+    assert "Calls & Audio" in bridge.dispatch("status", {})["dial_hint"]
+    # An older daemon without contact cards or search: no hint.
+    client.status = lambda **_kwargs: BackendStatus.from_dict({  # type: ignore[method-assign]
+        "daemon": True, "calls_enabled": False,
+    })
+    assert "dial_hint" not in bridge.dispatch("status", {})
