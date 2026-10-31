@@ -247,9 +247,13 @@ def contact_cards_reply(payload: object) -> dict[str, Any]:
     """``contacts_view.list_view`` for the panel's contact search.
 
     Rows carry ``id``, ``title``, ``subtitle``, ``initials`` and
-    ``has_photo``; ``next_offset`` asks for the following page.
+    ``has_photo``; ``offset`` is the page's start (0 replaces the list,
+    more appends) and ``next_offset`` asks for the following page.
     """
-    return contacts_view.list_view(payload)
+    return {
+        **contacts_view.list_view(payload),
+        "offset": contacts_view.normalize_page(payload)["offset"],
+    }
 
 
 def contact_card_reply(document: object) -> dict[str, Any]:

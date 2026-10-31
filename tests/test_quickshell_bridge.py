@@ -1610,6 +1610,7 @@ def test_bridge_pages_contact_cards_with_the_shared_rows() -> None:
     }]
     assert reply["count_text"] == "60 matching contacts"
     assert reply["has_more"] is True and reply["next_offset"] == 51
+    assert reply["offset"] == 50
 
 
 @pytest.mark.parametrize("args", [

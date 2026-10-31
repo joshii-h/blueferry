@@ -82,6 +82,22 @@ ShellRoot {
     && phoneSettingsPage.notificationsExpanded
   property bool storagePolicyBusy: false
   property bool storageUnlockBusy: false
+  // Contact cards and the global search: read only while the search popup
+  // is open and forgotten when it closes. The epoch changes when card ids
+  // may no longer resolve (daemon restart, contact reload).
+  property var contactCards: ({})
+  property var contactCard: ({})
+  property var searchResults: ({})
+  property string searchQuery: ""
+  property string searchError: ""
+  property bool contactCardsBusy: false
+  property bool dialBusy: false
+  property var contactCardEpoch: undefined
+  readonly property bool contactCardsSupported:
+    typeof root.backendStatus.contact_card_count === "number"
+  readonly property bool searchSupported:
+    typeof root.backendStatus.search_result_limit === "number"
+    && root.backendStatus.search_result_limit > 0
 
   ConversationLogic { id: conversationLogic }
 
@@ -317,6 +333,56 @@ ShellRoot {
   BackendBridge { id: backendBridge; desktopClient: true }
   AvatarCache { id: avatars; bridge: backendBridge; backendStatus: root.backendStatus }
 
+  // An empty or one-letter query lists (or filters) the contact cards; a
+  // longer one searches everything when the daemon can.
+  function runSearch(query) {
+    root.searchQuery = query
+    root.searchError = ""
+    if (root.searchSupported && (query.length >= 2 || !root.contactCardsSupported)) {
+      backendBridge.cancelLatest("contact_cards")
+      root.contactCardsBusy = false
+      backendBridge.requestLatest("search", {query: query})
+    } else {
+      backendBridge.cancelLatest("search")
+      root.searchResults = ({})
+      if (root.contactCardsSupported) root.loadContactCards(0)
+    }
+  }
+
+  function loadContactCards(offset) {
+    root.contactCardsBusy = true
+    backendBridge.requestLatest("contact_cards", {query: root.searchQuery, offset: offset})
+  }
+
+  function applyContactCards(result) {
+    root.contactCardsBusy = false
+    if (!searchPopup.visible || typeof result !== "object" || result === null) return
+    if (result.offset > 0 && root.contactCards.rows) {
+      // A further page: append the rows the list does not have yet.
+      const seen = {}
+      const rows = Array.prototype.slice.call(root.contactCards.rows)
+      rows.forEach(row => { seen[row.id] = true })
+      Array.prototype.slice.call(result.rows || []).forEach(row => {
+        if (!seen[row.id]) rows.push(row)
+      })
+      root.contactCards = Object.assign({}, result, {rows: rows})
+    } else {
+      root.contactCards = result
+    }
+  }
+
+  function forgetSearch() {
+    backendBridge.cancelLatest("search")
+    backendBridge.cancelLatest("contact_cards")
+    backendBridge.cancelLatest("contact_card")
+    root.contactCards = ({})
+    root.contactCard = ({})
+    root.searchResults = ({})
+    root.searchQuery = ""
+    root.searchError = ""
+    root.contactCardsBusy = false
+  }
+
   IpcHandler {
     target: "blueferry"
     function open(): void { root.presentWindow() }
@@ -344,6 +410,15 @@ ShellRoot {
         const daemonReturned = result.daemon === true && root.backendStatus.daemon !== true
         root.backendStatus = result
         if (daemonReturned && root.featuresWanted) root.loadFeatures()
+        if (result.contact_card_epoch !== root.contactCardEpoch) {
+          // Card ids from the old epoch may be gone: read the list again.
+          const epochWasKnown = root.contactCardEpoch !== undefined
+          root.contactCardEpoch = result.contact_card_epoch
+          if (epochWasKnown && searchPopup.visible) {
+            root.contactCard = ({})
+            root.runSearch(root.searchQuery)
+          }
+        }
         if (typeof result.bluetooth_restart_command === "string")
           root.bluetoothRestartCommand = result.bluetooth_restart_command
         var policy = result.notification_policy || "messages"
@@ -555,6 +630,19 @@ ShellRoot {
         root.notificationPinError = typeof result === "object" && result !== null
           ? String(result.error || "") : ""
         if (!saved) root.refreshNotificationList()
+      } else if (method === "contact_cards") {
+        root.applyContactCards(result)
+      } else if (method === "contact_card") {
+        if (!searchPopup.visible) return
+        root.contactCard = typeof result === "object" && result !== null ? result : ({})
+        // A stale id: the shared text is shown and the list is read again.
+        if (root.contactCard.found !== true) root.runSearch(root.searchQuery)
+      } else if (method === "search") {
+        if (searchPopup.visible && typeof result === "object" && result !== null)
+          root.searchResults = result
+      } else if (method === "dial") {
+        root.dialBusy = false
+        dialConfirmPopup.close()
       }
     }
 
@@ -696,6 +784,13 @@ ShellRoot {
       } else if (method === "notifications") {
         if (root.notificationListWatched)
           root.notificationList = {rows: [], failed: true, explanation: message}
+      } else if (method === "contact_cards" || method === "contact_card" || method === "search") {
+        root.contactCardsBusy = false
+        if (searchPopup.visible) root.searchError = message || "Search failed"
+      } else if (method === "dial") {
+        root.dialBusy = false
+        dialConfirmPopup.close()
+        root.errorText = message || "Could not start the call"
       } else {
         avatars.disconnected()
         root.statusBusy = false
@@ -711,6 +806,8 @@ ShellRoot {
         root.phoneAudioBusy = false
         root.notificationPinBusy = false
         root.notificationAppsBusy = false
+        root.contactCardsBusy = false
+        root.dialBusy = false
         if (root.mediaControl.busy)
           root.mediaControl.failed(root.backendStatus.media_control_enabled === true)
         if (root.mprisPlayer.busy)
@@ -960,6 +1057,18 @@ ShellRoot {
                   font.bold: true
                   font.letterSpacing: 1
                   leftPadding: theme.scaled(4)
+                }
+                FerryButton {
+                  objectName: "searchButton"
+                  ferryTheme: theme
+                  text: "⌕"
+                  implicitWidth: implicitHeight
+                  visible: root.contactCardsSupported || root.searchSupported
+                  Accessible.name: root.searchSupported ? "Search" : "Contacts"
+                  ToolTip.visible: hovered
+                  ToolTip.text: (root.searchSupported
+                    ? "Search messages, contacts and calls" : "Search contacts") + " (Ctrl+F)"
+                  onClicked: searchPopup.open()
                 }
                 FerryButton {
                   ferryTheme: theme
@@ -1719,8 +1828,177 @@ ShellRoot {
         }
       }
 
+      Shortcut {
+        sequence: StandardKey.Find
+        enabled: root.contactCardsSupported || root.searchSupported
+        onActivated: searchPopup.open()
+      }
+
+      Popup {
+        id: searchPopup
+        objectName: "searchPopup"
+        parent: applicationSurface
+        x: Math.max(0, (applicationSurface.width - width) / 2)
+        y: Math.max(0, (applicationSurface.height - height) / 2)
+        width: Math.min(theme.scaled(560), applicationSurface.width - theme.scaled(24))
+        height: Math.min(theme.scaled(560), applicationSurface.height - theme.scaled(24))
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        padding: theme.scaled(18)
+
+        onOpened: {
+          searchPanel.clear()
+          root.contactCard = ({})
+          root.runSearch("")
+          searchPanel.focusField()
+        }
+        onClosed: {
+          searchTimer.stop()
+          root.forgetSearch()
+        }
+
+        Timer {
+          id: searchTimer
+          // search_view.TYPING_DELAY_MS
+          interval: 250
+          onTriggered: root.runSearch(searchPanel.query)
+        }
+
+        background: Rectangle {
+          color: theme.windowSurface
+          border.color: theme.divider
+          radius: theme.panelRadius
+        }
+
+        Overlay.modal: Rectangle {
+          color: Qt.rgba(theme.windowSurface.r, theme.windowSurface.g,
+                         theme.windowSurface.b, 0.72)
+        }
+
+        contentItem: ColumnLayout {
+          spacing: theme.scaled(8)
+          RowLayout {
+            Layout.fillWidth: true
+            FerryLabel {
+              ferryTheme: theme
+              Layout.fillWidth: true
+              text: root.searchSupported ? "Search" : "Contacts"
+              font.bold: true
+              font.pixelSize: theme.headingSize
+            }
+            FerryButton {
+              ferryTheme: theme
+              text: "Close"
+              onClicked: searchPopup.close()
+            }
+          }
+          QuickshellSearch {
+            id: searchPanel
+            objectName: "searchPanel"
+            ferryTheme: theme
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            contacts: root.contactCards
+            results: root.searchResults
+            card: root.contactCard
+            searchSupported: root.searchSupported
+            contactsSupported: root.contactCardsSupported
+            busy: root.contactCardsBusy
+            error: root.searchError
+            dialHint: String(root.backendStatus.dial_hint || "")
+            onQueryEdited: searchTimer.restart()
+            onMoreContactsRequested: root.loadContactCards(Number(root.contactCards.next_offset || 0))
+            onContactRequested: contactId => backendBridge.requestLatest("contact_card", {id: contactId})
+            onCardClosed: {
+              backendBridge.cancelLatest("contact_card")
+              root.contactCard = ({})
+            }
+            onConversationRequested: (threadKey, handle) => {
+              searchPopup.close()
+              if (handle !== "") root.openMessage(handle)
+              else root.openThread(threadKey)
+            }
+            onCallRequested: number => {
+              dialConfirmPopup.number = number
+              dialConfirmPopup.open()
+            }
+            onMessageRequested: address => {
+              searchPopup.close()
+              newMessagePopup.presetRecipient = address
+              newMessagePopup.open()
+            }
+          }
+        }
+      }
+
+      // Every call is confirmed first, as in the other clients. The panel
+      // has no calls view: the running call stays on the iPhone and in the
+      // other BlueFerry clients.
+      Popup {
+        id: dialConfirmPopup
+        objectName: "dialConfirmPopup"
+        property string number: ""
+        parent: applicationSurface
+        x: Math.max(0, (applicationSurface.width - width) / 2)
+        y: Math.max(0, (applicationSurface.height - height) / 2)
+        width: Math.min(theme.scaled(420), applicationSurface.width - theme.scaled(24))
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        padding: theme.scaled(18)
+
+        background: Rectangle {
+          color: theme.windowSurface
+          border.color: theme.divider
+          radius: theme.panelRadius
+        }
+
+        Overlay.modal: Rectangle {
+          color: Qt.rgba(theme.windowSurface.r, theme.windowSurface.g,
+                         theme.windowSurface.b, 0.72)
+        }
+
+        contentItem: ColumnLayout {
+          spacing: theme.scaled(12)
+          FerryLabel {
+            ferryTheme: theme
+            text: "Call " + dialConfirmPopup.number + "?"
+            font.bold: true
+            font.pixelSize: theme.headingSize
+          }
+          FerryLabel {
+            ferryTheme: theme
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            text: "The iPhone places the call. Answer, hold and hang up on the iPhone or in another BlueFerry client."
+          }
+          RowLayout {
+            Layout.alignment: Qt.AlignRight
+            FerryButton {
+              ferryTheme: theme
+              text: "Cancel"
+              onClicked: dialConfirmPopup.close()
+            }
+            FerryButton {
+              objectName: "dialConfirmCall"
+              ferryTheme: theme
+              text: root.dialBusy ? "Calling…" : "Call"
+              highlighted: true
+              enabled: !root.dialBusy && dialConfirmPopup.number !== ""
+              onClicked: {
+                root.dialBusy = true
+                backendBridge.request("dial", {number: dialConfirmPopup.number})
+              }
+            }
+          }
+        }
+      }
+
       Popup {
         id: newMessagePopup
+        // A recipient chosen elsewhere (the contact search) for the next opening.
+        property string presetRecipient: ""
         parent: applicationSurface
         x: Math.max(0, (applicationSurface.width - width) / 2)
         y: Math.max(0, (applicationSurface.height - height) / 2)
@@ -1731,10 +2009,12 @@ ShellRoot {
         padding: theme.scaled(18)
 
         onOpened: {
-          newRecipient.text = ""
+          newRecipient.text = newMessagePopup.presetRecipient
+          newMessagePopup.presetRecipient = ""
           newMessageBody.text = ""
           root.searchContacts("")
-          newRecipient.forceActiveFocus()
+          if (newRecipient.text !== "") newMessageBody.forceActiveFocus()
+          else newRecipient.forceActiveFocus()
         }
 
         Timer {

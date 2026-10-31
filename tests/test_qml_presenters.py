@@ -6127,3 +6127,357 @@ def test_quickshell_empty_activation_only_presents_the_window(qml_engine) -> Non
         return JSON.stringify(calls);
     })()'''
     assert _evaluate(qml_engine, script) == '["present","present","select:m1","reload"]'
+
+
+# ---- Quickshell contact search and global search (Welle C) ----------------
+
+
+def _settle() -> None:
+    # Repeater delegates of a replaced model are deleted later; flush them so
+    # the item walk never meets a deleted one.
+    QGuiApplication.processEvents()
+    QGuiApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+    QGuiApplication.processEvents()
+
+
+def _quickshell_search(qml_engine, **properties):
+    theme_component = _component(qml_engine, "data/quickshell/ThemePalette.qml")
+    theme = theme_component.create()
+    assert theme is not None, theme_component.errors()
+    theme.setParent(qml_engine)
+    component = _component(qml_engine, "data/quickshell/QuickshellSearch.qml")
+    panel = component.createWithInitialProperties({
+        "ferryTheme": theme, "width": 520, "height": 600, **properties,
+    })
+    assert panel is not None, component.errors()
+    theme.setParent(panel)
+    window = QQuickWindow()
+    window.resize(520, 600)
+    panel.setParentItem(window.contentItem())
+    window.show()
+    QGuiApplication.processEvents()
+    signals: list[tuple] = []
+    panel.contactRequested.connect(lambda value: signals.append(("contact", value)))
+    panel.callRequested.connect(lambda value: signals.append(("call", value)))
+    panel.messageRequested.connect(lambda value: signals.append(("message", value)))
+    panel.moreContactsRequested.connect(lambda: signals.append(("more",)))
+    panel.cardClosed.connect(lambda: signals.append(("back",)))
+    panel.conversationRequested.connect(
+        lambda key, handle: signals.append(("conversation", key, handle)),
+    )
+
+    def close():
+        # The components stay referenced until here: deleting one early
+        # takes the objects created from it along.
+        assert component is not None and theme_component is not None
+        window.close()
+        panel.deleteLater()
+        window.deleteLater()
+        QGuiApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+
+    return panel, signals, close
+
+
+def _contact_page():
+    from blueferry.quickshell_bridge import contact_cards_reply
+
+    return contact_cards_reply({
+        "contacts": [
+            {"id": "c1", "name": "<b>Ana</b>", "organization": "ACME",
+             "primary": "+41790000000"},
+            {"id": "c2", "name": "Bo"},
+        ],
+        "total": 80, "offset": 0, "query": "",
+    })
+
+
+def _contact_card():
+    from blueferry.quickshell_bridge import contact_card_reply
+
+    return contact_card_reply({
+        "id": "c1", "name": "<b>Ana</b>", "title": "Boss", "organization": "ACME",
+        "phones": [
+            {"kind": "mobile", "value": "079 000 00 00", "number": "+41790000000"},
+            {"kind": "pager", "value": "beep", "number": ""},
+        ],
+        "emails": [{"kind": "work", "value": "ana@example.com"}],
+    })
+
+
+def test_quickshell_search_lists_contacts_and_opens_a_card_with_call_and_message(
+    qml_engine,
+) -> None:
+    panel, signals, close = _quickshell_search(
+        qml_engine, contactsSupported=True, contacts=_contact_page(),
+    )
+    try:
+        [title] = _quickshell_items(panel, "searchContactTitle0")
+        assert title.property("text") == "<b>Ana</b>"
+        assert _plain_text_format(qml_engine, title)
+        count = panel.findChild(QObject, "searchContactsCount")
+        assert count.property("text") == "80 contacts" and count.property("visible") is True
+        field = panel.findChild(QObject, "searchField")
+        assert field.property("placeholderText") == "Search contacts"
+        more = panel.findChild(QObject, "searchContactsMore")
+        assert more.property("visible") is True
+        _quickshell_press(more)
+        [first] = _quickshell_items(panel, "searchContact0")
+        _quickshell_press(first)
+        assert signals == [("more",), ("contact", "c1")]
+
+        panel.setProperty("card", _contact_card())
+        _settle()
+        assert field.property("visible") is False
+        assert panel.findChild(QObject, "searchCardTitle").property("text") == "<b>Ana</b>"
+        assert panel.findChild(QObject, "searchCardSubtitle").property("text") == "Boss · ACME"
+        assert _quickshell_items(panel, "searchContact0") == []
+        [call0] = _quickshell_items(panel, "searchCardCall0")
+        [call1] = _quickshell_items(panel, "searchCardCall1")
+        [message0] = _quickshell_items(panel, "searchCardMessage0")
+        [message2] = _quickshell_items(panel, "searchCardMessage2")
+        [value2] = _quickshell_items(panel, "searchCardValue2")
+        assert value2.property("text") == "ana@example.com"
+        assert call0.property("visible") is True and call0.property("enabled") is True
+        assert call1.property("visible") is False  # a pager number cannot be dialled
+        assert message0.property("visible") is True and message2.property("visible") is True
+        _quickshell_press(call0)
+        _quickshell_press(message2)
+        assert signals[-2:] == [("call", "+41790000000"), ("message", "ana@example.com")]
+
+        # Calls not ready: Call is greyed out with the shared hint.
+        panel.setProperty("dialHint", "Phone calls are off.")
+        _settle()
+        assert call0.property("enabled") is False
+        hint = panel.findChild(QObject, "searchDialHint")
+        assert hint.property("visible") is True and hint.property("text") == "Phone calls are off."
+
+        _quickshell_press(panel.findChild(QObject, "searchCardBack"))
+        assert signals[-1] == ("back",)
+
+        # A stale id: the shared text, no rows.
+        from blueferry.quickshell_bridge import stale_card_reply
+
+        panel.setProperty("card", stale_card_reply())
+        _settle()
+        message = panel.findChild(QObject, "searchCardMessage")
+        assert message.property("visible") is True
+        assert "changed or was removed" in message.property("text")
+        assert _quickshell_items(panel, "searchCardCall0") == []
+    finally:
+        close()
+
+
+def test_quickshell_search_shows_grouped_hits_and_opens_them(qml_engine) -> None:
+    from blueferry.quickshell_bridge import search_reply
+
+    results = search_reply({
+        "query": "ana", "limit": 10,
+        "messages": {"total": 3, "results": [
+            {"thread_key": "t1", "handle": "h1", "thread_name": "<i>Chat</i>",
+             "sender": "Ana", "timestamp": "2026-10-01T10:00:00+00:00",
+             "snippet": "hi ana!", "match_start": 3, "match_length": 3},
+        ]},
+        "contacts": {"total": 1, "results": [{"id": "c1", "name": "Ana"}]},
+        "calls": {"total": 1, "results": [
+            {"id": "k1", "direction": "missed", "timestamp": "2026-10-01T09:00:00+00:00",
+             "address": "+41790000000", "name": "Ana"},
+        ]},
+    })
+    panel, signals, close = _quickshell_search(
+        qml_engine, contactsSupported=True, searchSupported=True,
+        contacts=_contact_page(), results=results,
+    )
+    try:
+        field = panel.findChild(QObject, "searchField")
+        assert field.property("placeholderText") == "Search messages, contacts and calls"
+        # A short query keeps the contact list.
+        assert _quickshell_items(panel, "searchResult0") == []
+        field.setProperty("text", "ana")
+        _settle()
+        assert _quickshell_items(panel, "searchContact0") == []
+        [section0] = _quickshell_items(panel, "searchSection0")
+        [section1] = _quickshell_items(panel, "searchSection1")
+        assert section0.property("text") == "Messages  ·  2 more matches"
+        assert section0.property("visible") is True and section1.property("visible") is True
+        [title0] = _quickshell_items(panel, "searchResultTitle0")
+        assert title0.property("text") == "<i>Chat</i>" and _plain_text_format(qml_engine, title0)
+        [before] = _quickshell_items(panel, "searchSnippetBefore0")
+        [match] = _quickshell_items(panel, "searchSnippetMatch0")
+        [after] = _quickshell_items(panel, "searchSnippetAfter0")
+        assert (before.property("text"), match.property("text"), after.property("text")) == (
+            "hi ", "ana", "!",
+        )
+        assert match.property("font").bold() is True
+        limit = panel.findChild(QObject, "searchLimit")
+        assert limit.property("visible") is True
+
+        [message_hit] = _quickshell_items(panel, "searchResult0")
+        [contact_hit] = _quickshell_items(panel, "searchResult1")
+        [call_hit] = _quickshell_items(panel, "searchResult2")
+        _quickshell_press(message_hit)
+        _quickshell_press(contact_hit)
+        assert signals == [("conversation", "t1", "h1"), ("contact", "c1")]
+        # A call hit cannot open a list here: call back or write instead.
+        assert call_hit.property("enabled") is False
+        [call] = _quickshell_items(panel, "searchResultCall2")
+        [write] = _quickshell_items(panel, "searchResultMessage2")
+        assert call.property("visible") is True and write.property("visible") is True
+        assert _quickshell_items(panel, "searchResultCall0")[0].property("visible") is False
+        _quickshell_press(call)
+        _quickshell_press(write)
+        assert signals[-2:] == [("call", "+41790000000"), ("message", "+41790000000")]
+
+        panel.setProperty("error", "Search busy")
+        _settle()
+        error = panel.findChild(QObject, "searchError")
+        assert error.property("visible") is True and error.property("text") == "Search busy"
+    finally:
+        close()
+
+
+def test_quickshell_search_without_contact_cards_shows_the_search_hint(qml_engine) -> None:
+    from blueferry.quickshell_bridge import search_reply
+
+    panel, _signals, close = _quickshell_search(
+        qml_engine, searchSupported=True, results=search_reply({"query": ""}),
+    )
+    try:
+        hint = panel.findChild(QObject, "searchHint")
+        assert hint.property("visible") is True
+        assert "two characters" in hint.property("text")
+        assert panel.findChild(QObject, "searchContactsMore").property("visible") is False
+    finally:
+        close()
+
+
+def test_quickshell_search_popup_reads_only_while_open(tmp_path, quickshell_environment):
+    """The real shell: contact cards and search are read while the popup is
+    open, a new epoch rereads, a stale card rereads, Call is confirmed and
+    Message prefills the recipient; closing forgets everything."""
+    import shutil
+    import subprocess
+
+    executable = shutil.which("quickshell")
+    if executable is None:
+        pytest.skip("Quickshell is not installed")
+    for source in (ROOT / "data/quickshell").glob("*.qml"):
+        shutil.copyfile(source, tmp_path / source.name)
+    shutil.copyfile(
+        ROOT / "src/blueferry/qt/qml/ConversationLogic.qml",
+        tmp_path / "ConversationLogic.qml",
+    )
+    (tmp_path / "Theme.qml").write_text("import QtQuick\nThemePalette {}\n")
+    (tmp_path / "SetupTransport.qml").write_text('''import QtQuick
+Item {
+  signal lineReceived(int id, string kind, string line)
+  signal finished(int id, string kind, int code, string output, string diagnostic)
+  function execute(id, kind, command, interactive) {}
+  function cancel(id) {}
+  function write(id, text) {}
+}
+''')
+    (tmp_path / "BackendBridge.qml").write_text('''import QtQuick
+Item {
+  property bool desktopClient: false
+  property int nextId: 1
+  property var log: []
+  property var lastArgs: ({})
+  signal response(string method, int requestId, var result)
+  signal failure(string method, int requestId, string message)
+  signal eventReceived(string name, var data)
+  function request(method, args) { log.push(method); lastArgs = args; return nextId++; }
+  function requestLatest(method, args) { log.push("latest:" + method); lastArgs = args; }
+  function cancelLatest(method) { log.push("cancel:" + method); }
+  function take(prefix) {
+    const found = log.filter(entry => entry.indexOf(prefix) === 0).length;
+    log = log.filter(entry => entry.indexOf(prefix) !== 0);
+    return found;
+  }
+}
+''')
+    config = tmp_path / "shell.qml"
+    source = config.read_text()
+    probe = r'''
+  Timer {
+    interval: 200; running: true
+    onTriggered: {
+      function check(value, message) { if (!value) throw new Error(message); }
+      try {
+        setupController.configured = true
+        root.presentWindow()
+        backendBridge.response("status", 1, {daemon: true, contact_card_count: 2,
+          contact_card_epoch: 5, search_result_limit: 50, dial_hint: ""})
+        backendBridge.log = []
+        searchPopup.open()
+        check(searchPopup.visible, "popup not open")
+        check(backendBridge.take("latest:contact_cards") === 1, "contacts not read on opening")
+        check(backendBridge.lastArgs.offset === 0 && backendBridge.lastArgs.query === "", "first page args")
+        backendBridge.response("contact_cards", 2, {offset: 0, has_more: true, next_offset: 1,
+          rows: [{id: "c1", title: "Ana"}]})
+        check(root.contactCards.rows.length === 1, "page ignored")
+        searchPanel.moreContactsRequested()
+        check(backendBridge.take("latest:contact_cards") === 1 && backendBridge.lastArgs.offset === 1,
+          "next page not asked for")
+        backendBridge.response("contact_cards", 3, {offset: 1, has_more: false,
+          rows: [{id: "c1", title: "Ana"}, {id: "c2", title: "Bo"}]})
+        check(root.contactCards.rows.length === 2, "page not appended once")
+
+        root.runSearch("ana")
+        check(backendBridge.take("latest:search") === 1, "search not sent")
+        check(backendBridge.take("cancel:contact_cards") === 1, "contact read not cancelled")
+        backendBridge.response("search", 4, {rows: [{kind: "message", title: "x"}], hint: ""})
+        check(root.searchResults.rows.length === 1, "search reply ignored")
+        backendBridge.failure("search", 5, "busy")
+        check(root.searchError === "busy", "search failure not shown")
+
+        searchPanel.contactRequested("c1")
+        check(backendBridge.take("latest:contact_card") === 1, "card not read")
+        backendBridge.response("contact_card", 6, {found: false, message: "stale", rows: []})
+        check(root.contactCard.message === "stale", "stale text not shown")
+        check(backendBridge.take("latest:search") === 1, "stale card did not reread")
+
+        backendBridge.response("contact_card", 7, {found: true, title: "Ana", rows: []})
+        backendBridge.response("status", 8, {daemon: true, contact_card_count: 2,
+          contact_card_epoch: 6, search_result_limit: 50})
+        check(root.contactCard.found === undefined, "new epoch kept the card")
+        check(backendBridge.take("latest:search") === 1, "new epoch did not reread")
+        backendBridge.response("status", 9, {daemon: true, contact_card_count: 2,
+          contact_card_epoch: 6, search_result_limit: 50})
+        check(backendBridge.take("latest:") === 0, "same epoch reread")
+
+        searchPanel.callRequested("+41790000000")
+        check(dialConfirmPopup.visible && dialConfirmPopup.number === "+41790000000", "no confirmation")
+        check(backendBridge.take("dial") === 0, "dialled before confirming")
+        root.dialBusy = true
+        backendBridge.request("dial", {number: dialConfirmPopup.number})
+        check(backendBridge.take("dial") === 1, "dial not sent")
+        backendBridge.failure("dial", 10, "no hfp")
+        check(!root.dialBusy && root.errorText === "no hfp" && !dialConfirmPopup.visible,
+          "dial failure not shown")
+
+        searchPanel.messageRequested("ana@example.com")
+        check(!searchPopup.visible, "popup stays open after Message")
+        check(newMessagePopup.visible, "new message not opened")
+        check(newRecipient.text === "ana@example.com", "recipient not prefilled")
+        check(root.contactCards.rows === undefined && root.searchResults.rows === undefined
+          && root.searchQuery === "", "closed popup kept results")
+        check(backendBridge.take("cancel:search") >= 1, "closing did not cancel the search")
+        newMessagePopup.close()
+        backendBridge.response("search", 11, {rows: [{kind: "message"}]})
+        check(root.searchResults.rows === undefined, "late reply shown while closed")
+        console.log("BLUEFERRY_QS_SEARCH_OK")
+      } catch (error) {
+        console.error(error);
+      }
+      Qt.quit();
+    }
+  }
+'''
+    config.write_text(source[:source.rfind("}")] + probe + "}\n")
+    result = subprocess.run(
+        [executable, "--path", str(config)], env=quickshell_environment,
+        capture_output=True, text=True, timeout=10, check=False,
+    )
+    log = result.stdout + result.stderr
+    assert result.returncode == 0 and "BLUEFERRY_QS_SEARCH_OK" in log, log
+    assert "ReferenceError" not in log and "TypeError" not in log, log
