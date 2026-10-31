@@ -5601,6 +5601,14 @@ def test_global_search_opens_with_the_shortcut_and_jumps_to_each_hit(
     QGuiApplication.processEvents()
     assert _evaluate(qml_engine, "testWindow.selectedThreadKey") == "t1"
     assert _evaluate(qml_engine, "testWindow.focusedMessageHandle") == "h9"
+    message_list = window.findChild(QObject, "messageList")
+    QGuiApplication.processEvents()
+    # Centred once; later changes (a new message) do not jump back to it.
+    assert message_list.property("focusPending") is False
+    _evaluate(qml_engine, "testWindow.openSearchTarget(testSearch.rows[1].target)")
+    assert message_list.property("focusPending") is True, "the same hit scrolls again"
+    QGuiApplication.processEvents()
+    assert message_list.property("focusPending") is False
     for _attempt in range(100):  # the dialog forgets the results once closed
         if {"method": "clearSearch", "args": []} in _evaluate(qml_engine, "testBridge.calls"):
             break

@@ -97,6 +97,8 @@ Kirigami.ApplicationWindow {
             focusedMessageHandle = ""
             selectThreadKey(target.thread_key)
         } else if (target.kind === "message") {
+            // Cleared first, so picking the same hit again scrolls to it again.
+            focusedMessageHandle = ""
             focusedMessageHandle = target.handle
             if (!selectMessage(target.handle))
                 selectThreadKey(target.thread_key)
@@ -988,17 +990,25 @@ Kirigami.ApplicationWindow {
                                         model: messagesPage.thread ? messagesPage.thread.messages : []
                                         Controls.ScrollBar.vertical: Controls.ScrollBar {}
                                         // A message picked in the search is shown in the
-                                        // middle; otherwise the newest message is.
+                                        // middle once (it stays marked); otherwise, and on
+                                        // every later change, the newest message is.
                                         readonly property string focusHandle: root.focusedMessageHandle
-                                        onFocusHandleChanged: Qt.callLater(settle)
+                                        property bool focusPending: false
+                                        onFocusHandleChanged: {
+                                            focusPending = focusHandle !== ""
+                                            Qt.callLater(settle)
+                                        }
 
                                         function settle() {
                                             const messages = messagesPage.thread
                                                 ? messagesPage.thread.messages : []
-                                            for (let index = 0; index < messages.length; ++index) {
-                                                if (focusHandle !== "" && messages[index].handle === focusHandle) {
-                                                    positionViewAtIndex(index, ListView.Center)
-                                                    return
+                                            if (focusPending) {
+                                                for (let index = 0; index < messages.length; ++index) {
+                                                    if (messages[index].handle === focusHandle) {
+                                                        focusPending = false
+                                                        positionViewAtIndex(index, ListView.Center)
+                                                        return
+                                                    }
                                                 }
                                             }
                                             positionViewAtEnd()
