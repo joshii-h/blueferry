@@ -44,6 +44,9 @@
   conversation or contact card; a card's numbers and addresses and call
   hits offer Call (confirmed first) and Message. Read only while the popup
   is open.
+- Report the A/V sync delay of the iPhone's audio stream in `GetStatus`
+  (`phone_audio_delay_ms`, `phone_audio_delay_reporting`), show it next to the
+  iPhone sound status, and check AVDTP delay reporting in `blueferry doctor`.
 
 ## [0.9.0](https://github.com/erikwb/blueferry/releases/tag/v0.9.0) - 2026-10-27
 
