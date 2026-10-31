@@ -5626,6 +5626,10 @@ def test_global_search_opens_with_the_shortcut_and_jumps_to_each_hit(
     QGuiApplication.processEvents()
     assert _evaluate(qml_engine, "testWindow.currentTab === testWindow.callsTab") is True
     assert _evaluate(qml_engine, "testWindow.focusedCallId") == "call-1"
+    changes: list[str] = []
+    window.focusedCallIdChanged.connect(lambda: changes.append(window.property("focusedCallId")))
+    _evaluate(qml_engine, "testWindow.openSearchTarget(testSearch.rows[3].target)")
+    assert changes == ["", "call-1"], "the same hit again scrolls to it again"
 
     # A conversation that is not loaded yet is selected once it arrives.
     _evaluate(qml_engine, "testWindow.openSearchTarget({kind: 'conversation', thread_key: 't2'})")
@@ -5657,6 +5661,7 @@ def test_recent_calls_page_marks_the_call_a_search_hit_points_at(qml_engine):
     page.setProperty("focusedCallId", "out-1")
     assert page.property("missedOnly") is False, "the hit may be any call"
     assert evaluate("focusedIndex()") == 1
+    assert page.property("focusedRow") == 1
     page.setProperty("focusedCallId", "unknown")
     assert evaluate("focusedIndex()") == -1
     page.deleteLater()

@@ -106,6 +106,7 @@ Kirigami.ApplicationWindow {
             showTab(contactsTab)
             bridge.openContact(target.contact_id)
         } else if (target.kind === "call") {
+            focusedCallId = ""  // the same hit again scrolls to it again
             focusedCallId = target.call_id
             openRecentCalls()
         }
