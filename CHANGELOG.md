@@ -50,6 +50,8 @@
 - Report the A/V sync delay of the iPhone's audio stream in `GetStatus`
   (`phone_audio_delay_ms`, `phone_audio_delay_reporting`), show it next to the
   iPhone sound status, and check AVDTP delay reporting in `blueferry doctor`.
+- KDE client: the iPhone sound switches in Settings and on the phone card
+  show the A/V sync line under the sound status.
 
 ## [0.9.0](https://github.com/erikwb/blueferry/releases/tag/v0.9.0) - 2026-10-27
 
