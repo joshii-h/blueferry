@@ -13,6 +13,8 @@ next sync.
 """
 from __future__ import annotations
 
+import codecs
+import quopri
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -208,8 +210,38 @@ def _unescape(value: str) -> str:
     return _split_escaped(value, separator="\0")[0]
 
 
-def _property(line: str) -> tuple[str, str, frozenset[str], str] | None:
-    """``(group, NAME, TYPE tokens, value)`` of one unfolded content line."""
+@dataclass(frozen=True, slots=True)
+class _Property:
+    group: str
+    name: str
+    tokens: frozenset[str]
+    value: str
+    quoted_printable: bool = False
+    charset: str = "utf-8"
+
+    def decode(self, text: str) -> str:
+        """Resolve a vCard 2.1 QUOTED-PRINTABLE value in its CHARSET.
+
+        Applied per component, after splitting at unescaped ``;``, so an
+        encoded ``=3B`` stays inside its component.
+        """
+        if not self.quoted_printable:
+            return text
+        return quopri.decodestring(text.encode("utf-8", "replace")).decode(
+            self.charset, "replace",
+        )
+
+
+def _charset(value: str) -> str:
+    name = value.strip().strip('"')
+    try:
+        return codecs.lookup(name).name
+    except LookupError:
+        return "utf-8"
+
+
+def _property(line: str) -> _Property | None:
+    """Group, NAME, TYPE tokens, value and encoding of one unfolded content line."""
     separator = _value_separator(line)
     if separator < 0:
         return None
@@ -217,26 +249,45 @@ def _property(line: str) -> tuple[str, str, frozenset[str], str] | None:
     name, *params = head.split(";")
     group, _, name = name.strip().rpartition(".")
     tokens: set[str] = set()
+    quoted_printable = False
+    charset = "utf-8"
     for param in params:
         key, has_value, values = param.strip().partition("=")
-        if has_value and key.strip().upper() != "TYPE":
+        key = key.strip().upper()
+        if has_value and key == "ENCODING":
+            quoted_printable = values.strip().strip('"').upper() == "QUOTED-PRINTABLE"
+            continue
+        if has_value and key == "CHARSET":
+            charset = _charset(values)
+            continue
+        if has_value and key != "TYPE":
             continue
         for token in (values if has_value else key).split(","):
             token = token.strip().strip('"').upper()
-            if token:
+            if token == "QUOTED-PRINTABLE":
+                # vCard 2.1 allows the bare encoding name as a parameter.
+                quoted_printable = True
+            elif token:
                 tokens.add(token)
-    return group.upper(), name.upper(), frozenset(tokens), value
+    return _Property(
+        group.upper(), name.upper(), frozenset(tokens), value, quoted_printable, charset,
+    )
 
 
-def _apple_label(value: str) -> tuple[str, str]:
-    """``(kind, label)`` for an X-ABLabel value."""
+def _apple_label(value: str) -> tuple[str, str, str]:
+    """``(kind, label, text)`` for an X-ABLabel value.
+
+    ``text`` is the readable label (``Mobile`` for ``_$!<Mobile>!$_``), kept
+    for a property whose kinds do not include the built-in one.
+    """
     text = _unescape(value).strip()
     if text.startswith("_$!<") and text.endswith(">!$_"):
-        kind = _APPLE_LABELS.get(text[4:-4].upper())
-        if kind is not None:
-            return kind, ""
         text = text[4:-4]
-    return "custom", text[:MAX_CONTACT_LABEL_CHARS]
+        kind = _APPLE_LABELS.get(text.upper())
+        if kind is not None:
+            return kind, "", text[:MAX_CONTACT_LABEL_CHARS]
+    text = text[:MAX_CONTACT_LABEL_CHARS]
+    return "custom", text, text
 
 
 def _phone_kind(tokens: frozenset[str]) -> str:
@@ -260,49 +311,57 @@ def _place_kind(tokens: frozenset[str]) -> str:
 
 
 def _labelled(
-    kind: str, group: str, labels: Mapping[str, tuple[str, str]], allowed: Iterable[str],
+    kind: str, group: str, labels: Mapping[str, tuple[str, str, str]], allowed: Iterable[str],
 ) -> tuple[str, str]:
-    """An X-ABLabel on the same group overrides the TYPE parameters."""
+    """An X-ABLabel on the same group overrides the TYPE parameters.
+
+    A built-in Apple label that is no kind of this property (Mobile on an
+    email address) becomes a custom label with its readable text.
+    """
     if group and group in labels:
-        label_kind, label = labels[group]
+        label_kind, label, text = labels[group]
         if label_kind in allowed:
             return label_kind, label
-        return "custom", label
+        return "custom", text
     return kind, ""
 
 
 def parse_card_details(body: str) -> ContactDetails:
     """The details of one unfolded vCard body (see ``iter_vcard_bodies``)."""
-    lines = []
-    labels: dict[str, tuple[str, str]] = {}
+    lines: list[_Property] = []
+    labels: dict[str, tuple[str, str, str]] = {}
     for raw in body.splitlines():
         parsed = _property(raw.strip())
         if parsed is None:
             continue
-        if parsed[1] == "X-ABLABEL" and parsed[0]:
-            labels[parsed[0]] = _apple_label(parsed[3])
+        if parsed.name == "X-ABLABEL" and parsed.group:
+            labels[parsed.group] = _apple_label(parsed.decode(parsed.value))
         else:
             lines.append(parsed)
     phones: list[LabeledValue] = []
     emails: list[LabeledValue] = []
     addresses: list[PostalAddress] = []
     organization = title = ""
-    for group, name, tokens, value in lines:
+    for prop in lines:
+        group, name, tokens = prop.group, prop.name, prop.tokens
         if name == "TEL" and len(phones) < MAX_CONTACT_ADDRESSES_PER_CARD:
-            text = value.strip()
+            text = prop.decode(prop.value).strip()
             if not text or len(text) > MAX_CONTACT_ADDRESS_CHARS:
                 continue
             kind, label = _labelled(_phone_kind(tokens), group, labels, PHONE_KINDS)
             number = contact_phone(text, config.PHONE_REGION) or ""
             phones.append(LabeledValue(kind, label, text, number))
         elif name == "EMAIL" and len(emails) < MAX_CONTACT_ADDRESSES_PER_CARD:
-            text = value.strip()
+            text = prop.decode(prop.value).strip()
             if len(text) > MAX_CONTACT_ADDRESS_CHARS or not is_email_shaped(text):
                 continue
             kind, label = _labelled(_place_kind(tokens), group, labels, EMAIL_KINDS)
             emails.append(LabeledValue(kind, label, text))
         elif name == "ADR" and len(addresses) < MAX_CONTACT_POSTAL_ADDRESSES_PER_CARD:
-            parts = [part.strip()[:MAX_CONTACT_DETAIL_CHARS] for part in _split_escaped(value)]
+            parts = [
+                prop.decode(part).strip()[:MAX_CONTACT_DETAIL_CHARS]
+                for part in _split_escaped(prop.value)
+            ]
             parts = (parts + [""] * len(POSTAL_FIELDS))[:len(POSTAL_FIELDS)]
             if not any(parts):
                 continue
@@ -310,10 +369,12 @@ def parse_card_details(body: str) -> ContactDetails:
             addresses.append(PostalAddress(kind, label, *parts))
         elif name == "ORG" and not organization:
             organization = ", ".join(
-                part.strip() for part in _split_escaped(value) if part.strip()
+                text for text in (
+                    prop.decode(part).strip() for part in _split_escaped(prop.value)
+                ) if text
             )[:MAX_CONTACT_DETAIL_CHARS]
         elif name == "TITLE" and not title:
-            title = _unescape(value).strip()[:MAX_CONTACT_DETAIL_CHARS]
+            title = prop.decode(_unescape(prop.value)).strip()[:MAX_CONTACT_DETAIL_CHARS]
     return ContactDetails(
         tuple(phones), tuple(emails), tuple(addresses), organization, title,
     )

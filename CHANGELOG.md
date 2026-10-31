@@ -9,7 +9,9 @@
   inside the encrypted contact records only. `Messages1.ListContactCards`
   pages through the cards (optionally filtered, no photo bytes) and
   `GetContact` returns one card with its photo; `GetStatus` reports
-  `contact_card_count`. CLI: `blueferry contacts list|show`.
+  `contact_card_count` and `contact_card_epoch` (changes when card ids may
+  no longer resolve). Card queries ignore case, accents and Unicode forms.
+  CLI: `blueferry contacts list|show`.
 - Global search: `Messages1.Search` looks through conversations, messages,
   contact cards and call history in one call and groups the hits with the
   ids to open them. It searches only the decrypted data the daemon already

@@ -3,14 +3,17 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import unicodedata
 from contextlib import closing
 
+import dbus.exceptions
 import pytest
 from typer.testing import CliRunner
 
-from blueferry import cli_contacts, config
+from blueferry import cli_contacts, config, contacts_view
 from blueferry.backend_operations import BackendDependencies, BackendOperations
 from blueferry.cli import app
+from blueferry.client import ContactNotFoundError, _contact_cards_error
 from blueferry.contact_details import (
     EMPTY,
     ContactDetails,
@@ -22,10 +25,12 @@ from blueferry.contact_repository import ContactRepository, PhotoStoreBusy
 from blueferry.contacts import ContactsResolver, _parse_vcard_records
 from blueferry.errors import InvalidArgumentsError, NotFoundError, NotReadyError
 from blueferry.limits import (
+    CARD_ID_HEX_CHARS,
     MAX_CONTACT_ADDRESSES_PER_CARD,
     MAX_CONTACT_DETAIL_CHARS,
     MAX_CONTACT_POSTAL_ADDRESSES_PER_CARD,
 )
+from blueferry.protocol import ERROR_PREFIX
 from blueferry.settings_store import SettingsStore
 from blueferry.storage_security import StorageSecurity
 
@@ -39,8 +44,10 @@ CARD = "\r\n".join([
     "FN:Alice Example",
     "N:Example;Alice;;;",
     "ORG:Example Corp;Research",
-    "TITLE:Chief\\, Tester",
+    "TITLE:Chief\\, Te",
+    " ster",
     "TEL;TYPE=CELL;TYPE=VOICE;TYPE=pref:+1 (555) 111-2222",
+    "TEL;CELL;PREF:+1 555 222 3333",
     "TEL;TYPE=HOME,FAX:555 333 4444",
     "item1.TEL:+1 555 777 8888",
     "item1.X-ABLabel:_$!<Pager>!$_",
@@ -58,6 +65,16 @@ CARD = "\r\n".join([
     "END:VCARD",
     "",
 ])
+
+
+
+
+def _card_details(card: str = CARD) -> ContactDetails:
+    """Details of one card as a sync sees them: unfolded first."""
+    details: list[ContactDetails] = []
+    _parse_vcard_records(card, details=details)
+    [result] = details
+    return result
 
 
 class _Wallet:
@@ -81,11 +98,12 @@ def storage(isolated_state):
 # ---- vCard parsing -----------------------------------------------------------
 
 def test_card_details_keep_labels_values_and_postal_addresses() -> None:
-    details = parse_card_details(CARD)
+    details = _card_details()
     assert details.organization == "Example Corp, Research"
     assert details.title == "Chief, Tester"
     assert details.phones == (
         LabeledValue("mobile", "", "+1 (555) 111-2222", "+15551112222"),
+        LabeledValue("mobile", "", "+1 555 222 3333", "+15552223333"),
         LabeledValue("home_fax", "", "555 333 4444", "5553334444"),
         LabeledValue("pager", "", "+1 555 777 8888", "+15557778888"),
         LabeledValue("custom", "Boat", "12", ""),
@@ -102,6 +120,32 @@ def test_card_details_keep_labels_values_and_postal_addresses() -> None:
         ),
         PostalAddress("custom", "Cabin", "", "", "Lake;side 2", "Zug", "", "6300", "Switzerland"),
     )
+
+
+def test_card_details_decode_quoted_printable_vcard_21() -> None:
+    card = "\r\n".join([
+        "BEGIN:VCARD",
+        "VERSION:2.1",
+        "FN:Jörg",
+        "TEL;CELL;PREF:+1 555 444 5555",
+        "ORG;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:B=C3=A4ckerei;M=C3=BChle",
+        "TITLE;CHARSET=ISO-8859-1;QUOTED-PRINTABLE:Gesch=E4ftsf=FChrer",
+        "ADR;HOME;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:;;Stra=C3=9Fe 1=3B Hof;Z=",
+        "=C3=BCrich;;8000;",
+        "item1.EMAIL:joerg@example.com",
+        "item1.X-ABLabel:_$!<Mobile>!$_",
+        "END:VCARD",
+        "",
+    ])
+    details = _card_details(card)
+    assert details.organization == "Bäckerei, Mühle"
+    assert details.title == "Geschäftsführer"
+    assert details.phones[0].kind == "mobile"
+    assert details.addresses == (
+        PostalAddress("home", "", "", "", "Straße 1; Hof", "Zürich", "", "8000", ""),
+    )
+    # A built-in label that is no email kind keeps its readable text.
+    assert details.emails == (LabeledValue("custom", "Mobile", "joerg@example.com"),)
 
 
 def test_card_details_are_bounded() -> None:
@@ -126,7 +170,7 @@ def test_parser_collects_details_aligned_with_records() -> None:
 
 
 def test_storage_form_round_trips_and_rejects_malformed_rows() -> None:
-    details = parse_card_details(CARD)
+    details = _card_details()
     assert ContactDetails.from_storage(json.loads(json.dumps(details.to_storage()))) == details
     assert ContactDetails.from_storage(None) is EMPTY
     assert not EMPTY and EMPTY.to_storage() == {}
@@ -167,7 +211,7 @@ def test_details_are_sealed_and_never_in_plaintext(storage) -> None:
 
 def test_plaintext_cache_keeps_no_details(isolated_state) -> None:
     ContactRepository().replace(
-        [("Alice", ["15551112222"], [])], details=[parse_card_details(CARD)],
+        [("Alice", ["15551112222"], [])], details=[_card_details()],
     )
     [(record, photo, details)] = ContactRepository().load_cards()
     assert record == ("Alice", ["15551112222"], []) and photo is None and details is EMPTY
@@ -219,7 +263,7 @@ def test_snapshot_keeps_cards() -> None:
     resolver._photos = lambda: False
     resolver._repository = type("R", (), {
         "load_cards": staticmethod(lambda **_kwargs: [
-            (("Alice", ["15551112222"], []), None, parse_card_details(CARD)),
+            (("Alice", ["15551112222"], []), None, _card_details()),
         ]),
     })()
     resolver._mem, resolver._records, resolver.photo_revision = {}, [], 0
@@ -256,13 +300,18 @@ def test_list_contact_cards_pages_without_photo_bytes(storage) -> None:
     [row] = page["contacts"]
     assert row == {
         "id": row["id"], "name": "Alice Example", "organization": "Example Corp, Research",
-        "primary": "+1 (555) 111-2222", "phone_count": 5, "email_count": 2,
+        "primary": "+1 (555) 111-2222", "phone_count": 6, "email_count": 2,
         "address_count": 2, "has_photo": True,
     }
     assert "photo" not in json.dumps(page).replace("has_photo", "")
     assert operations.list_contact_cards(1, 10, "")["contacts"][0]["has_photo"] is False
     assert operations.list_contact_cards(0, 10, " bob   other ")["query"] == "bob other"
-    assert operations.status()["contact_card_count"] == 2
+    status = operations.status()
+    assert status["contact_card_count"] == 2
+    epoch = status["contact_card_epoch"]
+    assert isinstance(epoch, int) and not isinstance(epoch, bool)
+    operations.dependencies.contacts.refresh()
+    assert operations.status()["contact_card_epoch"] != epoch
     with pytest.raises(InvalidArgumentsError):
         operations.list_contact_cards(0, 10, "x" * 300)
 
@@ -337,6 +386,8 @@ class _Client:
                 "offset": offset, "query": query}
 
     def contact(self, contact_id):
+        if self.document is None:
+            raise ContactNotFoundError("contact is no longer in the contact cache")
         return self.document, self.photo
 
 
@@ -380,3 +431,32 @@ def test_cli_shows_a_card_by_name_and_writes_the_photo(monkeypatch, tmp_path) ->
     assert ambiguous.exit_code == 2 and "use an id" in ambiguous.output
     missing = CliRunner().invoke(app, ["contacts", "show", "zed"])
     assert missing.exit_code == 1
+
+
+def test_cli_reports_a_stale_card_id_by_its_error_name(monkeypatch) -> None:
+    client = _Client([])
+    monkeypatch.setattr(cli_contacts, "BackendClient", lambda: client)
+    result = CliRunner().invoke(app, ["contacts", "show", "c" * CARD_ID_HEX_CHARS])
+    assert result.exit_code == 1 and contacts_view.stale_text() in result.output
+
+
+def test_client_maps_the_not_found_error_name() -> None:
+    stale = dbus.exceptions.DBusException("gone", name=f"{ERROR_PREFIX}.NotFound")
+    assert isinstance(_contact_cards_error(stale), ContactNotFoundError)
+    other = dbus.exceptions.DBusException("NotFound", name=f"{ERROR_PREFIX}.Failed")
+    assert not isinstance(_contact_cards_error(other), ContactNotFoundError)
+
+
+def test_card_ids_have_the_shared_length(storage) -> None:
+    _store(storage)
+    [first, _second] = ContactsResolver(storage=storage).cards()[1]
+    assert len(first[0]) == CARD_ID_HEX_CHARS and cli_contacts._CARD_ID.fullmatch(first[0])
+
+
+@pytest.mark.parametrize("query", ["Müller", "Muller", "MULLER", "müller"])
+def test_card_query_ignores_accents_and_unicode_forms(storage, query) -> None:
+    stored = unicodedata.normalize("NFD", "Jörg Müller")
+    ContactRepository(storage).replace([(stored, ["15551112222"], [])])
+    resolver = ContactsResolver(storage=storage)
+    for spelling in (query, unicodedata.normalize("NFD", query)):
+        assert resolver.cards(query=spelling)[0] == 1, spelling

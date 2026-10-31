@@ -31,6 +31,7 @@ from blueferry.contact_photos import REJECT_TOO_LARGE, inspect_vcard_photo
 from blueferry.contact_repository import ContactRecord, ContactRepository, PhotoRef
 from blueferry.events import canonical_address, is_email_shaped
 from blueferry.limits import (
+    CARD_ID_HEX_CHARS,
     MAX_CONTACT_ADDRESS_CHARS,
     MAX_CONTACT_ADDRESSES_PER_CARD,
     MAX_CONTACT_NAME_CHARS,
@@ -44,6 +45,7 @@ from blueferry.obex.sessions import SessionManager
 from blueferry.obex.transfer import TransferStatusWatch, wait_for_transfer
 from blueferry.phone_numbers import address_identities, contact_phone
 from blueferry.private_files import runtime_private_directory
+from blueferry.text_fold import fold
 from blueferry.vcard import iter_bounded_lines, iter_vcard_bodies, iter_vcard_cards
 
 if TYPE_CHECKING:
@@ -546,12 +548,12 @@ def _card_id(record: ContactRecord, details: ContactDetails) -> str:
         ensure_ascii=False, separators=(",", ":"), sort_keys=True,
     )
     return hashlib.blake2b(
-        content.encode("utf-8"), key=_CARD_ID_KEY, digest_size=9,
+        content.encode("utf-8"), key=_CARD_ID_KEY, digest_size=CARD_ID_HEX_CHARS // 2,
     ).hexdigest()
 
 
 def _card_haystack(record: ContactRecord, details: ContactDetails) -> tuple[str, str]:
-    """Casefolded text and the phone digits a card query is matched against."""
+    """Folded text and the phone digits a card query is matched against."""
     name, phones, emails = record
     texts = [name or "", details.organization, details.title, *emails]
     texts.extend(item.value for item in details.emails)
@@ -559,7 +561,7 @@ def _card_haystack(record: ContactRecord, details: ContactDetails) -> tuple[str,
         texts.extend(address.fields().values())
     numbers = [*phones, *(item.value for item in details.phones)]
     digits = " ".join(re.sub(r"\D", "", number) for number in numbers)
-    return "\n".join(text for text in texts if text).casefold(), digits
+    return fold("\n".join(text for text in texts if text)), digits
 
 
 ContactCardView = tuple[str, ContactRecord, ContactDetails, PhotoRef | None]
@@ -620,6 +622,9 @@ class ContactsResolver:
         self._mem: dict[str, set[str]] = {}
         self._records: list[ContactRecord] = []
         self.photo_revision = 0
+        # Content-free: random per daemon run and bumped on every reload, so
+        # a client learns when card ids it holds may have stopped resolving.
+        self.card_epoch = secrets.randbits(31)
         self._warm(strict=strict)
 
     def _warm(self, *, strict: bool = False) -> None:
@@ -726,6 +731,7 @@ class ContactsResolver:
         self._card_haystacks = prepared._card_haystacks
         # Content-free: lets clients drop cached avatars after any reload.
         self.photo_revision += 1
+        self.card_epoch = (self.card_epoch + 1) & 0x7FFFFFFF
 
     def refresh(self) -> int:
         """Replace the cache only after a successful read; propagate failures."""
@@ -775,7 +781,7 @@ class ContactsResolver:
         )
 
     def _matching_indices(self, query: str) -> Iterator[int]:
-        needle = " ".join(query.split()).casefold()
+        needle = fold(" ".join(query.split()))
         if not needle:
             yield from range(len(self._records))
             return
@@ -798,7 +804,8 @@ class ContactsResolver:
         """``(matching card count, one page of cards)`` in display-name order.
 
         ``query`` matches name, organization, title, email and postal
-        address text case-insensitively, and phone numbers by their digits.
+        address text ignoring case, accents and Unicode spelling variants,
+        and phone numbers by their digits.
         """
         start = max(0, int(offset))
         stop = None if limit is None else start + max(0, int(limit))

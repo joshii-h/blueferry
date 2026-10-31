@@ -138,6 +138,7 @@ All paths are relative to `src/blueferry/` unless noted.
 | `storage_security.py` | Retention policy and Secret Service-backed AES-256-GCM encryption. |
 | `storage_preparation.py` | Worker-side storage validation before the daemon commits it. |
 | `text_safety.py` | Escaping for remote text at terminal presentation boundaries. |
+| `text_fold.py` | Search folding (case, accents, Unicode compatibility forms) with a mapping from folded matches back to the original text. |
 | `message_links.py` | Escaped markup with safe clickable web URLs, shared by GTK and QML. |
 
 ### Pairing and setup
