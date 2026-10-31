@@ -153,10 +153,14 @@ def skipped_note(dropped: DroppedUris, sorted_paths: DroppedFiles) -> str:
     notes = []
     if sorted_paths.folders:
         count = len(sorted_paths.folders)
+        names = ", ".join(plain(name, 80) for name in sorted_paths.folders[:3])
+        if count > 3:
+            names += ", \u2026"
+        # Both forms name the folders: xgettext wants the singular's
+        # placeholders in the plural too.
         notes.append(ngettext("Folders cannot be sent; skipped {names}.",
-                              "Folders cannot be sent; skipped {count} folders.",
-                              count).format(count=count,
-                                            names=plain(sorted_paths.folders[0], 80)))
+                              "Folders cannot be sent; skipped {count} folders ({names}).",
+                              count).format(count=count, names=names))
     if sorted_paths.other:
         count = len(sorted_paths.other)
         notes.append(ngettext("Skipped an item that is not a regular file.",
