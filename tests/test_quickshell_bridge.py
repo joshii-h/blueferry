@@ -1689,6 +1689,28 @@ def test_bridge_flattens_search_hits_with_the_match_and_the_call_number() -> Non
     assert len(client.calls) == 1
 
 
+def test_bridge_answers_a_full_search_queue_as_busy() -> None:
+    from blueferry import search_view
+
+    client = ContactsClient()
+    bridge = QuickshellBridge(client)  # type: ignore[arg-type]
+    errors = [_backend_error("io.weirdware.BlueFerry.Error.NotReady", "search is busy")]
+
+    def search(query, limit=20):
+        if errors:
+            raise errors.pop()
+        return {"query": query}
+
+    client.search = search  # type: ignore[method-assign]
+    busy = bridge.dispatch("search", {"query": "ana"})
+    assert busy["busy"] is True and busy["rows"] == []
+    assert busy["error"] == search_view.search_busy_text()
+    assert "busy" not in bridge.dispatch("search", {"query": "ana"})
+    errors.append(_backend_error("io.weirdware.BlueFerry.Error.Failed", "boom"))
+    with pytest.raises(Exception, match="boom"):
+        bridge.dispatch("search", {"query": "ana"})
+
+
 def test_bridge_dials_only_digits_and_reports_the_calls_hint() -> None:
     from blueferry.models import BackendStatus
 

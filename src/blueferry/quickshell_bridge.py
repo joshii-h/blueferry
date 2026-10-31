@@ -347,6 +347,16 @@ def search_reply(payload: object) -> dict[str, Any]:
     }
 
 
+def search_busy_reply(query: str) -> dict[str, Any]:
+    """The daemon's search queue is full (``NotReady``): the panel tries the
+    same query again after the typing delay and shows ``error`` once it
+    gives up."""
+    return {
+        "query": query, "busy": True, "error": search_view.search_busy_text(),
+        "count": 0, "hint": "", "limit_text": "", "rows": [],
+    }
+
+
 def now_playing_view(snapshot: object) -> dict[str, Any]:
     """Reduce GetNowPlaying for the shell without arrays or translated text.
 
@@ -754,7 +764,14 @@ class QuickshellBridge:
             query = _text(args, "query")
             if not search_view.should_search(query):
                 return search_reply({"query": query})
-            return search_reply(self.client.search(query, SEARCH_LIMIT))
+            try:
+                payload = self.client.search(query, SEARCH_LIMIT)
+            except BackendError as error:
+                name, _message = _dbus_error(error)
+                if name.endswith(".NotReady"):
+                    return search_busy_reply(query)
+                raise
+            return search_reply(payload)
         if method == "dial":
             number = phone_link_view.dialable(_text(args, "number"))
             if not number:

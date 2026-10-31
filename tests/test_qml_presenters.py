@@ -6427,6 +6427,15 @@ Item {
         check(backendBridge.take("cancel:contact_cards") === 1, "contact read not cancelled")
         backendBridge.response("search", 4, {rows: [{kind: "message", title: "x"}], hint: ""})
         check(root.searchResults.rows.length === 1, "search reply ignored")
+        // NotReady: the same query again after the typing delay, three times.
+        for (let attempt = 1; attempt <= 3; ++attempt) {
+          backendBridge.response("search", 40 + attempt, {busy: true, error: "Busy.", rows: []})
+          check(searchTimer.running && root.searchBusyRetries === attempt, "busy not retried")
+          check(root.searchError === "", "busy shown before giving up")
+        }
+        backendBridge.response("search", 44, {busy: true, error: "Busy.", rows: []})
+        check(root.searchError === "Busy." && root.searchBusyRetries === 3, "busy not shown")
+        searchTimer.stop()
         backendBridge.failure("search", 5, "busy")
         check(root.searchError === "busy", "search failure not shown")
 
