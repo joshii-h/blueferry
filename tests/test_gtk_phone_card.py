@@ -14,7 +14,7 @@ from tests.gtk_broadway import run_scenario
 @pytest.mark.parametrize(
     "scenario", [
         "layout", "card", "quick-settings", "dial-pad", "running-calls", "recent-calls",
-        "notifications", "close", "volume", "pins",
+        "notifications", "close", "volume", "pins", "contacts", "search",
     ],
 )
 def test_gtk_phone_card(tmp_path, scenario):
@@ -24,6 +24,14 @@ def test_gtk_phone_card(tmp_path, scenario):
 CALLS_READY = {
     "daemon": True, "map": True, "calls_enabled": True, "calls_state": "ready",
 }
+
+
+class _Read(Exception):
+    """Raised by the blocking reads so :meth:`FakeClient.submit` can name them."""
+
+    def __init__(self, name):
+        super().__init__(str(name))
+        self.name = name
 
 
 class FakeClient:
@@ -93,12 +101,33 @@ class FakeClient:
     def set_notification_pinned_async(self, key, pinned, on_ok, on_err):
         self.calls.append((("pin", key, pinned), on_ok, on_err))
 
-    # TaskRunner for NotificationHistory
+    # TaskRunner for the shared models: the blocking reads name themselves.
     def submit(self, operation, on_done=None, on_error=None, on_finished=None):
-        self.calls.append(("notifications", on_done, on_error))
+        try:
+            value = operation()
+        except _Read as read:
+            self.calls.append((read.name, on_done, on_error))
+        except AssertionError:
+            self.calls.append(("notifications", on_done, on_error))
+        else:  # answered at once (a stale card id)
+            if on_done is not None:
+                on_done(value)
 
     def notifications(self, limit):
         raise AssertionError("only called through submit")
+
+    def contact_cards(self, offset, limit, query):
+        raise _Read(("cards", offset, query))
+
+    def contact(self, contact_id):
+        if contact_id == "gone":
+            from blueferry.client import ContactNotFoundError
+
+            raise ContactNotFoundError("unknown contact")
+        raise _Read(("card", contact_id))
+
+    def search(self, query, limit):
+        raise _Read(("search", query))
 
     # the Messages tab's reads stay unanswered
     def list_threads_async(self, *_args, **_kwargs):
@@ -222,9 +251,9 @@ def _exercise_layout():
 
     window, _client = _window(CALLS_READY)
     assert [page.get_name() for page in window.stack.get_pages()] == [
-        "messages", "calls", "notifications"]
+        "messages", "contacts", "calls", "notifications"]
     assert [page.get_title() for page in window.stack.get_pages()] == [
-        "Messages", "Calls", "Notifications"]
+        "Messages", "Contacts", "Calls", "Notifications"]
     assert window.header.get_title_widget() is window.switcher
     assert not window.switcher_bar.get_reveal()
     assert window.stack.get_visible_child_name() == "messages"
@@ -874,8 +903,191 @@ def _check_dropped_answers():
     assert state["snapshot"] == {}
 
 
+CARDS_ON = {**CALLS_READY, "contact_card_count": 2, "contact_card_epoch": 1,
+            "search_result_limit": 50}
+
+
+def _cards_page(offset=0, total=2, query=""):
+    cards = [
+        {"id": "c1", "name": "<b>Ada</b> Lovelace", "primary": "+15550001",
+         "phone_count": 1},
+        {"id": "c2", "name": "Bob", "organization": "Example Inc."},
+    ]
+    return {"contacts": cards[offset:], "total": total, "offset": offset, "query": query}
+
+
+ADA_CARD = {
+    "id": "c1", "name": "<b>Ada</b> Lovelace", "organization": "Analytical",
+    "title": "Countess",
+    "phones": [{"kind": "mobile", "label": "", "value": "+1 555 0001",
+                "number": "+15550001"}],
+    "emails": [{"kind": "work", "label": "", "value": "ada@example.org"}],
+    "addresses": [{"kind": "home", "label": "", "street": "1 Main St",
+                   "locality": "London", "postal_code": "N1"}],
+}
+
+
+def _exercise_contacts():
+    from tests.client_fakes import ManualRunner
+
+    runner = ManualRunner()
+    window, client = _window(timer=runner.timer)
+    page = window.contacts
+    client.answer_status(CARDS_ON)
+    assert not [n for n in client.names() if isinstance(n, tuple) and n[0] == "cards"], (
+        "hidden tab: nothing is read")
+    window.show_tab("contacts")
+    _settle()
+    client.take(("cards", 0, ""))[1](_cards_page(total=3))
+    assert page.list_stack.get_visible_child_name() == "list"
+    rows = _rows(page.list)
+    # Plain text, never markup.
+    assert [row.get_title() for row in rows] == ["<b>Ada</b> Lovelace", "Bob"]
+    assert not rows[0].get_use_markup()
+    assert page.count_label.get_label() == "3 contacts"
+    assert page.more_button.get_visible()
+    page.more_button.emit("clicked")
+    client.take(("cards", 2, ""))[1]({"contacts": [{"id": "c3", "name": "Chloé"}],
+                                      "total": 3, "offset": 2, "query": ""})
+    assert [row.get_title() for row in _rows(page.list)] == [
+        "<b>Ada</b> Lovelace", "Bob", "Chloé"]
+    assert _rows(page.list)[0] is rows[0], "a further page keeps the shown rows"
+    assert not page.more_button.get_visible()
+
+    # Typing waits for a pause, then reads the first page for the query.
+    page.search_entry.set_text("ad")
+    assert not [n for n in client.names() if isinstance(n, tuple) and n[0] == "cards"]
+    runner.fire_timers()
+    client.take(("cards", 0, "ad"))[1]({"contacts": [], "total": 0, "offset": 0,
+                                        "query": "ad"})
+    assert page.list_stack.get_visible_child_name() == "placeholder"
+    assert page.list_placeholder.get_title() == "No Matching Contacts"
+    page.search_entry.set_text("")
+    runner.fire_timers()
+    client.take(("cards", 0, ""))[1](_cards_page())
+
+    # Opening a card shows every detail; Call asks first, Message opens New Message.
+    page.list.emit("row-activated", _rows(page.list)[0])
+    client.take(("card", "c1"))[1]((ADA_CARD, b""))
+    assert page.card_stack.get_visible_child_name() == "card"
+    assert page.title_label.get_label() == "<b>Ada</b> Lovelace"
+    assert page.subtitle_label.get_label() == "Countess · Analytical"
+    details = [(row.get_subtitle(), row.get_title()) for row in _rows(page.sections)]
+    assert details == [("Mobile", "+1 555 0001"), ("Work", "ada@example.org"),
+                       ("Home", "1 Main St\nN1 London")]
+    page.call_button.emit("clicked")
+    client.answer_status(CARDS_ON)
+    _settle()
+    assert "+15550001" in window._dial_dialog.get_body()
+    window._dial_dialog.force_close()
+    page.message_button.emit("clicked")
+    _settle()
+    assert window.stack.get_visible_child_name() == "messages"
+    assert window.messages._new_recipient.get_text() == "+15550001"
+    window.messages._new_message_dialog.force_close()
+
+    # A new epoch reloads the list and reads the open card again; a stale
+    # id says so.
+    window.show_tab("contacts")
+    _settle()
+    while any(isinstance(n, tuple) and n[0] == "cards" for n in client.names()):
+        client.take(next(n for n in client.names() if isinstance(n, tuple) and n[0] == "cards"))
+    page.open_contact("c1")
+    client.take(("card", "c1"))[1]((ADA_CARD, b""))
+    client.answer_status({**CARDS_ON, "contact_card_epoch": 2})
+    client.take(("cards", 0, ""))[1](_cards_page())
+    client.take(("card", "c1"))[1]((ADA_CARD, b""))
+    page.open_contact("gone")
+    assert page.card_banner.get_revealed()
+    assert page.card_banner.get_title() == (
+        "This contact changed or was removed. Reload the list.")
+    assert ("cards", 0, "") in client.names(), "the list is read again"
+
+    # Leaving the tab forgets the cards.
+    window.show_tab("messages")
+    _settle()
+    assert _rows(page.list) == [] and page.book.photo == b""
+    window.destroy()
+
+
+SEARCH_ANSWER = {
+    "query": "noon", "limit": 20,
+    "conversations": {"total": 1, "results": [
+        {"thread_key": "t1", "name": "Ada", "is_group": False}]},
+    "messages": {"total": 3, "results": [
+        {"thread_key": "t1", "handle": "h9", "thread_name": "Ada", "sender": "Ada",
+         "snippet": "<i>at</i> noon", "match_start": 10, "match_length": 4}]},
+    "contacts": {"total": 1, "results": [{"id": "c1", "name": "Ada Lovelace"}]},
+    "calls": {"total": 1, "results": [
+        {"id": "call-1", "direction": "missed", "timestamp": "2026-10-06T14:36:00",
+         "address": "+41790000001", "name": "Anna"}]},
+}
+
+
+def _exercise_search():
+    from blueferry.ui.search import snippet_markup
+    from tests.client_fakes import ManualRunner
+
+    runner = ManualRunner()
+    window, client = _window(timer=runner.timer)
+    client.answer_status({**CARDS_ON, "call_history_enabled": True})
+    search = window.search
+    window.activate_action("win.search", None)
+    _settle()
+    assert search.get_root() is window, "presented over the window"
+    search.entry.set_text("noon")
+    assert ("search", "noon") not in client.names(), "waits for a pause"
+    runner.fire_timers()
+    client.take(("search", "noon"))[1](SEARCH_ANSWER)
+    rows = _rows(search.groups)
+    assert len(rows) == 4
+    # Escaped, with only the match in bold.
+    assert rows[1].get_subtitle() == "Ada\n&lt;i&gt;at&lt;/i&gt; <b>noon</b>"
+    assert snippet_markup("<a> b", (4, 1)) == "&lt;a&gt; <b>b</b>"
+    groups = [w.get_title() for w in _descendants(search.groups)
+              if type(w).__name__ == "PreferencesGroup"]
+    assert groups == ["Conversations", "Messages · 2 more matches", "Contacts", "Calls"]
+
+    # A message hit opens its conversation; closing forgets the query.
+    rows[1].emit("activated")
+    _settle()
+    assert search.entry.get_text() == "" and search.model.query == ""
+    assert window.stack.get_visible_child_name() == "messages"
+    assert window.messages._focused_handle == "h9"
+    assert window.messages._pending_thread_key == "t1"
+
+    window.open_search_target({"kind": "contact", "contact_id": "c1"})
+    _settle()
+    assert window.stack.get_visible_child_name() == "contacts"
+    assert ("card", "c1") in client.names()
+
+    window.open_search_target({"kind": "call", "call_id": "call-1"})
+    _settle()
+    assert window.stack.get_visible_child_name() == "calls"
+    from blueferry.models import CallHistoryEntry
+
+    client.take(("calls", 200))[1]([CallHistoryEntry.from_dict({
+        "direction": "missed", "timestamp": "2026-10-06T14:36:00",
+        "address": "+41790000001", "name": "Anna", "id": "call-1"})])
+    [row] = _rows(window.calls.recent_list)
+    assert row.has_css_class("call-focused")
+
+    # A daemon without Search says so instead of searching.
+    client.answer_status({"daemon": True, "map": True})
+    window.open_search()
+    _settle()
+    search.entry.set_text("noon")
+    runner.fire_timers()
+    assert ("search", "noon") not in client.names()
+    assert search.placeholder.get_title() == "Search Unavailable"
+    search.close()
+    window.destroy()
+
+
 if __name__ == "__main__":
     {
+        "contacts": _exercise_contacts,
+        "search": _exercise_search,
         "volume": _exercise_volume,
         "pins": _exercise_pins,
         "layout": _exercise_layout,

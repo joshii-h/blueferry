@@ -1,5 +1,5 @@
-"""Main application window: the phone card above the Messages, Calls and
-Notifications tabs.
+"""Main application window: the phone card above the Messages, Contacts,
+Calls and Notifications tabs, and the global search.
 
 GTK counterpart of the Qt client's main page (``Main.qml`` with
 ``PhoneCard.qml``). The tabs live in an ``AdwViewStack``; the switcher sits
@@ -19,10 +19,12 @@ from blueferry.i18n import _
 from blueferry.setup_client import SetupClient
 from blueferry.tel_links import dial_request
 from blueferry.ui.calls import CallsPage
+from blueferry.ui.contacts import ContactsPage
 from blueferry.ui.conversations import ConversationsPage
 from blueferry.ui.dial_presenter import dial_prompt
 from blueferry.ui.notifications import NotificationsPage
 from blueferry.ui.phone_card import PhoneCard, load_phone_name
+from blueferry.ui.search import SearchDialog
 from blueferry.ui.status import SettingsDialog
 
 COMPACT_WIDTH = "max-width: 650px"
@@ -49,6 +51,12 @@ class MainWindow(Adw.ApplicationWindow):
         self.stack = Adw.ViewStack(vexpand=True)
         self.messages = ConversationsPage(client, self.toast)
         self.add_tab("messages", _("Messages"), "chat-message-new-symbolic", self.messages)
+        self.contacts = ContactsPage(
+            client, self.toast, dial=self.request_dial, message=self.message_address,
+            timer=timer,
+        )
+        self.add_tab("contacts", _("Contacts"), "avatar-default-symbolic", self.contacts,
+                     self.contacts.set_watched)
         self.calls = CallsPage(
             client, self.toast, dial=self.request_dial,
             compose=self.compose_message, open_settings=self.present_phone_settings,
@@ -70,6 +78,9 @@ class MainWindow(Adw.ApplicationWindow):
         self.phone_card = PhoneCard(client, self.toast, name_loader=name_loader)
         self.phone_card.add_status_listener(self.calls.apply_status)
         self.phone_card.add_status_listener(self.notifications.apply_status)
+        self.phone_card.add_status_listener(self.contacts.apply_status)
+        self.search = SearchDialog(client, activate=self.open_search_target, timer=timer)
+        self.phone_card.add_status_listener(self.search.apply_status)
 
         self.switcher = Adw.ViewSwitcher(stack=self.stack, policy=Adw.ViewSwitcherPolicy.WIDE)
         self.header = Adw.HeaderBar(title_widget=self.switcher)
@@ -84,10 +95,19 @@ class MainWindow(Adw.ApplicationWindow):
         )
         menu_button.update_property([Gtk.AccessibleProperty.LABEL], [_("Main Menu")])
         self.header.pack_end(menu_button)
+        self.search_button = Gtk.Button(
+            icon_name="system-search-symbolic", tooltip_text=_("Search"),
+            action_name="win.search",
+        )
+        self.search_button.update_property([Gtk.AccessibleProperty.LABEL], [_("Search")])
+        self.header.pack_start(self.search_button)
 
         phone_action = Gio.SimpleAction.new("phone", None)
         phone_action.connect("activate", lambda *_args: self.present_phone_settings())
         self.add_action(phone_action)
+        search_action = Gio.SimpleAction.new("search", None)
+        search_action.connect("activate", lambda *_args: self.open_search())
+        self.add_action(search_action)
 
         self._banner = Adw.Banner(
             title=_("Background service unavailable — open Settings to repair it"),
@@ -117,6 +137,8 @@ class MainWindow(Adw.ApplicationWindow):
         compact = Adw.Breakpoint.new(Adw.BreakpointCondition.parse(COMPACT_WIDTH))
         compact.add_setter(self.messages.split_view, "collapsed", True)
         compact.add_setter(self.messages.back_button, "visible", True)
+        compact.add_setter(self.contacts.split_view, "collapsed", True)
+        compact.add_setter(self.contacts.back_button, "visible", True)
         compact.add_setter(self.header, "title-widget", Adw.WindowTitle(title=_("BlueFerry")))
         compact.add_setter(self.switcher_bar, "reveal", True)
         compact.add_setter(self.phone_card, "orientation", Gtk.Orientation.VERTICAL)
@@ -179,6 +201,31 @@ class MainWindow(Adw.ApplicationWindow):
     def compose_message(self, address: str) -> None:
         self.show_tab("messages")
         self.messages.compose_to(address)
+
+    def message_address(self, address: str) -> None:
+        """The conversation with ``address``, or a new message to it."""
+        self.show_tab("messages")
+        self.messages.open_or_compose(address)
+
+    # ---- global search --------------------------------------------------
+
+    def open_search(self) -> None:
+        self.search.open(self)
+
+    def open_search_target(self, target: dict) -> None:
+        """Open a search hit: conversation, message, contact card or call."""
+        kind = target.get("kind")
+        if kind in ("conversation", "message"):
+            self.show_tab("messages")
+            self.messages.open_search_hit(
+                str(target.get("thread_key") or ""), str(target.get("handle") or ""),
+            )
+        elif kind == "contact":
+            self.show_tab("contacts")
+            self.contacts.open_contact(str(target.get("contact_id") or ""))
+        elif kind == "call":
+            self.show_tab("calls")
+            self.calls.focus_call(str(target.get("call_id") or ""))
 
     def present_phone_settings(self, category: str = "") -> None:
         self.settings.open(self, category)
