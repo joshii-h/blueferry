@@ -625,6 +625,13 @@ def test_status_carries_the_shared_sound_switch_wording() -> None:
     view = QuickshellBridge(client).dispatch("status", {})["phone_audio_view"]  # type: ignore[arg-type]
     assert view["available"] is True and view["mismatch"] is True
     assert "own speaker" in view["hint"]
+    assert view["sync"] == ""
+    client.status = lambda **_kwargs: BackendStatus.from_dict({  # type: ignore[method-assign]
+        "daemon": True, "phone_audio_route": "pc",
+        "phone_audio_delay_ms": 110, "phone_audio_delay_reporting": True,
+    })
+    view = QuickshellBridge(client).dispatch("status", {})["phone_audio_view"]  # type: ignore[arg-type]
+    assert view["sync"] == "A/V sync: 110 ms delay reported to the iPhone."
     # Older daemons: no key, no view.
     assert "phone_audio_view" not in QuickshellBridge(FakeClient()).dispatch(  # type: ignore[arg-type]
         "status", {},

@@ -3923,6 +3923,24 @@ def test_quickshell_sound_switch_follows_the_route_and_sends_it(qml_engine, quic
     })
     QGuiApplication.processEvents()
     assert switch.property("checked") is False and switch.property("enabled") is True
+    sync = page.findChild(QObject, "phoneAudioSync")
+    assert sync is not None and sync.property("visible") is False
+    page.setProperty("status", {
+        **base, "phone_audio_route": "pc",
+        "phone_audio_view": {
+            "available": True, "hint": "Playing on this computer.",
+            "sync": "A/V sync: 110 ms delay reported to the iPhone.",
+        },
+    })
+    QGuiApplication.processEvents()
+    assert sync.property("visible") is True
+    assert sync.property("text") == "A/V sync: 110 ms delay reported to the iPhone."
+    page.setProperty("status", {
+        **base, "phone_audio_route": "phone",
+        "phone_audio_view": {"available": True, "hint": "Playing on the iPhone."},
+    })
+    QGuiApplication.processEvents()
+    assert sync.property("visible") is False
     page.setProperty("busy", {"phoneAudio": True})
     QGuiApplication.processEvents()
     assert switch.property("enabled") is False

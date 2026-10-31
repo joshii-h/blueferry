@@ -965,6 +965,15 @@ Rectangle {
           wrapMode: Text.Wrap
           text: (root.status.phone_audio_view || {}).hint || ""
         }
+        // A/V sync of the open stream; empty while none is open.
+        FerryLabel {
+          objectName: "phoneAudioSync"
+          ferryTheme: root.theme
+          visible: root.status.phone_audio_route !== undefined && text !== ""
+          Layout.fillWidth: true
+          wrapMode: Text.Wrap
+          text: (root.status.phone_audio_view || {}).sync || ""
+        }
 
         // Only daemons that report the media-control keys support the settings.
         FerrySectionLabel {
