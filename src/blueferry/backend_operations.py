@@ -888,6 +888,10 @@ class BackendOperations:
         if callable(card_count):
             # Also the capability marker for ListContactCards and GetContact.
             status["contact_card_count"] = card_count()
+            epoch = getattr(self.dependencies.contacts, "card_epoch", None)
+            if isinstance(epoch, int):
+                # Changes whenever held card ids may have stopped resolving.
+                status["contact_card_epoch"] = epoch
         if self.dependencies.notification_policy is not None:
             # Also the capability marker: daemons without click rules lack it.
             status["notification_open_map_revision"] = self._open_map_revision

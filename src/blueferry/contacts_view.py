@@ -32,6 +32,9 @@ from typing import Any
 from blueferry.i18n import _, ngettext
 
 STATUS_KEY = "contact_card_count"
+# Changes on every daemon restart and contact reload: reload the list and
+# drop held card ids when it differs from the value they were fetched under.
+EPOCH_KEY = "contact_card_epoch"
 DEFAULT_PAGE = 100
 POSTAL_FIELDS = (
     "po_box", "extended", "street", "locality", "region", "postal_code", "country",

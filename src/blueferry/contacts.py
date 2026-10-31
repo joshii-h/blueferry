@@ -621,6 +621,9 @@ class ContactsResolver:
         self._mem: dict[str, set[str]] = {}
         self._records: list[ContactRecord] = []
         self.photo_revision = 0
+        # Content-free: random per daemon run and bumped on every reload, so
+        # a client learns when card ids it holds may have stopped resolving.
+        self.card_epoch = secrets.randbits(31)
         self._warm(strict=strict)
 
     def _warm(self, *, strict: bool = False) -> None:
@@ -727,6 +730,7 @@ class ContactsResolver:
         self._card_haystacks = prepared._card_haystacks
         # Content-free: lets clients drop cached avatars after any reload.
         self.photo_revision += 1
+        self.card_epoch = (self.card_epoch + 1) & 0x7FFFFFFF
 
     def refresh(self) -> int:
         """Replace the cache only after a successful read; propagate failures."""

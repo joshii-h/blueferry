@@ -302,7 +302,12 @@ def test_list_contact_cards_pages_without_photo_bytes(storage) -> None:
     assert "photo" not in json.dumps(page).replace("has_photo", "")
     assert operations.list_contact_cards(1, 10, "")["contacts"][0]["has_photo"] is False
     assert operations.list_contact_cards(0, 10, " bob   other ")["query"] == "bob other"
-    assert operations.status()["contact_card_count"] == 2
+    status = operations.status()
+    assert status["contact_card_count"] == 2
+    epoch = status["contact_card_epoch"]
+    assert isinstance(epoch, int) and not isinstance(epoch, bool)
+    operations.dependencies.contacts.refresh()
+    assert operations.status()["contact_card_epoch"] != epoch
     with pytest.raises(InvalidArgumentsError):
         operations.list_contact_cards(0, 10, "x" * 300)
 
