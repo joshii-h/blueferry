@@ -11,9 +11,10 @@ from pathlib import Path
 import typer
 
 from blueferry.cli_common import setup_logging
-from blueferry.client import BackendClient, BackendError
+from blueferry.client import BackendClient, BackendError, ContactNotFoundError
 from blueferry.contact_photos import image_type
 from blueferry.events import canonical_address
+from blueferry.limits import CARD_ID_HEX_CHARS
 from blueferry.text_safety import terminal_text
 
 contact_photos_app = typer.Typer(
@@ -190,7 +191,7 @@ def contacts_photo(
 
 
 # The shape of the ids ListContactCards reports (see contacts._card_id).
-_CARD_ID = re.compile(r"[0-9a-f]{18}(?:-[0-9]+)?")
+_CARD_ID = re.compile(rf"[0-9a-f]{{{CARD_ID_HEX_CHARS}}}(?:-[0-9]+)?")
 
 contacts_app = typer.Typer(
     help="Browse the contact cards cached from the iPhone.",
@@ -279,7 +280,7 @@ def contacts_show(
     try:
         document, data = client.contact(card_id)
     except BackendError as error:
-        if "NotFound" in str(error) or "no longer" in str(error):
+        if isinstance(error, ContactNotFoundError):
             typer.echo(contacts_view.stale_text(), err=True)
             raise typer.Exit(code=1) from None
         raise _backend_failed("Could not load the contact", error) from None

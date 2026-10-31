@@ -31,6 +31,7 @@ from blueferry.contact_photos import REJECT_TOO_LARGE, inspect_vcard_photo
 from blueferry.contact_repository import ContactRecord, ContactRepository, PhotoRef
 from blueferry.events import canonical_address, is_email_shaped
 from blueferry.limits import (
+    CARD_ID_HEX_CHARS,
     MAX_CONTACT_ADDRESS_CHARS,
     MAX_CONTACT_ADDRESSES_PER_CARD,
     MAX_CONTACT_NAME_CHARS,
@@ -547,7 +548,7 @@ def _card_id(record: ContactRecord, details: ContactDetails) -> str:
         ensure_ascii=False, separators=(",", ":"), sort_keys=True,
     )
     return hashlib.blake2b(
-        content.encode("utf-8"), key=_CARD_ID_KEY, digest_size=9,
+        content.encode("utf-8"), key=_CARD_ID_KEY, digest_size=CARD_ID_HEX_CHARS // 2,
     ).hexdigest()
 
 

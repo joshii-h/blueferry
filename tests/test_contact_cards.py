@@ -6,12 +6,14 @@ import sqlite3
 import unicodedata
 from contextlib import closing
 
+import dbus.exceptions
 import pytest
 from typer.testing import CliRunner
 
-from blueferry import cli_contacts, config
+from blueferry import cli_contacts, config, contacts_view
 from blueferry.backend_operations import BackendDependencies, BackendOperations
 from blueferry.cli import app
+from blueferry.client import ContactNotFoundError, _contact_cards_error
 from blueferry.contact_details import (
     EMPTY,
     ContactDetails,
@@ -23,10 +25,12 @@ from blueferry.contact_repository import ContactRepository, PhotoStoreBusy
 from blueferry.contacts import ContactsResolver, _parse_vcard_records
 from blueferry.errors import InvalidArgumentsError, NotFoundError, NotReadyError
 from blueferry.limits import (
+    CARD_ID_HEX_CHARS,
     MAX_CONTACT_ADDRESSES_PER_CARD,
     MAX_CONTACT_DETAIL_CHARS,
     MAX_CONTACT_POSTAL_ADDRESSES_PER_CARD,
 )
+from blueferry.protocol import ERROR_PREFIX
 from blueferry.settings_store import SettingsStore
 from blueferry.storage_security import StorageSecurity
 
@@ -382,6 +386,8 @@ class _Client:
                 "offset": offset, "query": query}
 
     def contact(self, contact_id):
+        if self.document is None:
+            raise ContactNotFoundError("contact is no longer in the contact cache")
         return self.document, self.photo
 
 
@@ -425,6 +431,26 @@ def test_cli_shows_a_card_by_name_and_writes_the_photo(monkeypatch, tmp_path) ->
     assert ambiguous.exit_code == 2 and "use an id" in ambiguous.output
     missing = CliRunner().invoke(app, ["contacts", "show", "zed"])
     assert missing.exit_code == 1
+
+
+def test_cli_reports_a_stale_card_id_by_its_error_name(monkeypatch) -> None:
+    client = _Client([])
+    monkeypatch.setattr(cli_contacts, "BackendClient", lambda: client)
+    result = CliRunner().invoke(app, ["contacts", "show", "c" * CARD_ID_HEX_CHARS])
+    assert result.exit_code == 1 and contacts_view.stale_text() in result.output
+
+
+def test_client_maps_the_not_found_error_name() -> None:
+    stale = dbus.exceptions.DBusException("gone", name=f"{ERROR_PREFIX}.NotFound")
+    assert isinstance(_contact_cards_error(stale), ContactNotFoundError)
+    other = dbus.exceptions.DBusException("NotFound", name=f"{ERROR_PREFIX}.Failed")
+    assert not isinstance(_contact_cards_error(other), ContactNotFoundError)
+
+
+def test_card_ids_have_the_shared_length(storage) -> None:
+    _store(storage)
+    [first, _second] = ContactsResolver(storage=storage).cards()[1]
+    assert len(first[0]) == CARD_ID_HEX_CHARS and cli_contacts._CARD_ID.fullmatch(first[0])
 
 
 @pytest.mark.parametrize("query", ["Müller", "Muller", "MULLER", "müller"])

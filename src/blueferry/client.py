@@ -20,7 +20,7 @@ from blueferry.client_wire import (
     decode_threads,
 )
 from blueferry.contact_photos import valid_photo
-from blueferry.errors import BlueFerryError
+from blueferry.errors import BlueFerryError, NotFoundError
 from blueferry.limits import MAX_CONTACT_PAGE
 from blueferry.models import (
     BackendStatus,
@@ -37,6 +37,7 @@ from blueferry.protocol import (
     CLEAR_CALL_TIMEOUT_SEC,
     CONTACT_CALL_TIMEOUT_SEC,
     DELETE_CALL_TIMEOUT_SEC,
+    ERROR_PREFIX,
     GROUP_ROUTE_CALL_TIMEOUT_SEC,
     MEDIA_CALL_TIMEOUT_SEC,
     MEDIA_IFACE,
@@ -88,7 +89,16 @@ def _open_map_error(error: Exception) -> BackendError:
     return BackendError(_dbus_message(error))
 
 
+class ContactNotFoundError(BackendError):
+    """The card id no longer resolves (changed card or restarted daemon)."""
+
+
 def _contact_cards_error(error: Exception) -> BackendError:
+    if (
+        isinstance(error, dbus.exceptions.DBusException)
+        and error.get_dbus_name() == f"{ERROR_PREFIX}.{NotFoundError.dbus_suffix}"
+    ):
+        return ContactNotFoundError(_dbus_message(error))
     if (
         isinstance(error, dbus.exceptions.DBusException)
         and error.get_dbus_name() == "org.freedesktop.DBus.Error.UnknownMethod"
