@@ -134,7 +134,7 @@ def _contact_cards_error(error: Exception) -> BackendError:
             "the running backend cannot show contact cards; "
             "restart it after upgrading"
         )
-    return BackendError(_dbus_message(error))
+    return _backend_error(error)
 
 
 def _search_error(error: Exception) -> BackendError:
@@ -145,7 +145,7 @@ def _search_error(error: Exception) -> BackendError:
         return BackendError(
             "the running backend cannot search; restart it after upgrading"
         )
-    return BackendError(_dbus_message(error))
+    return _backend_error(error)
 
 
 class TetherUnsupportedError(BackendError):

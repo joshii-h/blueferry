@@ -310,3 +310,38 @@ def test_backend_error_keeps_the_dbus_error_name() -> None:
     with pytest.raises(BackendError) as raised:
         client.mark_thread_read("address:email:test@example.com")
     assert raised.value.dbus_name == "org.blueferry.Error.NotFound"
+
+
+def test_search_and_contact_card_errors_keep_the_dbus_error_name() -> None:
+    import dbus.exceptions
+
+    from blueferry.client import ContactNotFoundError
+    from blueferry.protocol import ERROR_PREFIX
+
+    def failing(name: str, message: str):
+        def call(*_args, **_kwargs):
+            raise dbus.exceptions.DBusException(message, name=name)
+        return call
+
+    messages = _Messages()
+    client = BackendClient(interface_factory=lambda _name: messages)
+    # A full search queue: the TUI retries once on this name.
+    messages.Search = failing(  # type: ignore[attr-defined]
+        f"{ERROR_PREFIX}.NotReady", "search busy",
+    )
+    with pytest.raises(BackendError, match="search busy") as raised:
+        client.search("alice")
+    assert raised.value.dbus_name == f"{ERROR_PREFIX}.NotReady"
+
+    messages.ListContactCards = failing(  # type: ignore[attr-defined]
+        f"{ERROR_PREFIX}.NotReady", "contacts locked",
+    )
+    with pytest.raises(BackendError) as raised:
+        client.contact_cards()
+    assert raised.value.dbus_name == f"{ERROR_PREFIX}.NotReady"
+
+    messages.GetContact = failing(  # type: ignore[attr-defined]
+        f"{ERROR_PREFIX}.NotFound", "no such card",
+    )
+    with pytest.raises(ContactNotFoundError):
+        client.contact("stale")
