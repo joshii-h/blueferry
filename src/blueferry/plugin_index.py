@@ -44,12 +44,14 @@ FETCH_TIMEOUT_SEC = 10.0
 MAX_INDEX_BYTES = 256 * 1024
 MAX_ENTRIES = 100
 MAX_INDEXES = 8
+MAX_JSON_DEPTH = 32
 CACHE_TTL_SEC = 6 * 3600
 _ID = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*(\.[A-Za-z_][A-Za-z0-9_-]*)+$")
 _REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$")
 _CAPABILITY = re.compile(r"^[a-z][a-z0-9-]{0,23}$")
 _ICON = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _VERSION = re.compile(r"^\d+(\.\d+){0,3}$")
+_JSON_TOKEN = re.compile(r'\\.|["\[\]{}]', re.DOTALL)
 _INDEX_URL = re.compile(r"^https://[A-Za-z0-9.-]+(:\d{1,5})?/\S{1,400}$")
 
 Fetch = Callable[[str], bytes]
@@ -153,11 +155,37 @@ def parse_entry(raw: object, index: str = "") -> IndexEntry | None:
     )
 
 
+def _too_deeply_nested(text: str, limit: int = MAX_JSON_DEPTH) -> bool:
+    """Whether brackets outside JSON strings nest deeper than ``limit``.
+
+    The C JSON decoder only stops deep nesting through the interpreter's
+    stack guard, which never fires when the stack size is unlimited, so the
+    depth is bounded here before decoding.
+    """
+    depth = 0
+    in_string = False
+    for piece in _JSON_TOKEN.findall(text):
+        if piece == '"':
+            in_string = not in_string
+        elif in_string or piece[0] == "\\":
+            continue
+        elif piece in "[{":
+            depth += 1
+            if depth > limit:
+                return True
+        else:
+            depth -= 1
+    return False
+
+
 def parse_index(data: bytes, index: str = "") -> list[IndexEntry]:
     if len(data) > MAX_INDEX_BYTES:
         raise IndexFetchError("the index is too large")
     try:
-        document = json.loads(data.decode("utf-8"))
+        text = data.decode("utf-8")
+        if _too_deeply_nested(text):
+            raise ValueError("too deeply nested")
+        document = json.loads(text)
     except (UnicodeDecodeError, ValueError, RecursionError):
         raise IndexFetchError("the index is not valid JSON") from None
     if not isinstance(document, dict) or document.get("version") != 1:
